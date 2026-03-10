@@ -176,6 +176,7 @@ namespace GxMcp.Worker.Services
                         if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target);
                         if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
                         if (action == "Summarize") return _summarizeService.Summarize(target);
+                        if (action == "GetSQL") return _dataInsightService.GetTableDDL(target);
                         if (action == "InjectContext") 
                         {
                             bool recursive = args?["recursive"]?.ToObject<bool>() ?? false;

@@ -189,6 +189,12 @@
         "icon": "$(play)"
       },
       {
+        "command": "nexus-ide.getSQL",
+        "title": "GeneXus: Get SQL Create Table (DDL)",
+        "category": "GeneXus",
+        "icon": "$(database)"
+      },
+      {
         "command": "nexus-ide.rebuildAll",
         "title": "GeneXus: Rebuild All",
         "category": "GeneXus",
@@ -308,6 +314,11 @@
           "command": "nexus-ide.buildObject",
           "when": "view == genexusExplorer && viewItem =~ /gx_(procedure|transaction|webpanel|sdpanel|dataprovider)/",
           "group": "navigation"
+        },
+        {
+          "command": "nexus-ide.getSQL",
+          "when": "view == genexusExplorer && viewItem =~ /gx_(transaction|table)/",
+          "group": "navigation"
         }
       ],
       "editor/context": [
@@ -315,12 +326,22 @@
           "command": "nexus-ide.buildObject",
           "when": "resourceScheme == gxkb18",
           "group": "navigation"
+        },
+        {
+          "command": "nexus-ide.getSQL",
+          "when": "resourceScheme == gxkb18 && resourcePath =~ /\\/(Transaction|Table)\\//",
+          "group": "navigation"
         }
       ],
       "editor/title/context": [
         {
           "command": "nexus-ide.buildObject",
           "when": "resourceScheme == gxkb18",
+          "group": "navigation"
+        },
+        {
+          "command": "nexus-ide.getSQL",
+          "when": "resourceScheme == gxkb18 && resourcePath =~ /\\/(Transaction|Table)\\//",
           "group": "navigation"
         }
       ],

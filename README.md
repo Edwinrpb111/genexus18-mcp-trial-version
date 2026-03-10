@@ -72,6 +72,7 @@ Full documentation in `GEMINI.md`.
 - **`genexus_batch_edit`**: Multi-object atomic edits.
 - **`genexus_inject_context`**: Dynamic dependency injection (supports `recursive: true`).
 - **`genexus_analyze`**: Navigation analysis, Linter, and Data Schema extraction.
+- **`genexus_get_sql`**: Instantly extract SQL DDL (`CREATE TABLE`) for any Transaction or Table.
 - **`genexus_test`**: Execute GXtest unit tests and get real-time results.
 
 ---

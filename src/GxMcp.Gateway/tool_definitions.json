@@ -414,6 +414,22 @@
     }
   },
   {
+    "name": "genexus_get_sql",
+    "description": "Returns the SQL DDL (CREATE TABLE) for a specific Transaction or Table object.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the Transaction or Table."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
     "name": "genexus_doc",
     "description": "Knowledge extraction and documentation generation.",
     "inputSchema": {

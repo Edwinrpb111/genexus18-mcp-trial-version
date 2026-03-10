@@ -235,6 +235,65 @@ export class CommandManager {
           },
         );
       }),
+
+      vscode.commands.registerCommand(
+        "nexus-ide.getSQL",
+        async (item?: GxTreeItem) => {
+          let objName = "";
+          if (item && item.gxName) {
+            objName = item.gxName;
+          } else {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document.uri.scheme === "gxkb18") {
+              const pathStr = decodeURIComponent(
+                editor.document.uri.path.substring(1),
+              );
+              objName = pathStr.split("/").pop()!.replace(".gx", "");
+            }
+          }
+
+          if (!objName) {
+            vscode.window.showErrorMessage("Selecione uma Transação ou Tabela.");
+            return;
+          }
+
+          const outputChannel = vscode.window.createOutputChannel("GeneXus SQL");
+          outputChannel.show();
+          outputChannel.appendLine(`[SQL] Extraindo DDL para: ${objName}...`);
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `GeneXus: Generating SQL for ${objName}...`,
+              cancellable: false,
+            },
+            async () => {
+              try {
+                const result = await this.provider.callGateway({
+                  method: "execute_command",
+                  params: { module: "Analyze", action: "GetSQL", target: objName },
+                });
+
+                if (result && result.ddl) {
+                  outputChannel.clear();
+                  outputChannel.appendLine(`-- SQL DDL para ${objName} (${result.dbms || "Oracle"})`);
+                  outputChannel.appendLine(`-- Fonte: ${result.source}`);
+                  outputChannel.appendLine("");
+                  outputChannel.appendLine(result.ddl);
+                  vscode.window.showInformationMessage(`SQL de ${objName} extraído com sucesso!`);
+                } else {
+                  const errorMsg = result?.error || "Não foi possível extrair o SQL.";
+                  outputChannel.appendLine(`ERRO: ${errorMsg}`);
+                  vscode.window.showErrorMessage(`Falha ao obter SQL de ${objName}.`);
+                }
+              } catch (e) {
+                outputChannel.appendLine(`ERRO CRÍTICO: ${e}`);
+                vscode.window.showErrorMessage(`Erro ao chamar MCP: ${e}`);
+              }
+            },
+          );
+        },
+      ),
     );
   }
 

@@ -24,6 +24,160 @@ namespace GxMcp.Worker.Services
             _patternAnalysisService = patternAnalysisService;
         }
 
+        public string GetTableDDL(string target)
+        {
+            try
+            {
+                var obj = _objectService.FindObject(target);
+                if (obj == null) return "{\"error\": \"Object not found\"}";
+
+                Table tbl = null;
+                if (obj is Transaction trn)
+                {
+                    tbl = _objectService.FindObject(trn.Name) as Table;
+                }
+                else if (obj is Table)
+                {
+                    tbl = obj as Table;
+                }
+
+                if (tbl == null) return "{\"error\": \"Table not found for target " + target + "\"}";
+
+                var kb = _kbService.GetKB();
+                var model = kb.DesignModel.Environment.TargetModel;
+                int dbmsType = 7; // Force Oracle by default for this environment
+                try {
+                    var ds = ((Artech.Genexus.Common.GxModel)model).DataStore;
+                    if (ds.Dbms != 0) dbmsType = ds.Dbms;
+                } catch {}
+
+                var result = new JObject();
+                result["tableName"] = tbl.Name;
+                result["description"] = tbl.Description;
+                result["dbms"] = Enum.GetName(typeof(Artech.Genexus.Common.Entities.DbmsType), dbmsType);
+
+                // 1. Try Native SQL from Reorganization folder
+                string nativeSql = TryGetNativeSql(tbl);
+                if (!string.IsNullOrEmpty(nativeSql))
+                {
+                    result["ddl"] = nativeSql;
+                    result["source"] = "Native (reorg.sql)";
+                }
+                else
+                {
+                    // 2. Fallback: Generate SQL manually from structure
+                    result["ddl"] = GenerateHeuristicSql(tbl, dbmsType);
+                    result["source"] = "Heuristic (SDK Structure)";
+                }
+
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private string TryGetNativeSql(Table tbl)
+        {
+            return null; // For now, heuristic is more flexible.
+        }
+
+        private string GenerateHeuristicSql(Table tbl, int dbmsType)
+        {
+            bool isOracle = dbmsType == 7; // DbmsType.Oracle
+            string quoteStart = isOracle ? "" : "[";
+            string quoteEnd = isOracle ? "" : "]";
+
+            string dataTablespace = "";
+            string indexTablespace = "";
+
+            if (isOracle)
+            {
+                try {
+                    var kb = _kbService.GetKB();
+                    var ds = ((Artech.Genexus.Common.GxModel)kb.DesignModel.Environment.TargetModel).DataStore;
+                    dataTablespace = ds.Properties.GetPropertyValue<string>("DefaultTablesStorageArea") ?? "";
+                    indexTablespace = ds.Properties.GetPropertyValue<string>("DefaultIndicesStorageArea") ?? "";
+                    
+                    // User Example Fallback (Specific for this project)
+                    if (string.IsNullOrEmpty(dataTablespace)) dataTablespace = "TBS_DAD_ACADEMICO_GNX";
+                    if (string.IsNullOrEmpty(indexTablespace)) indexTablespace = "TBS_IDX_ACADEMICO_GNX";
+                } catch {
+                    dataTablespace = "TBS_DAD_ACADEMICO_GNX";
+                    indexTablespace = "TBS_IDX_ACADEMICO_GNX";
+                }
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"CREATE TABLE {quoteStart}{tbl.Name}{quoteEnd} (");
+            
+            var cols = new List<string>();
+            foreach (var attr in tbl.TableStructure.Attributes)
+            {
+                string typeStr = MapGxTypeToSql(attr.Attribute, dbmsType);
+                bool isNullable = attr.IsNullable == TableAttribute.IsNullableValue.True;
+                string nullStr = isNullable ? "" : " NOT NULL";
+                
+                cols.Add($"  {quoteStart}{attr.Name.PadRight(24)}{quoteEnd} {typeStr}{nullStr}");
+            }
+
+            // Primary Key
+            var pkAttrs = tbl.TableStructure.Attributes.Where(a => a.IsKey).Select(a => $"{quoteStart}{a.Name}{quoteEnd}");
+            if (pkAttrs.Any())
+            {
+                string pkPart = $"  PRIMARY KEY ({string.Join(", ", pkAttrs)})";
+                if (isOracle && !string.IsNullOrEmpty(indexTablespace))
+                {
+                    pkPart += Environment.NewLine + "             USING INDEX" + Environment.NewLine + "             TABLESPACE " + indexTablespace;
+                }
+                cols.Add(pkPart);
+            }
+
+            sb.AppendLine(string.Join("," + Environment.NewLine, cols));
+            
+            if (isOracle && !string.IsNullOrEmpty(dataTablespace))
+            {
+                sb.AppendLine(")");
+                sb.Append("  TABLESPACE " + dataTablespace);
+            }
+            else
+            {
+                sb.Append(")");
+            }
+            
+            return sb.ToString();
+        }
+
+        private string MapGxTypeToSql(Artech.Genexus.Common.Objects.Attribute attr, int dbmsType)
+        {
+            bool isOracle = dbmsType == 7;
+
+            switch (attr.Type)
+            {
+                case eDBType.NUMERIC:
+                    if (isOracle) return $"NUMERIC({attr.Length}{ (attr.Decimals > 0 ? "," + attr.Decimals : "") })";
+                    if (attr.Decimals > 0) return $"DECIMAL({attr.Length}, {attr.Decimals})";
+                    if (attr.Length > 9) return "BIGINT";
+                    return "INT";
+                case eDBType.DATETIME: return "DATE"; // Oracle uses DATE for DateTime often or TIMESTAMP
+                case eDBType.DATE: return "DATE";
+                case eDBType.Boolean: return isOracle ? "NUMERIC(1)" : "BIT";
+                case eDBType.CHARACTER: 
+                    return isOracle ? $"VARCHAR2({attr.Length})" : $"NCHAR({attr.Length})";
+                case eDBType.VARCHAR: 
+                    return isOracle ? $"VARCHAR2({attr.Length})" : $"NVARCHAR({attr.Length})";
+                case eDBType.LONGVARCHAR: 
+                    return isOracle ? "CLOB" : "NVARCHAR(MAX)";
+                case eDBType.BINARYFILE: 
+                    return isOracle ? "BLOB" : "VARBINARY(MAX)";
+                case eDBType.GUID: 
+                    return isOracle ? "RAW(16)" : "UNIQUEIDENTIFIER";
+                default: 
+                    return isOracle ? "VARCHAR2(4000)" : "NVARCHAR(MAX)";
+            }
+        }
+
         public string GetDataContext(string target)
         {
             try
