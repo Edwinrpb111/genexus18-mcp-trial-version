@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { GX_SCHEME } from "./constants";
 
 export class GxReferenceProvider implements vscode.ReferenceProvider {
   constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
@@ -9,8 +10,9 @@ export class GxReferenceProvider implements vscode.ReferenceProvider {
     context: vscode.ReferenceContext,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Location[]> {
+    if (document.uri.scheme !== GX_SCHEME) return [];
+
     const range = document.getWordRangeAtPosition(position);
-    if (!range) return [];
     const word = document.getText(range);
 
     // Remove & if it's a variable reference (we don't support global variable search yet, searching for object uses)
@@ -26,7 +28,7 @@ export class GxReferenceProvider implements vscode.ReferenceProvider {
         return results.results.map((obj: any) => {
           return new vscode.Location(
             vscode.Uri.from({
-              scheme: "gxkb18",
+              scheme: GX_SCHEME,
               path: `/${obj.type}/${obj.name}.gx`,
             }),
             new vscode.Position(0, 0),

@@ -13,6 +13,7 @@ import { GxWorkspaceSymbolProvider } from "../workspaceSymbolProvider";
 import { GxCodeLensProvider } from "../codeLensProvider";
 import { GxReferenceProvider } from "../referenceProvider";
 import { TYPE_SUFFIX } from "../utils/GxPartMapper";
+import { GX_SCHEME } from "../constants";
 
 export class ProviderManager {
   public historyProvider: any;
@@ -116,7 +117,7 @@ export class ProviderManager {
 
   private registerFileSearchProvider() {
     if ((vscode.workspace as any).registerFileSearchProvider) {
-      (vscode.workspace as any).registerFileSearchProvider("gxkb18", {
+      (vscode.workspace as any).registerFileSearchProvider(GX_SCHEME, {
         provideFileSearchResults: async (
           query: any,
           _options: any,
@@ -141,7 +142,7 @@ export class ProviderManager {
                   ? `.${TYPE_SUFFIX[obj.type]}`
                   : "";
                 return vscode.Uri.parse(
-                  `gxkb18:/${obj.type}/${obj.name}${suffix}.gx`,
+                  `${GX_SCHEME}:/${obj.type}/${obj.name}${suffix}.gx`,
                 );
               });
             }

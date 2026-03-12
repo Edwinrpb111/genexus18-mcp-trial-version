@@ -1,14 +1,15 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { GxUriParser } from "../utils/GxUriParser";
 
 export class StructureView {
   private static panels = new Map<string, vscode.WebviewPanel>();
 
   static async show(uri: vscode.Uri, provider: GxFileSystemProvider) {
-    const pathStr = decodeURIComponent(uri.path.substring(1));
-    const parts = pathStr.split("/");
-    const typeStr = parts.length > 1 ? parts[0] : null;
-    const objName = parts.pop()!.replace(".gx", "");
+    const info = GxUriParser.parse(uri);
+    if (!info) return;
+
+    const { name: objName, type: typeStr } = info;
     const uriKey = uri.toString() + ":VisualStructure";
     const target = typeStr ? `${typeStr}:${objName}` : objName;
 

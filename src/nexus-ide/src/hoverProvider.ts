@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { nativeFunctions } from './gxNativeFunctions';
+import { GxUriParser } from './utils/GxUriParser';
 
 export class GxHoverProvider implements vscode.HoverProvider {
     private _cache = new Map<string, { hover: vscode.Hover, expires: number }>();
@@ -65,8 +66,7 @@ export class GxHoverProvider implements vscode.HoverProvider {
         if (!hover && word.startsWith('&')) {
             const varName = word.substring(1).toLowerCase();
             try {
-                const path = decodeURIComponent(document.uri.path.substring(1));
-                const objName = path.split('/').pop()!.replace('.gx', '');
+                const objName = GxUriParser.getObjectName(document.uri);
                 const variables = await this.callGateway({
                     method: "execute_command",
                     params: { module: 'Read', action: 'GetVariables', target: objName }

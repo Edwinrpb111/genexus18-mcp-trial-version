@@ -3,6 +3,13 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { 
+  CONFIG_SECTION,
+  CONFIG_MCP_PORT, 
+  DEFAULT_MCP_PORT, 
+  COMMAND_PREFIX,
+  DISCOVERY_DELAY 
+} from "../constants";
 
 /**
  * McpDiscoveryManager: Torna o servidor MCP GeneXus visível para IAs (Copilot, Claude, Gemini CLI).
@@ -18,7 +25,7 @@ export class McpDiscoveryManager {
     this.registerCopilotTools();
 
     // Defer file creation to avoid triggering workspace updates during activation
-    setTimeout(() => this.createLocalDiscoveryFile(), 5000);
+    setTimeout(() => this.createLocalDiscoveryFile(), DISCOVERY_DELAY);
 
     this.registerCommands();
   }
@@ -38,8 +45,8 @@ export class McpDiscoveryManager {
     const rootPath = physicalFolder.uri.fsPath;
     const configPath = path.join(rootPath, ".mcp_config.json");
     const port = vscode.workspace
-      .getConfiguration()
-      .get("genexus.mcpPort", 5000);
+      .getConfiguration(CONFIG_SECTION)
+      .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
 
     const config = {
       mcpServers: {
@@ -117,7 +124,7 @@ export class McpDiscoveryManager {
   private registerCommands() {
     this.context.subscriptions.push(
       vscode.commands.registerCommand(
-        "nexus-ide.registerMcpGlobally",
+        `${COMMAND_PREFIX}.registerMcpGlobally`,
         async () => {
           const choice = await vscode.window.showInformationMessage(
             "Deseja registrar o GeneXus MCP no Claude Desktop?",
@@ -145,8 +152,8 @@ export class McpDiscoveryManager {
       "claude_desktop_config.json",
     );
     const port = vscode.workspace
-      .getConfiguration()
-      .get("genexus.mcpPort", 5000);
+      .getConfiguration(CONFIG_SECTION)
+      .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
 
     try {
       let config: any = { mcpServers: {} };

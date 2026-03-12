@@ -1,27 +1,23 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { GxUriParser } from "../utils/GxUriParser";
 
 export class HistoryView {
   private static panels = new Map<string, vscode.WebviewPanel>();
 
-  static async show(uri: vscode.Uri | undefined, provider: GxFileSystemProvider, historyProvider: any) {
-    let objName = "";
-    let targetUri = uri;
-    
-    if (!targetUri) {
-      const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document.uri.scheme === "genexus") {
-        targetUri = editor.document.uri;
-      }
-    }
-
-    if (targetUri) {
-      const pathStr = decodeURIComponent(targetUri.path.substring(1));
-      objName = pathStr.split("/").pop()!.replace(".gx", "");
-    }
+  static async show(
+    uri: vscode.Uri | undefined,
+    provider: GxFileSystemProvider,
+    historyProvider: any,
+  ) {
+    let targetUri = uri || GxUriParser.getActiveGxUri();
+    const info = targetUri ? GxUriParser.parse(targetUri) : null;
+    let objName = info?.name || "";
 
     if (!objName) {
-      vscode.window.showErrorMessage("Abra ou selecione um objeto para ver o histórico.");
+      vscode.window.showErrorMessage(
+        "Abra ou selecione um objeto para ver o histórico.",
+      );
       return;
     }
 
@@ -35,7 +31,7 @@ export class HistoryView {
       "gxHistory",
       `Histórico: ${objName}`,
       vscode.ViewColumn.Beside,
-      { enableScripts: true }
+      { enableScripts: true },
     );
 
     this.panels.set(uriKey, panel);
@@ -68,7 +64,7 @@ export class HistoryView {
                         <button onclick="viewDiff(${rev.version || rev.Id})" style="background: #007acc; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 2px;">Comparar (Diff)</button>
                     </td>
                 </tr>
-            `
+            `,
             )
             .join("");
         }
@@ -77,7 +73,10 @@ export class HistoryView {
 
         panel.webview.onDidReceiveMessage(async (message) => {
           if (message.command === "viewDiff") {
-            vscode.window.setStatusBarMessage(`$(sync~spin) Buscando Revisão #${message.versionId} para Diff...`, 3000);
+            vscode.window.setStatusBarMessage(
+              `$(sync~spin) Buscando Revisão #${message.versionId} para Diff...`,
+              3000,
+            );
             try {
               const codeResult = await provider.callGateway({
                 method: "execute_command",
@@ -90,15 +89,20 @@ export class HistoryView {
               });
 
               if (codeResult && codeResult.source) {
-                const historicalContent = Buffer.from(codeResult.source, "base64").toString("utf8");
-                const historyUri = vscode.Uri.parse(`gx-history:/v${message.versionId}/${message.objName}.gx`);
+                const historicalContent = Buffer.from(
+                  codeResult.source,
+                  "base64",
+                ).toString("utf8");
+                const historyUri = vscode.Uri.parse(
+                  `gx-history:/v${message.versionId}/${message.objName}.gx`,
+                );
                 historyProvider.update(historyUri, historicalContent);
 
                 await vscode.commands.executeCommand(
                   "vscode.diff",
                   historyUri,
                   targetUri!,
-                  `${message.objName} (Revisão #${message.versionId}) ↔ (Atual)`
+                  `${message.objName} (Revisão #${message.versionId}) ↔ (Atual)`,
                 );
               }
             } catch (e) {

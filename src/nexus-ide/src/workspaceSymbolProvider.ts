@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { GX_SCHEME } from "./constants";
 
 export class GxWorkspaceSymbolProvider
   implements vscode.WorkspaceSymbolProvider
@@ -21,7 +22,7 @@ export class GxWorkspaceSymbolProvider
         return results.results.map((obj: any) => {
           // Create a URI for the virtual GeneXus filesystem
           const uri = vscode.Uri.from({
-            scheme: "gxkb18",
+            scheme: GX_SCHEME,
             path: `/${obj.type}/${obj.name}.gx`,
           });
 

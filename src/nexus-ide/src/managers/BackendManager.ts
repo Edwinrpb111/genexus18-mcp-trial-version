@@ -3,6 +3,18 @@ import * as path from "path";
 import * as fs from "fs";
 import * as cp from "child_process";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { 
+  CONFIG_SECTION, 
+  CONFIG_AUTO_START, 
+  CONFIG_MCP_PORT, 
+  DEFAULT_MCP_PORT,
+  CONFIG_KB_PATH,
+  CONFIG_INSTALL_PATH,
+  MODULE_HEALTH,
+  HEALTH_CHECK_INTERVAL,
+  HEALTH_CHECK_TIMEOUT,
+  HEALTH_CHECK_TIMEOUT_INDEXING
+} from "../constants";
 
 export class BackendManager {
   private backendProcess: cp.ChildProcess | undefined;
@@ -11,8 +23,8 @@ export class BackendManager {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   async start(provider: GxFileSystemProvider) {
-    const config = vscode.workspace.getConfiguration();
-    const autoStart = config.get("genexus.autoStartBackend");
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const autoStart = config.get(CONFIG_AUTO_START);
     if (!autoStart) return;
 
     let backendDir = path.join(this.context.extensionPath, "backend");
@@ -52,7 +64,7 @@ export class BackendManager {
         const currentConfig = JSON.parse(fs.readFileSync(configFile, "utf8"));
         currentConfig.GeneXus.InstallationPath = installationPath;
         currentConfig.Environment.KBPath = kbPath;
-        currentConfig.Server.HttpPort = config.get("genexus.mcpPort", 5000);
+        currentConfig.Server.HttpPort = config.get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
         fs.writeFileSync(configFile, JSON.stringify(currentConfig, null, 2));
       } catch (e) {
         console.error("[BackendManager] Failed to update config.json:", e);
@@ -88,8 +100,8 @@ export class BackendManager {
   }
 
   private async findBestKbPath(): Promise<string> {
-    const config = vscode.workspace.getConfiguration();
-    let kbPath = config.get<string>("genexus.kbPath", "");
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    let kbPath = config.get<string>(CONFIG_KB_PATH, "");
 
     if (kbPath && fs.existsSync(kbPath)) {
       return kbPath;
@@ -119,8 +131,8 @@ export class BackendManager {
   }
 
   private findBestInstallationPath(): string {
-    const config = vscode.workspace.getConfiguration();
-    const currentPath = config.get<string>("genexus.installationPath", "");
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const currentPath = config.get<string>(CONFIG_INSTALL_PATH, "");
     return currentPath;
   }
 
@@ -143,20 +155,20 @@ class BackendHealthMonitor {
 
   start() {
     if (this._interval) return;
-    this._interval = setInterval(() => this.check(), 10000);
+    this._interval = setInterval(() => this.check(), HEALTH_CHECK_INTERVAL);
   }
 
   async check() {
     if (this._isRestarting) return;
 
     const isIndexing = this.provider.isBulkIndexing;
-    const timeout = isIndexing ? 15000 : 5000;
+    const timeout = isIndexing ? HEALTH_CHECK_TIMEOUT_INDEXING : HEALTH_CHECK_TIMEOUT;
 
     try {
       const status = await this.provider.callGateway(
         {
           method: "execute_command",
-          params: { module: "Health", action: "Ping" },
+          params: { module: MODULE_HEALTH, action: "Ping" },
         },
         timeout,
       );

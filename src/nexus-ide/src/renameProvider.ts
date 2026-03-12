@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { GxUriParser } from './utils/GxUriParser';
 
 export class GxRenameProvider implements vscode.RenameProvider {
     constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
@@ -73,7 +74,6 @@ export class GxRenameProvider implements vscode.RenameProvider {
     }
 
     private getObjName(document: vscode.TextDocument): string {
-        const path = decodeURIComponent(document.uri.path.substring(1));
-        return path.split('/').pop()!.replace('.gx', '');
+        return GxUriParser.getObjectName(document.uri);
     }
 }

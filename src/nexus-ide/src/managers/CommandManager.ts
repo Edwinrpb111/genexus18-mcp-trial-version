@@ -9,6 +9,21 @@ import { LayoutView } from "../webviews/LayoutView";
 import { HistoryView } from "../webviews/HistoryView";
 import { DiagramView } from "../webviews/DiagramView";
 import { PropertiesView } from "../webviews/PropertiesView";
+import { 
+  GX_SCHEME, 
+  CONFIG_SECTION, 
+  CONFIG_MCP_PORT, 
+  DEFAULT_MCP_PORT,
+  MODULE_BUILD,
+  MODULE_KB,
+  MODULE_ANALYZE,
+  MODULE_REFACTOR,
+  MODULE_WRITE,
+  MODULE_HEALTH,
+  DEFAULT_STATUS_BAR_TIMEOUT
+} from "../constants";
+
+import { GxUriParser } from "../utils/GxUriParser";
 
 export class CommandManager {
   constructor(
@@ -30,18 +45,7 @@ export class CommandManager {
 
   private registerSwitchPartCommands() {
     const switchPart = async (partName: string, uri?: vscode.Uri) => {
-      let targetUri = uri;
-      if (!targetUri) {
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document.uri.scheme === "gxkb18") {
-          targetUri = editor.document.uri;
-        } else {
-          const gxEditor = vscode.window.visibleTextEditors.find(
-            (e) => e.document.uri.scheme === "gxkb18",
-          );
-          if (gxEditor) targetUri = gxEditor.document.uri;
-        }
-      }
+      const targetUri = uri || GxUriParser.getActiveGxUri();
 
       if (!targetUri) return;
       const isTransaction = targetUri.path.includes("/Transaction/");
@@ -143,16 +147,12 @@ export class CommandManager {
       vscode.commands.registerCommand(
         "nexus-ide.buildObject",
         async (item?: GxTreeItem) => {
-          let objName = "";
-          if (item && item.gxName) {
-            objName = item.gxName;
-          } else {
-            const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === "gxkb18") {
-              const pathStr = decodeURIComponent(
-                editor.document.uri.path.substring(1),
-              );
-              objName = pathStr.split("/").pop()!.replace(".gx", "");
+          let objName = item?.gxName;
+
+          if (!objName) {
+            const targetUri = GxUriParser.getActiveGxUri();
+            if (targetUri) {
+              objName = GxUriParser.getObjectName(targetUri);
             }
           }
 
@@ -180,7 +180,7 @@ export class CommandManager {
                   {
                     method: "execute_command",
                     params: {
-                      module: "Build",
+                      module: MODULE_BUILD,
                       action: "Build",
                       target: objName,
                     },
@@ -239,16 +239,12 @@ export class CommandManager {
       vscode.commands.registerCommand(
         "nexus-ide.getSQL",
         async (item?: GxTreeItem) => {
-          let objName = "";
-          if (item && item.gxName) {
-            objName = item.gxName;
-          } else {
-            const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === "gxkb18") {
-              const pathStr = decodeURIComponent(
-                editor.document.uri.path.substring(1),
-              );
-              objName = pathStr.split("/").pop()!.replace(".gx", "");
+          let objName = item?.gxName;
+
+          if (!objName) {
+            const targetUri = GxUriParser.getActiveGxUri();
+            if (targetUri) {
+              objName = GxUriParser.getObjectName(targetUri);
             }
           }
 
@@ -311,7 +307,7 @@ export class CommandManager {
               this.provider.isBulkIndexing = true;
               await this.provider.callGateway({
                 method: "execute_command",
-                params: { module: "KB", action: "BulkIndex" },
+                params: { module: MODULE_KB, action: "BulkIndex" },
               });
 
               let isDone = false;
@@ -321,7 +317,7 @@ export class CommandManager {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
                 const status = await this.provider.callGateway({
                   method: "execute_command",
-                  params: { module: "KB", action: "GetIndexStatus" },
+                  params: { module: MODULE_KB, action: "GetIndexStatus" },
                 });
 
                 if (status && status.isIndexing) {
@@ -384,7 +380,7 @@ export class CommandManager {
               const result = await this.provider.callGateway({
                 method: "execute_command",
                 params: {
-                  module: "KB",
+                  module: MODULE_KB,
                   action: "CreateObject",
                   type: selectedType,
                   name: name,
@@ -398,7 +394,7 @@ export class CommandManager {
                   ? `.${TYPE_SUFFIX[selectedType]}`
                   : "";
                 const uri = vscode.Uri.from({
-                  scheme: "gxkb18",
+                  scheme: GX_SCHEME,
                   path: `/${selectedType}/${name}${suffix}.gx`,
                 });
                 await vscode.commands.executeCommand("vscode.open", uri);
@@ -443,7 +439,7 @@ export class CommandManager {
               const result = await this.provider.callGateway({
                 method: "execute_command",
                 params: {
-                  module: "Refactor",
+                  module: MODULE_REFACTOR,
                   action: "RenameAttribute",
                   target: oldName,
                   payload: newName,
@@ -483,7 +479,7 @@ export class CommandManager {
                 const result = await this.provider.callGateway({
                   method: "execute_command",
                   params: {
-                    module: "Write",
+                    module: MODULE_WRITE,
                     action: "AddVariable",
                     target: objName,
                     varName: varName,
@@ -528,9 +524,18 @@ export class CommandManager {
 
       vscode.commands.registerCommand("nexus-ide.forceSave", async () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.uri.scheme !== "genexuskb") return;
-        const uri = editor.document.uri;
-        const content = Buffer.from(editor.document.getText(), "utf8");
+        let targetUri = editor?.document.uri;
+        if (!targetUri || targetUri.scheme !== GX_SCHEME) {
+          const visibleGxEditor = vscode.window.visibleTextEditors.find(
+            (e) => e.document.uri.scheme === GX_SCHEME
+          );
+          if (visibleGxEditor) targetUri = visibleGxEditor.document.uri;
+        }
+        if (!targetUri || targetUri.scheme !== GX_SCHEME) return;
+        const uri = targetUri;
+        const activeEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === uri.toString());
+        if (!activeEditor) return;
+        const content = Buffer.from(activeEditor.document.getText(), "utf8");
 
         await vscode.window.withProgress(
           {
@@ -543,7 +548,7 @@ export class CommandManager {
               await this.provider.triggerSave(uri, content);
               this.contextManager.setStatusBarMessage(
                 `$(check) Salvo: ${uri.fsPath}`,
-                5000,
+                DEFAULT_STATUS_BAR_TIMEOUT,
               );
             } catch (e) {
               vscode.window.showErrorMessage(`Erro ao salvar: ${e}`);
@@ -575,25 +580,21 @@ export class CommandManager {
       vscode.commands.registerCommand(
         "nexus-ide.showProperties",
         async (uri?: vscode.Uri, controlName?: string) => {
-          let targetUri = uri;
-          if (!targetUri) {
-            const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === "genexuskb")
-              targetUri = editor.document.uri;
-          }
+          const targetUri = uri || GxUriParser.getActiveGxUri();
           if (!targetUri) return;
-          const pathStr = decodeURIComponent(targetUri.path.substring(1));
-          const typeStr = pathStr.split("/")[0];
-          const objName = pathStr.split("/").pop()!.replace(".gx", "");
-          const target = `${typeStr}:${objName}`;
+
+          const info = GxUriParser.parse(targetUri);
+          if (!info) return;
+
+          const target = `${info.type}:${info.name}`;
           await PropertiesView.show(target, controlName || null, this.provider);
         },
       ),
 
       vscode.commands.registerCommand("nexus-ide.copyMcpConfig", async () => {
         const port = vscode.workspace
-          .getConfiguration()
-          .get("genexus.mcpPort", 5000);
+          .getConfiguration(CONFIG_SECTION)
+          .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
         const snippet = JSON.stringify(
           {
             mcpServers: {
@@ -671,12 +672,9 @@ export class CommandManager {
         async (item?: GxTreeItem) => {
           let objName = item?.gxName;
           if (!objName) {
-            const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === "genexuskb") {
-              objName = editor.document.uri.path
-                .split("/")
-                .pop()
-                ?.replace(".gx", "");
+            const targetUri = GxUriParser.getActiveGxUri();
+            if (targetUri) {
+              objName = GxUriParser.getObjectName(targetUri);
             }
           }
           if (!objName) return;
@@ -701,10 +699,17 @@ export class CommandManager {
         "nexus-ide.extractProcedure",
         async () => {
           const editor = vscode.window.activeTextEditor;
-          if (!editor || editor.document.uri.scheme !== "genexuskb") return;
+          let activeDoc = editor?.document;
+          
+          if (!activeDoc || activeDoc.uri.scheme !== GX_SCHEME) {
+            const visibleEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.scheme === GX_SCHEME);
+            activeDoc = visibleEditor?.document;
+          }
+          
+          if (!activeDoc || !editor) return;
 
           const selection = editor.selection;
-          const code = editor.document.getText(selection);
+          const code = activeDoc.getText(selection);
           if (!code) {
             vscode.window.showErrorMessage(
               "Selecione um bloco de código para extrair.",
@@ -725,14 +730,14 @@ export class CommandManager {
               cancellable: false,
             },
             async () => {
-              const sourceName = editor.document.uri.path
+              const sourceName = activeDoc!.uri.path
                 .split("/")
                 .pop()
                 ?.replace(".gx", "");
               const result = await this.provider.callGateway({
                 method: "execute_command",
                 params: {
-                  module: "Refactor",
+                  module: MODULE_REFACTOR,
                   action: "ExtractProcedure",
                   target: sourceName,
                   payload: JSON.stringify({ code, procedureName: procName }),
@@ -759,16 +764,21 @@ export class CommandManager {
 
       vscode.commands.registerCommand("nexus-ide.autoFix", async () => {
         const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.uri.scheme !== "genexuskb") {
+        let activeDoc = editor?.document;
+        
+        if (!activeDoc || activeDoc.uri.scheme !== GX_SCHEME) {
+          const visibleEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.scheme === GX_SCHEME);
+          activeDoc = visibleEditor?.document;
+        }
+
+        if (!activeDoc) {
           vscode.window.showErrorMessage(
             "Abra um objeto GeneXus para usar o Auto-Fix.",
           );
           return;
         }
 
-        const diagnostics = vscode.languages.getDiagnostics(
-          editor.document.uri,
-        );
+        const diagnostics = vscode.languages.getDiagnostics(activeDoc.uri);
         const error = diagnostics.find(
           (d) => d.severity === vscode.DiagnosticSeverity.Error,
         );
@@ -791,16 +801,16 @@ export class CommandManager {
               const result = await this.provider.callGateway({
                 method: "execute_command",
                 params: {
-                  module: "Analyze",
+                  module: MODULE_ANALYZE,
                   action: "ExplainCode",
-                  target: editor.document.uri.path
+                  target: activeDoc.uri.path
                     .split("/")
                     .pop()
                     ?.replace(".gx", ""),
                   payload: JSON.stringify({
                     error: error.message,
                     line: error.range.start.line,
-                    code: editor.document.getText(),
+                    code: activeDoc.getText(),
                   }),
                 },
               });
@@ -814,12 +824,12 @@ export class CommandManager {
                 if (choice === "Apply Fix") {
                   const edit = new vscode.WorkspaceEdit();
                   const fullRange = new vscode.Range(
-                    editor.document.positionAt(0),
-                    editor.document.positionAt(
-                      editor.document.getText().length,
+                    activeDoc.positionAt(0),
+                    activeDoc.positionAt(
+                      activeDoc.getText().length,
                     ),
                   );
-                  edit.replace(editor.document.uri, fullRange, result.fix);
+                  edit.replace(activeDoc.uri, fullRange, result.fix);
                   await vscode.workspace.applyEdit(edit);
                   vscode.window.showInformationMessage(
                     "AI Fix applied! Save to verify.",

@@ -4,8 +4,17 @@ import * as path from "path";
 import { GxShadowService } from "./gxShadowService";
 import { GxDiagnosticProvider } from "./diagnosticProvider";
 import { GxGatewayClient } from "./infra/GxGatewayClient";
+import { GxUriParser } from "./utils/GxUriParser";
 import { GxPartMapper, TYPE_SUFFIX, VALID_TYPES } from "./utils/GxPartMapper";
 import { GxCacheManager } from "./managers/GxCacheManager";
+import { 
+  GX_SCHEME, 
+  DEFAULT_MCP_PORT, 
+  MODULE_SEARCH, 
+  MODULE_KB, 
+  MODULE_HEALTH,
+  DEFAULT_STATUS_BAR_TIMEOUT 
+} from "./constants";
 
 export { TYPE_SUFFIX };
 
@@ -24,7 +33,9 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
   constructor() {
     this._cache = new GxCacheManager();
-    this._gateway = new GxGatewayClient("http://localhost:5000/api/command");
+    this._gateway = new GxGatewayClient(
+      `http://localhost:${DEFAULT_MCP_PORT}/api/command`,
+    );
   }
 
   public set baseUrl(value: string) {
@@ -59,11 +70,14 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
     console.log("[Nexus IDE] Warming up KB...");
     try {
-      await this.callGateway({ module: "Health", action: "Ping" }, 2000);
+      await this.callGateway(
+        { module: MODULE_HEALTH, action: "Ping" },
+        2000,
+      );
     } catch {}
 
     this._kbInitPromise = this.callGateway(
-      { module: "KB", action: "Initialize" },
+      { module: MODULE_KB, action: "Initialize" },
       300000,
     );
 
@@ -72,7 +86,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       this._emitter.fire([
         {
           type: vscode.FileChangeType.Changed,
-          uri: vscode.Uri.from({ scheme: "gxkb18", path: "/" }),
+          uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
         },
       ]);
       setTimeout(() => this.shadowMetadata(), 1000);
@@ -84,7 +98,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   private async shadowMetadata() {
     try {
       const result = await this.callGateway({
-        module: "Search",
+        module: MODULE_SEARCH,
         action: "Query",
         target: "type:Transaction or type:SDT",
         limit: 20,
@@ -96,7 +110,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             ? `.${TYPE_SUFFIX[obj.type]}`
             : "";
           const uri = vscode.Uri.parse(
-            `gxkb18:/${obj.type}/${obj.name}${suffix}.gx`,
+            `${GX_SCHEME}:/${obj.type}/${obj.name}${suffix}.gx`,
           );
           const part = obj.type === "Transaction" ? "Structure" : "Source";
           this.fetchAndCacheMetadata(uri, obj.type, obj.name, part);
@@ -141,13 +155,14 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
   stat(uri: vscode.Uri): vscode.FileStat {
     console.log(`[GxFS] stat: ${uri.toString()}`);
-    const pathStr = decodeURIComponent(uri.path.substring(1));
+    const info = GxUriParser.parse(uri);
+    const pathStr = info ? info.path : "";
 
     // Support IDE metadata probes (VS Code / Antigravity)
     if (
-      pathStr === ".vscode" ||
-      pathStr === ".mcp" ||
-      pathStr === ".antigravity"
+      info?.path === ".vscode" ||
+      info?.path === ".mcp" ||
+      info?.path === ".antigravity"
     ) {
       return {
         type: vscode.FileType.Directory,
@@ -157,9 +172,9 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       };
     }
     if (
-      pathStr.includes("mcp.json") ||
-      pathStr.includes("tasks.json") ||
-      pathStr.includes("settings.json")
+      info?.path.includes("mcp.json") ||
+      info?.path.includes("tasks.json") ||
+      info?.path.includes("settings.json")
     ) {
       return {
         type: vscode.FileType.File,
@@ -169,11 +184,11 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       };
     }
 
-    if (pathStr.startsWith(".") && !pathStr.startsWith(".gx")) {
+    if (info?.path.startsWith(".") && !info?.path.startsWith(".gx")) {
       throw vscode.FileSystemError.FileNotFound(uri);
     }
 
-    if (pathStr === "" || !pathStr.endsWith(".gx")) {
+    if (info?.path === "" || !info?.path.endsWith(".gx")) {
       return {
         type: vscode.FileType.Directory,
         ctime: Date.now(),
@@ -186,14 +201,15 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     let size = cachedContent ? cachedContent.byteLength : 0;
 
     if (size === 0) {
-      const objName = pathStr.split("/").pop()!.replace(".gx", "");
-      const objType = pathStr.split("/")[0];
-      const shadowPath = path.join(
-        this._shadowService?.shadowRoot || "",
-        objType,
-        `${objName}.gx`,
-      );
-      size = fs.existsSync(shadowPath) ? fs.statSync(shadowPath).size : 0;
+      const info = GxUriParser.parse(uri);
+      if (info) {
+        const shadowPath = path.join(
+          this._shadowService?.shadowRoot || "",
+          info.type,
+          `${info.name}.gx`,
+        );
+        size = fs.existsSync(shadowPath) ? fs.statSync(shadowPath).size : 0;
+      }
     }
 
     if (!this._cache.mtimes.has(uri.toString()))
@@ -210,10 +226,11 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
     try {
       console.log(`[GxFS] readDirectory START: ${uri.toString()}`);
-      const pathStr = decodeURIComponent(uri.path.substring(1));
+      const info = GxUriParser.parse(uri);
+      const pathStr = info ? info.path : "";
       console.log(`[GxFS] readDirectory pathStr: "${pathStr}"`);
 
-      const parentName = pathStr === "" ? "" : pathStr.split("/").pop()!;
+      const parentName = (info?.path === "" || !info) ? "" : info.path.split("/").pop()!;
       const cacheKey = `dir:${pathStr}`;
 
       const cached = this._cache.dirCache.get(cacheKey);
@@ -228,7 +245,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         : `parent:"${parentName}"`;
 
       const result = await this.callGateway({
-        module: "Search",
+        module: MODULE_SEARCH,
         action: "Query",
         target: query,
         limit: 100000,
@@ -296,7 +313,8 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       return this._cache.pendingReadRequests.get(cacheKey)!;
 
     const request = (async () => {
-      const target = GxPartMapper.getObjectTarget(uri.path);
+      const info = GxUriParser.parse(uri);
+      const target = info ? `${info.type}:${info.name}` : null;
       if (!target) {
         return Buffer.alloc(0);
       }
@@ -406,7 +424,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       // Force directory refresh for structural changes
       this.clearDirCache();
 
-      vscode.window.setStatusBarMessage(`$(check) Saved ${target}`, 5000);
+      vscode.window.setStatusBarMessage(`$(check) Saved ${target}`, DEFAULT_STATUS_BAR_TIMEOUT);
     } catch (err: any) {
       vscode.window.showErrorMessage(`Save Error: ${err}`);
       throw err;
@@ -432,7 +450,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     this._emitter.fire([
       {
         type: vscode.FileChangeType.Changed,
-        uri: vscode.Uri.from({ scheme: "gxkb18", path: "/" }),
+        uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
       },
     ]);
   }

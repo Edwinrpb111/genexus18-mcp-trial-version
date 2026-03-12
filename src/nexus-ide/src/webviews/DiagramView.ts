@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
 import { GxTreeItem } from "../gxTreeProvider";
+import { GX_SCHEME } from "../constants";
 
 export class DiagramView {
   private static panels = new Map<string, vscode.WebviewPanel>();
@@ -11,8 +12,16 @@ export class DiagramView {
       objName = item.gxName;
     } else {
       const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document.uri.scheme === "genexus") {
-        const pathStr = decodeURIComponent(editor.document.uri.path.substring(1));
+      let targetUri = editor?.document.uri;
+      if (!targetUri || targetUri.scheme !== GX_SCHEME) {
+        const visibleGxEditor = vscode.window.visibleTextEditors.find(
+          (e) => e.document.uri.scheme === GX_SCHEME
+        );
+        if (visibleGxEditor) targetUri = visibleGxEditor.document.uri;
+      }
+      
+      if (targetUri && targetUri.scheme === GX_SCHEME) {
+        const pathStr = decodeURIComponent(targetUri.path.substring(1));
         objName = pathStr.split("/").pop()!.replace(".gx", "");
       }
     }

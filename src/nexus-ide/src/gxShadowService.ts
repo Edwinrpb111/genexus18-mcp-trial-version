@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { TYPE_SUFFIX } from './gxFileSystem';
+import { GxUriParser } from './utils/GxUriParser';
 
 export class GxShadowService {
     private _shadowRoot: string;
@@ -43,13 +44,10 @@ export class GxShadowService {
         try {
             if (!this._shadowRoot) return null;
 
-            const pathParts = decodeURIComponent(uri.path.substring(1)).split('/');
-            if (pathParts.length < 2) return null;
+            const info = GxUriParser.parse(uri);
+            if (!info) return null;
 
-            const type = pathParts[0];
-            const fileName = pathParts[pathParts.length - 1];
-            const objName = fileName.replace(/\.gx$/, '').split('.')[0]; 
-
+            const { type, name: objName } = info;
             const typeDir = path.join(this._shadowRoot, type);
             if (!fs.existsSync(typeDir)) fs.mkdirSync(typeDir, { recursive: true });
 

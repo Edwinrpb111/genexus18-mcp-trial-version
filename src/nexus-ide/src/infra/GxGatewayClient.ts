@@ -1,8 +1,9 @@
 import * as http from "http";
 import { GxShadowService } from "../gxShadowService";
+import { DEFAULT_MCP_PORT } from "../constants";
 
 export class GxGatewayClient {
-  private _baseUrl = "http://localhost:5000/api/command";
+  private _baseUrl = `http://localhost:${DEFAULT_MCP_PORT}/api/command`;
   private _shadowService?: GxShadowService;
 
   constructor(baseUrl: string, shadowService?: GxShadowService) {

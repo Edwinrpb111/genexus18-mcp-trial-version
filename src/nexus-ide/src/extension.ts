@@ -12,10 +12,18 @@ import { ContextManager } from "./managers/ContextManager";
 import { CommandManager } from "./managers/CommandManager";
 import { ProviderManager } from "./managers/ProviderManager";
 import { McpDiscoveryManager } from "./managers/McpDiscoveryManager";
+import { 
+  GX_SCHEME, 
+  STATE_KEY_FOLDER_ADDED, 
+  VIEW_EXPLORER, 
+  VIEW_ACTIONS,
+  CONFIG_SECTION,
+  CONFIG_MCP_PORT,
+  DEFAULT_MCP_PORT,
+  DEFAULT_STATUS_BAR_TIMEOUT
+} from "./constants";
 
 let backendManager: BackendManager;
-const SCHEME = "gxkb18";
-const STATE_KEY_FOLDER_ADDED = "genexus.kbFolderAdded_V6";
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("[Nexus IDE] Extension activating...");
@@ -43,20 +51,20 @@ export function activate(context: vscode.ExtensionContext) {
   // 2. REGISTER FILESYSTEM PROVIDER
   try {
     context.subscriptions.push(
-      vscode.workspace.registerFileSystemProvider(SCHEME, provider, {
+      vscode.workspace.registerFileSystemProvider(GX_SCHEME, provider, {
         isCaseSensitive: false,
         isReadonly: false,
       }),
     );
     console.log(
-      `[Nexus IDE] GxFileSystemProvider registered for scheme '${SCHEME}'.`,
+      `[Nexus IDE] GxFileSystemProvider registered for scheme '${GX_SCHEME}'.`,
     );
 
     // Warm up
     vscode.workspace.fs
-      .stat(vscode.Uri.from({ scheme: SCHEME, path: "/" }))
+      .stat(vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }))
       .then(
-        () => console.log(`[Nexus IDE] Scheme '${SCHEME}' warm up success.`),
+        () => console.log(`[Nexus IDE] Scheme '${GX_SCHEME}' warm up success.`),
         () => {},
       );
   } catch (e) {
@@ -81,24 +89,23 @@ export function activate(context: vscode.ExtensionContext) {
 
 export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000, provider?: any) {
   const folders = vscode.workspace.workspaceFolders || [];
-  const hasGxFolder = folders.some((f) => f.uri.scheme === SCHEME);
+  const hasGxFolder = folders.some((f) => f.uri.scheme === GX_SCHEME);
   if (!hasGxFolder) {
     console.log(`[Nexus IDE] Checking if KB is accessible for auto-mount...`);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        if (provider) {
-          await provider.initKb();
-        }
+        // No manual initKb here anymore, handled in deferred initializeExtension
+
 
         // Double check if we can actually reach the pseudo-root to avoid ghost folders
         await vscode.workspace.fs.stat(
-          vscode.Uri.from({ scheme: SCHEME, path: "/" }),
+          vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
         );
 
-        console.log(`[Nexus IDE] Adding workspace folder: ${SCHEME}:/ on attempt ${attempt}`);
+        console.log(`[Nexus IDE] Adding workspace folder: ${GX_SCHEME}:/ on attempt ${attempt}`);
         vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
-          uri: vscode.Uri.from({ scheme: SCHEME, path: "/" }),
+          uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
           name: "GeneXus KB",
         });
         context.globalState.update(STATE_KEY_FOLDER_ADDED, true);
@@ -123,8 +130,8 @@ function initializeExtension(
 ) {
   console.log("[Nexus IDE] Starting deferred initialization...");
 
-  const config = vscode.workspace.getConfiguration();
-  const port = config.get("genexus.mcpPort", 5000);
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  const port = config.get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
   provider.baseUrl = `http://localhost:${port}/api/command`;
 
   // Initialize Managers
@@ -157,7 +164,7 @@ function initializeExtension(
   shadowManager.register();
 
   // UI Components
-  const treeView = vscode.window.createTreeView("genexusExplorer", {
+  const treeView = vscode.window.createTreeView(VIEW_EXPLORER, {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
   });
@@ -173,7 +180,7 @@ function initializeExtension(
   });
 
   const actionsProvider = new GxActionsProvider();
-  vscode.window.createTreeView("genexusActions", {
+  vscode.window.createTreeView(VIEW_ACTIONS, {
     treeDataProvider: actionsProvider,
     showCollapseAll: false,
   });
@@ -205,7 +212,8 @@ function initializeExtension(
     })
     .catch((e) => console.error("[Nexus IDE] Backend start failed:", e));
 
-  // KB Background Initialization
+  // KB Initialization (Unified Flow)
+  console.log("[Nexus IDE] Initiating KB Initialization...");
   provider.initKb().then(async () => {
     console.log("[Nexus IDE] KB background init complete.");
     treeProvider.refresh();
@@ -246,7 +254,7 @@ function initializeExtension(
             isDone = true;
             vscode.window.setStatusBarMessage(
               "$(check) GeneXus: Ambiente Pronto!",
-              5000,
+              DEFAULT_STATUS_BAR_TIMEOUT,
             );
           } else if (currentStatus && currentStatus.isIndexing) {
             vscode.window.setStatusBarMessage(
@@ -268,7 +276,7 @@ function initializeExtension(
   // Watch for Save event
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((doc: vscode.TextDocument) => {
-      if (doc.uri.scheme === SCHEME) {
+      if (doc.uri.scheme === GX_SCHEME) {
         setTimeout(() => {
           diagnosticProvider.refreshAll();
         }, 1000);

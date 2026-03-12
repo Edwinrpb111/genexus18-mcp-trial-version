@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { GX_SCHEME, CONTEXT_ACTIVE_PART, DEFAULT_STATUS_BAR_TIMEOUT } from "../constants";
 
 export class ContextManager {
   private statusBarItem: vscode.StatusBarItem;
@@ -24,22 +25,22 @@ export class ContextManager {
   }
 
   updateActiveContext(uri?: vscode.Uri) {
-    if (uri && uri.scheme === "genexus") {
+    if (uri && uri.scheme === GX_SCHEME) {
       const part = this.provider.getPart(uri);
       const pathStr = decodeURIComponent(uri.path.substring(1));
       const objName = pathStr.split("/").pop()!.replace(".gx", "");
 
-      vscode.commands.executeCommand("setContext", "genexus.activePart", part);
+      vscode.commands.executeCommand("setContext", CONTEXT_ACTIVE_PART, part);
 
       this.statusBarItem.text = `$(file-code) GX: ${objName} > ${part}`;
       this.statusBarItem.show();
     } else {
-      vscode.commands.executeCommand("setContext", "genexus.activePart", null);
+      vscode.commands.executeCommand("setContext", CONTEXT_ACTIVE_PART, null);
       this.statusBarItem.hide();
     }
   }
 
-  setStatusBarMessage(message: string, timeout: number = 5000) {
+  setStatusBarMessage(message: string, timeout: number = DEFAULT_STATUS_BAR_TIMEOUT) {
     vscode.window.setStatusBarMessage(message, timeout);
   }
 }

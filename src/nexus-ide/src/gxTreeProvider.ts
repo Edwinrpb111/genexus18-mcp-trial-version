@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { TYPE_SUFFIX } from "./gxFileSystem";
+import { GX_SCHEME } from "./constants";
 
 // Sort priority inside any folder: Module → Folder → everything else (alphabetical within groups)
 const TYPE_ORDER: Record<string, number> = {
@@ -63,7 +64,7 @@ export class GxTreeItem extends vscode.TreeItem {
       // File item: set resourceUri with descriptive suffix
       const suffix = TYPE_SUFFIX[gxType] ? `.${TYPE_SUFFIX[gxType]}` : "";
       this.resourceUri = vscode.Uri.from({
-        scheme: "gxkb18",
+        scheme: GX_SCHEME,
         path: `/${gxParentPath ? gxParentPath + "/" : ""}${gxName}${suffix}.gx`,
       });
       this.command = {

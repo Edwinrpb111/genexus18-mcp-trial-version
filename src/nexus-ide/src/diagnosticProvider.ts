@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { GxFileSystemProvider } from './gxFileSystem';
+import { GxUriParser } from './utils/GxUriParser';
 
 export class GxDiagnosticProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
@@ -148,8 +149,7 @@ export class GxDiagnosticProvider {
     }
 
     private getObjName(document: vscode.TextDocument): string {
-        const path = decodeURIComponent(document.uri.path.substring(1));
-        return path.split('/').pop()!.replace('.gx', '');
+        return GxUriParser.getObjectName(document.uri);
     }
 
     private getPartName(uri: vscode.Uri): string {
