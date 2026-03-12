@@ -32,9 +32,31 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target);
                 if (obj == null) return "{\"error\":\"Object not found for validation: " + target + "\"}";
 
-                Logger.Info(string.Format("[VALIDATION] Deep checking syntax for {0} ({1})...", target, partName));
+                // 1. FAST PRE-FLIGHT CHECK (Regex based)
+                var structuralErrors = CodeParser.Validate(code);
+                if (structuralErrors.Count > 0)
+                {
+                    var errorList = new JArray();
+                    foreach (var err in structuralErrors)
+                    {
+                        var eObj = new JObject();
+                        eObj["description"] = err;
+                        eObj["severity"] = "Error";
+                        
+                        var lineMatch = System.Text.RegularExpressions.Regex.Match(err, @"Line (\d+):");
+                        eObj["line"] = lineMatch.Success && int.TryParse(lineMatch.Groups[1].Value, out int l) ? l : 1;
+                        
+                        errorList.Add(eObj);
+                    }
+                    return new JObject {
+                        ["status"] = "Error",
+                        ["error"] = structuralErrors[0],
+                        ["errors"] = errorList,
+                        ["isPreflight"] = true
+                    }.ToString();
+                }
 
-                // 1. Find the part
+                // 2. Find the part
                 string pName = partName.ToLower();
                 KBObjectPart part = null;
                 foreach (KBObjectPart p in obj.Parts)

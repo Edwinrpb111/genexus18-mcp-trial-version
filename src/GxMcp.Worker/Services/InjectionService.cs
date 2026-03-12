@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using GxMcp.Worker.Helpers;
 using Artech.Architecture.Common.Objects;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -142,8 +143,27 @@ namespace GxMcp.Worker.Services
                     }
                     else
                     {
-                        // Procedure / DataProvider: extract parm rule
-                        content = GetSignatureContent(target);
+                        // Procedure / DataProvider: Smart Pruning based on Complexity
+                        var index = _objectService.GetIndex();
+                        string key = $"{type}:{tName}";
+                        bool isSmall = false;
+                        if (index != null && index.Objects.TryGetValue(key, out var entry))
+                        {
+                            isSmall = entry.Complexity > 0 && entry.Complexity < 100;
+                        }
+
+                        if (isSmall)
+                        {
+                            // Inject Full Source for small utilities
+                            string sourceJson = _objectService.ReadObjectSource(tName, "Source", null, null, "mcp");
+                            var sObj = JObject.Parse(sourceJson);
+                            content = sObj["source"]?.ToString();
+                            displayType = $"{type} (Full Source)";
+                        }
+                        
+                        // Fallback to signature if full source extraction failed or if it's large
+                        if (string.IsNullOrEmpty(content))
+                            content = GetSignatureContent(target);
                     }
 
                     if (!string.IsNullOrEmpty(content))

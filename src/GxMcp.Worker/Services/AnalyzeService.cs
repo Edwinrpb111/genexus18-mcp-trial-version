@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common;
 using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -76,23 +78,37 @@ namespace GxMcp.Worker.Services
                 var index = _indexCacheService.GetIndex();
                 if (index == null || index.Objects == null) return "{\"error\": \"Index not found. Run genexus_bulk_index first.\"}";
 
-                if (!index.Objects.TryGetValue(targetName, out var targetNode))
-                {
-                    // FALLBACK: If not in index, try to find it in the KB directly
-                    var obj = _objectService.FindObject(targetName);
-                    if (obj != null) {
-                         // Temporary reconstruction of index entry to allow direct callers lookup if possible
-                         // Note: We won't have the full graph but at least we can return "0 affected" instead of "error"
-                         // or ideally, we trigger a re-index for this object if it's missing.
-                         return "{\"target\": \"" + obj.Name + "\", \"status\": \"Object exists but not yet indexed. Run genexus_bulk_index for full impact analysis.\", \"totalAffected\": 0}";
-                    }
+                // PERFORMANCE: Fix key lookup (Index keys are "Type:Name")
+                SearchIndex.IndexEntry targetNode = null;
+                string foundKey = null;
 
-                    // Try case-insensitive search if exact match fails
-                    var key = index.Objects.Keys.FirstOrDefault(k => string.Equals(k, targetName, StringComparison.OrdinalIgnoreCase));
-                    if (key == null || !index.Objects.TryGetValue(key, out targetNode))
-                         return "{\"error\": \"Object '" + targetName + "' not found in index.\"}";
-                    targetName = key;
+                // 1. Try exact match if targetName already contains ":"
+                if (targetName.Contains(":") && index.Objects.TryGetValue(targetName, out targetNode)) {
+                    foundKey = targetName;
                 }
+                else {
+                    // 2. Search for the name across all types (Procedure:Name, Table:Name, etc)
+                    var possibleKeys = index.Objects.Keys.Where(k => k.EndsWith(":" + targetName, StringComparison.OrdinalIgnoreCase)).ToList();
+                    
+                    if (possibleKeys.Count == 0) {
+                        // FALLBACK: Try direct KB find and trigger a single-object index update
+                        var obj = _objectService.FindObject(targetName);
+                        if (obj != null) {
+                            return "{\"target\": \"" + obj.Name + "\", \"status\": \"Indexing in progress for this object. Please retry in a few seconds.\", \"totalAffected\": 0}";
+                        }
+                        return "{\"error\": \"Object '" + targetName + "' not found in index.\"}";
+                    }
+                    
+                    // If multiple types match, prioritize Procedures/Transactions/Tables
+                    foundKey = possibleKeys.FirstOrDefault(k => k.StartsWith("Procedure:", StringComparison.OrdinalIgnoreCase))
+                             ?? possibleKeys.FirstOrDefault(k => k.StartsWith("Transaction:", StringComparison.OrdinalIgnoreCase))
+                             ?? possibleKeys.FirstOrDefault(k => k.StartsWith("Table:", StringComparison.OrdinalIgnoreCase))
+                             ?? possibleKeys.First();
+                    
+                    index.Objects.TryGetValue(foundKey, out targetNode);
+                }
+
+                targetName = targetNode.Name; // Use canonical name
 
                 var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var queue = new Queue<string>();
@@ -291,7 +307,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string GetConversionContext(string name)
+        public string GetConversionContext(string name, JArray include = null)
         {
             try
             {
@@ -303,101 +319,104 @@ namespace GxMcp.Worker.Services
                 result["type"] = obj.TypeDescriptor.Name;
                 result["description"] = obj.Description;
 
-                // 1. Get Parameters
-                var parameters = new JArray();
-                try {
-                    var (parmRule, parms) = _objectService.GetParametersInternal(obj);
-                    if (!string.IsNullOrEmpty(parmRule)) result["parmRule"] = parmRule;
-                    foreach (var p in parms) {
-                        var pObj = new JObject();
-                        pObj["name"] = p.Name;
-                        pObj["accessor"] = p.Accessor;
-                        pObj["type"] = p.Type;
-                        parameters.Add(pObj);
-                    }
-                } catch {}
-                result["parameters"] = parameters;
+                bool includeAll = (include == null || include.Count == 0);
+                HashSet<string> requested = includeAll ? new HashSet<string>() : new HashSet<string>(include.Select(i => i.ToString().ToLower()));
 
-                // 2. Get Variables
-                var variables = new JArray();
-                try {
-                    dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
-                    if (vPart != null) {
-                        foreach (Variable v in vPart.Variables) {
-                            var vObj = new JObject();
-                            vObj["name"] = v.Name;
-                            vObj["type"] = v.Type.ToString();
-                            vObj["length"] = (int)v.Length;
-                            vObj["decimals"] = (int)v.Decimals;
-                            variables.Add(vObj);
-                        }
-                    }
-                } catch {}
-                result["variables"] = variables;
+                // PERFORMANCE: Parallel execution of metadata extraction
+                var tasks = new List<Task>();
 
-                // 3. Get Rules/Conditions/Events specifically
-                try {
-                    result["rules"] = GetPartSourceByName(obj, "Rules");
-                    if (obj is Procedure || obj is WebPanel) {
-                        result["conditions"] = GetPartSourceByName(obj, "Conditions");
-                    }
-                    if (obj is Transaction || obj is WebPanel) {
-                        result["events"] = GetPartSourceByName(obj, "Events");
-                    }
-                } catch {}
-
-                // 4. Get UI Structure
-                if (_uiService != null) {
-                    try {
-                        result["uiStructure"] = _uiService.GetSimplifiedUIStructure(obj);
-                    } catch {}
+                // 1. Signature (Parameters)
+                if (includeAll || requested.Contains("signature"))
+                {
+                    tasks.Add(Task.Run(() => {
+                        try {
+                            var (parmRule, parms) = _objectService.GetParametersInternal(obj);
+                            lock (result) {
+                                if (!string.IsNullOrEmpty(parmRule)) result["parmRule"] = parmRule;
+                                var parameters = new JArray();
+                                foreach (var p in parms) parameters.Add(new JObject { ["name"] = p.Name, ["accessor"] = p.Accessor, ["type"] = p.Type });
+                                result["parameters"] = parameters;
+                            }
+                        } catch {}
+                    }));
                 }
 
-                // 5. Get WWP Metadata
-                result["wwpMetadata"] = GetWWPMetadata(obj);
+                // 2. Variables
+                if (includeAll || requested.Contains("variables"))
+                {
+                    tasks.Add(Task.Run(() => {
+                        try {
+                            dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
+                            if (vPart != null) {
+                                var variables = new JArray();
+                                foreach (Variable v in vPart.Variables) {
+                                    variables.Add(new JObject { ["name"] = v.Name, ["type"] = v.Type.ToString(), ["length"] = (int)v.Length, ["decimals"] = (int)v.Decimals });
+                                }
+                                lock (result) result["variables"] = variables;
+                            }
+                        } catch {}
+                    }));
+                }
 
-                // 6. Get Domains
-                var domains = new JArray();
-                var processedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                try {
-                    dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
-                    if (vPart != null) {
-                        foreach (var v in vPart.Variables) {
-                            try {
-                                dynamic dv = v;
-                                var domain = dv.Domain;
-                                
-                                // Elite: If variable not directly based on domain, check its attribute
-                                if (domain == null && dv.Attribute != null) domain = dv.Attribute.Domain;
+                // 3. Structure (Rules/Events)
+                if (includeAll || requested.Contains("structure"))
+                {
+                    tasks.Add(Task.Run(() => {
+                        try {
+                            var rules = GetPartSourceByName(obj, "Rules");
+                            lock (result) result["rules"] = rules;
+                            
+                            if (obj is Procedure || obj is WebPanel) {
+                                var conditions = GetPartSourceByName(obj, "Conditions");
+                                lock (result) result["conditions"] = conditions;
+                            }
+                            if (obj is Transaction || obj is WebPanel) {
+                                var events = GetPartSourceByName(obj, "Events");
+                                lock (result) result["events"] = events;
+                            }
+                        } catch {}
+                    }));
+                }
 
-                                if (domain != null) {
-                                    string dName = domain.Name;
-                                    if (!processedDomains.Contains(dName)) {
-                                        processedDomains.Add(dName);
-                                        var dObj = new JObject();
-                                        dObj["name"] = dName;
+                // 4. Domains & Enums
+                if (includeAll || requested.Contains("metadata") || requested.Contains("variables"))
+                {
+                    tasks.Add(Task.Run(() => {
+                        try {
+                            var domains = new JArray();
+                            var processedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
+                            if (vPart != null) {
+                                foreach (var v in vPart.Variables) {
+                                    dynamic dv = v;
+                                    var domain = dv.Domain ?? (dv.Attribute != null ? dv.Attribute.Domain : null);
+                                    if (domain != null && !processedDomains.Contains(domain.Name)) {
+                                        processedDomains.Add(domain.Name);
+                                        var dObj = new JObject { ["name"] = domain.Name };
                                         var values = new JArray();
-                                        try {
-                                            dynamic dom = domain;
-                                            foreach (var ev in dom.EnumValues) {
-                                                var valObj = new JObject();
-                                                valObj["name"] = ev.Name;
-                                                valObj["value"] = ev.Value;
-                                                values.Add(valObj);
-                                            }
-                                        } catch { }
+                                        foreach (var ev in ((dynamic)domain).EnumValues) values.Add(new JObject { ["name"] = ev.Name, ["value"] = ev.Value });
                                         dObj["values"] = values;
                                         domains.Add(dObj);
                                     }
                                 }
-                            } catch { }
-                        }
-                    }
-                } catch {}
+                            }
+                            if (domains.Count > 0) lock (result) result["domains"] = domains;
+                        } catch {}
+                    }));
+                }
 
-                if (domains.Count > 0) result["domains"] = domains;
+                // Wait for all metadata tasks to complete (with timeout for safety)
+                Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(5));
 
-                // 7. Generate Semantic Summary
+                // 5. UI Structure (Sync because it's usually fast or has its own internal logic)
+                if (_uiService != null && (includeAll || requested.Contains("structure"))) {
+                    try { result["uiStructure"] = _uiService.GetSimplifiedUIStructure(obj); } catch {}
+                }
+
+                // 6. Metadata (Sync)
+                if (includeAll || requested.Contains("metadata")) result["wwpMetadata"] = GetWWPMetadata(obj);
+
+                // 7. Final Summary
                 result["summary"] = GenerateSummary(obj, result);
 
                 return result.ToString();

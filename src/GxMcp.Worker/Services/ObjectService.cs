@@ -358,47 +358,54 @@ namespace GxMcp.Worker.Services
 
         private void ProcessSourceContent(KBObject obj, string content, int? offset, int? limit, JObject result, string client = "ide")
         {
-            string[] lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-            int totalLines = lines.Length;
-
-            // AUTO-TRUNCATION for MCP: If no limits were provided but the file is huge (over 2500 lines)
-            if (!offset.HasValue && !limit.HasValue && client == "mcp" && totalLines > 2500)
-            {
-                offset = 0;
-                limit = 2500;
-                result["isTruncatedByWorker"] = true;
-                result["message"] = "File is extremely large. Truncated to 2500 lines to prevent IPC buffer overflow. Use genexus_read with offset/limit to read more.";
-            }
-
-            if (offset.HasValue || limit.HasValue)
+            // Performance: Use StringReader to process line by line without immediate massive splitting
+            using (var reader = new StringReader(content))
             {
                 int start = offset ?? 0;
-                int count = limit ?? (totalLines - start);
+                int count = limit ?? int.MaxValue;
+                
+                // AUTO-TRUNCATION for MCP: If no limits were provided but the file is large
+                if (!offset.HasValue && !limit.HasValue && client == "mcp" && content.Length > 250000)
+                {
+                    start = 0;
+                    count = 2500;
+                    result["isTruncatedByWorker"] = true;
+                    result["message"] = "File is extremely large. Truncated to 2500 lines to prevent IPC buffer overflow. Use genexus_read with offset/limit to read more.";
+                }
 
-                if (start < 0) start = 0;
-                if (start >= totalLines) count = 0;
-                else if (start + count > totalLines) count = totalLines - start;
+                var paginatedLines = new List<string>();
+                int currentLine = 0;
+                string line;
+                int totalLinesInFile = 0;
 
-                string paginatedContent = string.Join(Environment.NewLine, lines.Skip(start).Take(count));
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (currentLine >= start && paginatedLines.Count < count)
+                    {
+                        paginatedLines.Add(line);
+                    }
+                    currentLine++;
+                    totalLinesInFile = currentLine;
+                    
+                    // Optimization: If we already have what we need AND we don't need total count, we could break.
+                    // But for metadata accuracy, we continue to count totalLinesInFile unless it's too much.
+                    if (paginatedLines.Count >= count && totalLinesInFile > 10000) break; 
+                }
 
-                if (count < totalLines && start + count < totalLines && !result.ContainsKey("isTruncatedByWorker"))
+                string paginatedContent = string.Join(Environment.NewLine, paginatedLines);
+
+                if (paginatedLines.Count < totalLinesInFile && !result.ContainsKey("isTruncatedByWorker"))
                 {
                     paginatedContent += "\n\n// ... [CONTENT TRUNCATED. USE PAGINATION (offset/limit) TO READ FURTHER] ... //\n";
                 }
 
                 ProcessTextResponse(paginatedContent, result, client);
                 result["offset"] = start;
-                result["limit"] = count;
-                result["totalLines"] = totalLines;
+                result["limit"] = paginatedLines.Count;
+                result["totalLines"] = totalLinesInFile;
 
                 AddVariableMetadata(obj, paginatedContent, result);
                 AddCallSignatures(obj, paginatedContent, result);
-            }
-            else
-            {
-                ProcessTextResponse(content, result, client);
-                AddVariableMetadata(obj, content, result);
-                AddCallSignatures(obj, content, result);
             }
         }
 

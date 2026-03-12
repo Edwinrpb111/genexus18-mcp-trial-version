@@ -147,6 +147,7 @@ namespace GxMcp.Worker.Services
                         if (action == "GetIndexStatus") return _kbService.GetIndexStatus();
                         break;
                     case "batch":
+                        if (action == "BatchRead") return _batchService.BatchRead(args?["items"] as JArray);
                         if (action == "BatchEdit") return _batchService.BatchEdit(target, args?["changes"] as JArray);
                         if (action == "MultiEdit") return _batchService.MultiEdit(args?["items"] as JArray);
                         if (action == "Process") return _batchService.ProcessBatch(args?["batchAction"]?.ToString(), target, payload);
@@ -173,7 +174,7 @@ namespace GxMcp.Worker.Services
                         if (action == "GetParameters") return _analyzeService.GetSignature(target);
                         if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target);
                         if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
-                        if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target);
+                        if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray);
                         if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
                         if (action == "Summarize") return _summarizeService.Summarize(target);
                         if (action == "GetSQL") return _dataInsightService.GetTableDDL(target);

@@ -125,10 +125,29 @@ namespace GxMcp.Worker
                 sdkWorker.SetApartmentState(ApartmentState.STA);
                 sdkWorker.Start();
 
+                // DEDICATED STA BACKGROUND TASK THREAD
+                // Critical for GeneXus SDK stability in long-running tasks
+                var backgroundWorker = new Thread(() => {
+                    Logger.Info("Background STA Worker Thread started.");
+                    while (!CommandQueue.IsCompleted) {
+                        if (BackgroundQueue.TryDequeue(out var action)) {
+                            try { action(); }
+                            catch (Exception ex) { Logger.Error("Background Task Error: " + ex.Message); }
+                        } else {
+                            Thread.Sleep(100);
+                        }
+                    }
+                }) { 
+                    IsBackground = true, 
+                    Name = "BackgroundWorker",
+                };
+                backgroundWorker.SetApartmentState(ApartmentState.STA); // THE FIX!
+                backgroundWorker.Start();
+
                 // MAIN DISPATCHER LOOP (Ultra-responsive)
                 while (!CommandQueue.IsCompleted || CommandQueue.Count > 0)
                 {
-                    if (CommandQueue.TryTake(out string line, 50))
+                    if (CommandQueue.TryTake(out string line, 100))
                     {
                         if (_dispatcher.IsThreadSafe(line))
                         {
@@ -139,15 +158,6 @@ namespace GxMcp.Worker
                         {
                             // WRITE, SDK: Send to sequential SDK Worker
                             SdkCommandQueue.Add(line);
-                        }
-                    }
-                    else
-                    {
-                        // Process background tasks (only on main thread if safe, otherwise could be delegated)
-                        if (BackgroundQueue.TryDequeue(out var action))
-                        {
-                            try { action(); }
-                            catch (Exception ex) { Logger.Error("Background Task Error: " + ex.Message); }
                         }
                     }
                 }

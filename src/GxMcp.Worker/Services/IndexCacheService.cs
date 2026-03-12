@@ -157,16 +157,17 @@ namespace GxMcp.Worker.Services
                     string dir = Path.GetDirectoryName(_indexPath);
                     if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     
-                    // PERFORMANCE: Use optimized JSON settings for faster serialization
+                    // PERFORMANCE: Compact JSON for large indices (30k+ objects)
                     var settings = new Newtonsoft.Json.JsonSerializerSettings { 
                         NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
-                        DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore
+                        DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore,
+                        Formatting = Newtonsoft.Json.Formatting.None // Compact!
                     };
                     string json = Newtonsoft.Json.JsonConvert.SerializeObject(_index, settings);
                     
                     File.WriteAllText(_indexPath, json);
                     _lastSavedJsonHash = GetJsonHash(json);
-                    Logger.Debug("Index flushed to disk (Background)");
+                    Logger.Info($"[INDEX-SAVE] Index flushed: {json.Length / 1024} KB saved.");
                 }
                 catch (Exception ex) { Logger.Error("Flush Error: " + ex.Message); }
                 finally { 
@@ -238,9 +239,22 @@ namespace GxMcp.Worker.Services
             {
                 try {
                     entry.SourceSnippet = StructureParser.SerializeToText(obj);
+                    entry.Complexity = entry.SourceSnippet?.Split('\n').Length ?? 0;
                 } catch (Exception ex) {
                     Logger.Error($"SDT index snippet failed for {obj.Name}: {ex.Message}");
                 }
+            }
+
+            // Calculate Complexity for Procedures/DataProviders
+            if (obj is global::Artech.Genexus.Common.Objects.Procedure || obj is global::Artech.Genexus.Common.Objects.DataProvider)
+            {
+                try {
+                    dynamic sourcePart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is ISource);
+                    if (sourcePart != null) {
+                        string src = sourcePart.Source ?? "";
+                        entry.Complexity = src.Split('\n').Length;
+                    }
+                } catch { }
             }
 
             string key = string.Format("{0}:{1}", entry.Type, entry.Name);
@@ -288,6 +302,17 @@ namespace GxMcp.Worker.Services
                                     if (!entry.Tables.Contains(targetName)) { entry.Tables.Add(targetName); changed = true; }
                                 } else {
                                     if (!entry.Calls.Contains(targetName)) { entry.Calls.Add(targetName); changed = true; }
+                                }
+
+                                // Phase 1: Inverted Index (CalledBy)
+                                string targetIndexKey = $"{targetType}:{targetName}";
+                                if (index.Objects.TryGetValue(targetIndexKey, out var targetEntry)) {
+                                    lock (targetEntry.CalledBy) {
+                                        if (!targetEntry.CalledBy.Contains(entry.Name)) {
+                                            targetEntry.CalledBy.Add(entry.Name);
+                                            changed = true;
+                                        }
+                                    }
                                 }
                             } catch { }
                         }

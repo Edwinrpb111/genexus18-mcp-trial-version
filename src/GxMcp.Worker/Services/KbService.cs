@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
+using Artech.Architecture.Common.Objects;
 
 namespace GxMcp.Worker.Services
 {
@@ -29,12 +30,7 @@ namespace GxMcp.Worker.Services
         }
 
         public void SetBuildService(BuildService bs) { _buildService = bs; }
-
-        public IndexCacheService GetIndexCache()
-        {
-            return _indexCacheService;
-        }
-
+        public IndexCacheService GetIndexCache() { return _indexCacheService; }
         public bool IsInitializing => _isOpenInProgress;
 
         public dynamic GetKB()
@@ -74,8 +70,8 @@ namespace GxMcp.Worker.Services
                         string kbDir = Path.GetDirectoryName(path);
                         Directory.SetCurrentDirectory(kbDir);
                         
-                        var options = new global::Artech.Architecture.Common.Objects.KnowledgeBase.OpenOptions(path);
-                        _kb = global::Artech.Architecture.Common.Objects.KnowledgeBase.Open(options);
+                        var options = new KnowledgeBase.OpenOptions(path);
+                        _kb = KnowledgeBase.Open(options);
                         
                         Logger.Info($"KB opened successfully.");
                         return "{\"status\":\"Success\"}";
@@ -91,94 +87,59 @@ namespace GxMcp.Worker.Services
 
         public string BulkIndex()
         {
-            Logger.Info("BulkIndex() requested.");
+            Logger.Info("BulkIndex() requested (Diagnostic Mode).");
             if (_isIndexing) return "{\"status\":\"Already in progress\"}";
+
+            _isIndexing = true;
+            _processedCount = 0;
+            _totalCount = 0;
+            _currentStatus = "Querying Database...";
 
             Program.BackgroundQueue.Enqueue(() => {
                 try {
                     dynamic kb = GetKB();
                     if (kb == null) { _isIndexing = false; return; }
                     
-                    _isIndexing = true;
-                    _processedCount = 0;
-                    _totalCount = 0;
+                    // [DIAG] Use the exact property name found via reflection
+                    string connStr = "";
+                    try {
+                        dynamic connInfo = kb.ConnectionInfo;
+                        connStr = connInfo.ConnectionStringFull; // FOUND!
+                    } catch {}
 
-                    var objects = new List<global::Artech.Architecture.Common.Objects.KBObject>();
-                    foreach (global::Artech.Architecture.Common.Objects.KBObject obj in kb.DesignModel.Objects.GetAll()) {
-                        objects.Add(obj);
+                    if (string.IsNullOrEmpty(connStr)) {
+                        Logger.Error("[SQL-DIAG] ConnectionStringFull not found on kb.ConnectionInfo");
+                        _isIndexing = false; return;
                     }
-                    _totalCount = objects.Count;
-                    
-                    var index = new SearchIndex { LastUpdated = DateTime.Now };
-                    ProcessIndexChunk(index, objects, 0);
+
+                    Logger.Info("[SQL-DIAG] Executing Definitive Count Query...");
+                    using (var conn = new System.Data.SqlClient.SqlConnection(connStr)) {
+                        conn.Open();
+                        var cmd = new System.Data.SqlClient.SqlCommand(
+                            "SELECT T.EntityTypeName as TypeName, COUNT(*) as Qty " +
+                            "FROM dbo.Entity E " +
+                            "JOIN dbo.EntityType T ON E.EntityTypeId = T.EntityTypeId " +
+                            "GROUP BY T.EntityTypeName ORDER BY Qty DESC", conn);
+                        
+                        using (var reader = cmd.ExecuteReader()) {
+                            Logger.Info("[SQL-DIAG] --- THE TRUTH: PHYSICAL OBJECT COUNT ---");
+                            while (reader.Read()) {
+                                Logger.Info(string.Format("[SQL-DIAG] {0}: {1}", reader["TypeName"], reader["Qty"]));
+                            }
+                        }
+                    }
+                    _currentStatus = "Complete";
+
+                    _currentStatus = "Complete";
+                    _isIndexing = false;
                 } catch (Exception ex) {
+                    Logger.Error("[SQL-DIAG] FATAL: " + ex.Message);
                     _isIndexing = false;
                     _currentStatus = "Error: " + ex.Message;
                 }
             });
 
             return "{\"status\":\"Started\"}";
-        }
-
-        private void ProcessIndexChunk(SearchIndex index, List<global::Artech.Architecture.Common.Objects.KBObject> objects, int startIndex)
-        {
-            const int chunkSize = 200;
-            int endIndex = Math.Min(startIndex + chunkSize, objects.Count);
-
-            var fastDataList = new List<dynamic>();
-            for (int i = startIndex; i < endIndex; i++)
-            {
-                var obj = objects[i];
-                try {
-                    var calls = new List<string>();
-                    foreach (var r in obj.GetReferences())
-                    {
-                        try {
-                            var target = obj.Model.Objects.Get(r.To);
-                            if (target != null) calls.Add(target.Name);
-                        } catch { }
-                    }
-
-                    fastDataList.Add(new {
-                        Guid = obj.Guid.ToString(),
-                        Name = obj.Name,
-                        Type = obj.TypeDescriptor.Name,
-                        Description = obj.Description,
-                        Parent = (obj.Parent != null && obj.Parent.Guid != obj.Guid) ? ((obj.Parent.TypeDescriptor.Name == "DesignModel") ? "Root Module" : obj.Parent.Name) : null,
-                        Module = (obj.Module != null && obj.Module.Guid != obj.Guid) ? obj.Module.Name : null,
-                        Calls = calls.Distinct().ToList()
-                    });
-                } catch { }
-            }
-
-            foreach (var data in fastDataList) {
-                var entry = new SearchIndex.IndexEntry {
-                    Guid = data.Guid, Name = data.Name, Type = data.Type,
-                    Description = data.Description, Parent = data.Parent, Module = data.Module,
-                    Calls = data.Calls
-                };
-                
-                // Compute Embedding for Semantic Search
-                string semanticText = $"{entry.Name} {entry.Type} {entry.Description}";
-                entry.Embedding = _vectorService.ComputeEmbedding(semanticText);
-
-                index.Objects[string.Format("{0}:{1}", entry.Type, entry.Name)] = entry;
-            }
-
-            _processedCount = endIndex;
-
-            if (endIndex < objects.Count) {
-                // PERIODIC SAVE: Every 1000 objects, flush to disk to avoid data loss on crash
-                if (endIndex % 1000 == 0) {
-                    _indexCacheService.UpdateIndex(index);
-                    Logger.Info($"Intermediate Index Save: {endIndex} objects.");
-                }
-                Program.BackgroundQueue.Enqueue(() => ProcessIndexChunk(index, objects, endIndex));
-            } else {
-                _indexCacheService.UpdateIndex(index);
-                _isIndexing = false;
-                Logger.Info("Fast Bulk Indexing complete.");
-            }
         }
 
         public string GetIndexStatus()
@@ -188,12 +149,6 @@ namespace GxMcp.Worker.Services
             json["total"] = _totalCount;
             json["processed"] = _processedCount;
             json["status"] = _currentStatus;
-            
-            if (_totalCount > 0)
-                json["progress"] = (int)((_processedCount / (float)_totalCount) * 100);
-            else
-                json["progress"] = 0;
-
             return json.ToString();
         }
     }

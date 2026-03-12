@@ -21,15 +21,59 @@ namespace GxMcp.Worker.Helpers
             return sections;
         }
 
-        public static HashSet<string> GetVariables(string code)
+        public static List<string> Validate(string code)
         {
-            var variables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var matches = Regex.Matches(code, @"&(\w+)", RegexOptions.Compiled);
-            foreach (Match match in matches)
+            var errors = new List<string>();
+            var stack = new Stack<(string name, int line)>();
+            
+            string[] lines = code.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            
+            for (int i = 0; i < lines.Length; i++)
             {
-                variables.Add(match.Groups[1].Value);
+                string line = lines[i].Trim();
+                if (string.IsNullOrEmpty(line) || line.StartsWith("//") || line.StartsWith("/*")) continue;
+
+                // Simple Block Matching
+                if (Regex.IsMatch(line, @"(?i)^\s*If\b") && !line.Contains(";")) stack.Push(("If", i + 1));
+                else if (Regex.IsMatch(line, @"(?i)^\s*Do\s+while\b", RegexOptions.IgnoreCase)) stack.Push(("Do While", i + 1));
+                else if (Regex.IsMatch(line, @"(?i)^\s*For\s+each\b", RegexOptions.IgnoreCase)) stack.Push(("For Each", i + 1));
+                else if (Regex.IsMatch(line, @"(?i)^\s*Sub\b", RegexOptions.IgnoreCase)) stack.Push(("Sub", i + 1));
+                else if (Regex.IsMatch(line, @"(?i)^\s*Event\b", RegexOptions.IgnoreCase)) stack.Push(("Event", i + 1));
+
+                else if (Regex.IsMatch(line, @"(?i)^\s*Endif\b", RegexOptions.IgnoreCase))
+                {
+                    if (stack.Count == 0 || stack.Peek().name != "If") errors.Add($"Line {i + 1}: 'Endif' without matching 'If'");
+                    else stack.Pop();
+                }
+                else if (Regex.IsMatch(line, @"(?i)^\s*Enddo\b", RegexOptions.IgnoreCase))
+                {
+                    if (stack.Count == 0 || stack.Peek().name != "Do While") errors.Add($"Line {i + 1}: 'Enddo' without matching 'Do While'");
+                    else stack.Pop();
+                }
+                else if (Regex.IsMatch(line, @"(?i)^\s*Endfor\b", RegexOptions.IgnoreCase))
+                {
+                    if (stack.Count == 0 || stack.Peek().name != "For Each") errors.Add($"Line {i + 1}: 'Endfor' without matching 'For Each'");
+                    else stack.Pop();
+                }
+                else if (Regex.IsMatch(line, @"(?i)^\s*Endsub\b", RegexOptions.IgnoreCase))
+                {
+                    if (stack.Count == 0 || stack.Peek().name != "Sub") errors.Add($"Line {i + 1}: 'Endsub' without matching 'Sub'");
+                    else stack.Pop();
+                }
+                else if (Regex.IsMatch(line, @"(?i)^\s*Endevent\b", RegexOptions.IgnoreCase))
+                {
+                    if (stack.Count == 0 || stack.Peek().name != "Event") errors.Add($"Line {i + 1}: 'Endevent' without matching 'Event'");
+                    else stack.Pop();
+                }
             }
-            return variables;
+
+            while (stack.Count > 0)
+            {
+                var top = stack.Pop();
+                errors.Add($"Line {top.line}: '{top.name}' without matching End");
+            }
+
+            return errors;
         }
 
         public static (int start, int end) GetSectionRange(string code, string sectionName)

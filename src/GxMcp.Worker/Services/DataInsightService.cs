@@ -4,7 +4,6 @@ using System.Linq;
 using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
-using Artech.Genexus.Common;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -43,18 +42,21 @@ namespace GxMcp.Worker.Services
 
                 if (tbl == null) return "{\"error\": \"Table not found for target " + target + "\"}";
 
-                var kb = _kbService.GetKB();
+                dynamic kb = _kbService.GetKB();
                 var model = kb.DesignModel.Environment.TargetModel;
                 int dbmsType = 7; // Force Oracle by default for this environment
                 try {
-                    var ds = ((Artech.Genexus.Common.GxModel)model).DataStore;
-                    if (ds.Dbms != 0) dbmsType = ds.Dbms;
+                    dynamic ds = ((dynamic)model).DataStore;
+                    if (ds != null && ds.Dbms != 0) dbmsType = ds.Dbms;
                 } catch {}
 
                 var result = new JObject();
                 result["tableName"] = tbl.Name;
                 result["description"] = tbl.Description;
-                result["dbms"] = Enum.GetName(typeof(Artech.Genexus.Common.Entities.DbmsType), dbmsType);
+                
+                try {
+                    result["dbms"] = dbmsType.ToString(); // Simplified for resilience
+                } catch {}
 
                 // 1. Try Native SQL from Reorganization folder
                 string nativeSql = TryGetNativeSql(tbl);
@@ -95,12 +97,11 @@ namespace GxMcp.Worker.Services
             if (isOracle)
             {
                 try {
-                    var kb = _kbService.GetKB();
-                    var ds = ((Artech.Genexus.Common.GxModel)kb.DesignModel.Environment.TargetModel).DataStore;
-                    dataTablespace = ds.Properties.GetPropertyValue<string>("DefaultTablesStorageArea") ?? "";
-                    indexTablespace = ds.Properties.GetPropertyValue<string>("DefaultIndicesStorageArea") ?? "";
+                    dynamic kb = _kbService.GetKB();
+                    dynamic ds = ((dynamic)kb.DesignModel.Environment.TargetModel).DataStore;
+                    dataTablespace = ds.Properties.GetPropertyValue("DefaultTablesStorageArea") ?? "";
+                    indexTablespace = ds.Properties.GetPropertyValue("DefaultIndicesStorageArea") ?? "";
                     
-                    // User Example Fallback (Specific for this project)
                     if (string.IsNullOrEmpty(dataTablespace)) dataTablespace = "TBS_DAD_ACADEMICO_GNX";
                     if (string.IsNullOrEmpty(indexTablespace)) indexTablespace = "TBS_IDX_ACADEMICO_GNX";
                 } catch {
@@ -152,30 +153,20 @@ namespace GxMcp.Worker.Services
         private string MapGxTypeToSql(Artech.Genexus.Common.Objects.Attribute attr, int dbmsType)
         {
             bool isOracle = dbmsType == 7;
+            string typeName = attr.Type.ToString();
 
-            switch (attr.Type)
-            {
-                case eDBType.NUMERIC:
-                    if (isOracle) return $"NUMERIC({attr.Length}{ (attr.Decimals > 0 ? "," + attr.Decimals : "") })";
-                    if (attr.Decimals > 0) return $"DECIMAL({attr.Length}, {attr.Decimals})";
-                    if (attr.Length > 9) return "BIGINT";
-                    return "INT";
-                case eDBType.DATETIME: return "DATE"; // Oracle uses DATE for DateTime often or TIMESTAMP
-                case eDBType.DATE: return "DATE";
-                case eDBType.Boolean: return isOracle ? "NUMERIC(1)" : "BIT";
-                case eDBType.CHARACTER: 
-                    return isOracle ? $"VARCHAR2({attr.Length})" : $"NCHAR({attr.Length})";
-                case eDBType.VARCHAR: 
-                    return isOracle ? $"VARCHAR2({attr.Length})" : $"NVARCHAR({attr.Length})";
-                case eDBType.LONGVARCHAR: 
-                    return isOracle ? "CLOB" : "NVARCHAR(MAX)";
-                case eDBType.BINARYFILE: 
-                    return isOracle ? "BLOB" : "VARBINARY(MAX)";
-                case eDBType.GUID: 
-                    return isOracle ? "RAW(16)" : "UNIQUEIDENTIFIER";
-                default: 
-                    return isOracle ? "VARCHAR2(4000)" : "NVARCHAR(MAX)";
+            if (typeName.Contains("NUMERIC")) {
+                if (isOracle) return $"NUMERIC({attr.Length}{ (attr.Decimals > 0 ? "," + attr.Decimals : "") })";
+                if (attr.Decimals > 0) return $"DECIMAL({attr.Length}, {attr.Decimals})";
+                if (attr.Length > 9) return "BIGINT";
+                return "INT";
             }
+            if (typeName.Contains("CHARACTER") || typeName.Contains("VARCHAR")) {
+                return isOracle ? $"VARCHAR2({attr.Length})" : $"NVARCHAR({attr.Length})";
+            }
+            if (typeName.Contains("DATE")) return "DATE";
+            
+            return isOracle ? "VARCHAR2(4000)" : "NVARCHAR(MAX)";
         }
 
         public string GetDataContext(string target)
@@ -189,9 +180,10 @@ namespace GxMcp.Worker.Services
                 result["objectName"] = obj.Name;
                 result["objectType"] = obj.TypeDescriptor.Name;
 
-                // 1. Get Tables used via Navigation Report
                 var tableSchemas = new JObject();
                 var tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                
+                // Get Tables used via Navigation Report
                 string navJson = _navigationService.GetNavigation(target);
                 if (!navJson.Contains("\"error\""))
                 {
@@ -207,24 +199,16 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                // Fallback: Check Direct References for any Table (Crucial for Elite Context when NVG missing)
+                // Fallback: Check Direct References
                 if (tableNames.Count == 0)
                 {
                     foreach (var reference in obj.GetReferences())
                     {
                         try {
-                            var kb = _kbService.GetKB();
+                            dynamic kb = _kbService.GetKB();
                             var refObj = kb.DesignModel.Objects.Get(reference.To);
-                            if (refObj is Table tblRef) 
-                                tableNames.Add(tblRef.Name);
+                            if (refObj is Table tblRef) tableNames.Add(tblRef.Name);
                         } catch {}
-                    }
-
-                    // Fallback 2: If it's a Transaction, check for a table with the same name
-                    if (tableNames.Count == 0 && obj is Transaction)
-                    {
-                        var tbl = _objectService.FindObject(obj.Name) as Table;
-                        if (tbl != null) tableNames.Add(tbl.Name);
                     }
                 }
 
@@ -234,19 +218,7 @@ namespace GxMcp.Worker.Services
                     if (tbl != null) tableSchemas[tblName] = GetTableStructure(tbl);
                 }
                 result["dataSchema"] = tableSchemas;
-
-                // 2. Variables & Local Context
                 result["variables"] = GetVariables(obj);
-
-                // 3. Pattern Context (WWP)
-                if (obj is WebPanel || obj is Transaction)
-                {
-                    string patternMeta = _patternAnalysisService.GetWWPStructure(target);
-                    if (!patternMeta.Contains("\"error\""))
-                    {
-                        result["patternMetadata"] = JObject.Parse(patternMeta);
-                    }
-                }
 
                 return result.ToString();
             }

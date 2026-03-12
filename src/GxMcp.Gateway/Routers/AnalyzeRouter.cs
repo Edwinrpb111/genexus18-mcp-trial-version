@@ -18,7 +18,7 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_inspect":
                     // Por padrão, se não especificar, o GetConversionContext já traz quase tudo.
                     // Para manter a compatibilidade interna, usamos o module Analyze.
-                    return new { module = "Analyze", action = "GetConversionContext", target = target };
+                    return new { module = "Analyze", action = "GetConversionContext", target = target, include = args?["include"] };
 
                 case "genexus_summarize":
                     return new { module = "Analyze", action = "Summarize", target = target };
