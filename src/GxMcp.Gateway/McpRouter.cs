@@ -59,6 +59,7 @@ namespace GxMcp.Gateway
                     return new {
                         protocolVersion = "2025-03-26",
                         capabilities = new { 
+                            prompts = new { listChanged = false },
                             tools = new { listChanged = true },
                             resources = new { listChanged = true, subscribe = false }
                         },
@@ -75,6 +76,39 @@ namespace GxMcp.Gateway
                     };
                 case "resources/read":
                     return null; // Handled in ConvertResourceCall or directly in Program
+                case "resources/templates/list":
+                    return new {
+                        resourceTemplates = new[] {
+                            new {
+                                uriTemplate = "genexus://objects/{name}",
+                                name = "GeneXus Object Source",
+                                description = "Read the source code of any specific GeneXus object by passing its name."
+                            }
+                        }
+                    };
+                case "prompts/list":
+                    return new {
+                        prompts = new[] {
+                            new {
+                                name = "genexus_architect",
+                                description = "System prompt instructing the LLM on how to behave as an expert GeneXus Architect.",
+                                arguments = new object[] { }
+                            }
+                        }
+                    };
+                case "prompts/get":
+                    return new {
+                        description = "Expert Architect Prompt",
+                        messages = new[] {
+                            new {
+                                role = "user",
+                                content = new {
+                                    type = "text",
+                                    text = "You are an expert GeneXus 18 Architect. Always prioritize standard Business Components (BCs), strict Data Types (SDTs), and avoid raw SQL unless absolutely necessary. When coding, structure output gracefully."
+                                }
+                            }
+                        }
+                    };
                 case "notifications/initialized": return null;
                 case "ping": return new { };
                 default: return null;

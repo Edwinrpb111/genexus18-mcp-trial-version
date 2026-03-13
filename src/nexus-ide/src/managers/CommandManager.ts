@@ -592,19 +592,14 @@ export class CommandManager {
       ),
 
       vscode.commands.registerCommand("nexus-ide.copyMcpConfig", async () => {
-        const port = vscode.workspace
-          .getConfiguration(CONFIG_SECTION)
-          .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const defaultPath = rootPath ? `${rootPath}\\publish\\start_mcp.bat` : "C:\\Projetos\\GenexusMCP\\publish\\start_mcp.bat";
         const snippet = JSON.stringify(
           {
             mcpServers: {
-              genexus: {
-                command: "npx",
-                args: [
-                  "-y",
-                  "@modelcontextprotocol/server-http",
-                  `http://localhost:${port}/api/command`,
-                ],
+              genexus18: {
+                command: defaultPath.replace(/\\/g, "\\\\"),
+                args: [],
               },
             },
           },
@@ -613,7 +608,7 @@ export class CommandManager {
         );
         await vscode.env.clipboard.writeText(snippet);
         vscode.window.showInformationMessage(
-          "MCP Configuration snippet for Claude/Copilot copied to clipboard!",
+          "MCP Configuration snippet for Claude/Cursor copied to clipboard (Local StdIO mode)!",
         );
       }),
 

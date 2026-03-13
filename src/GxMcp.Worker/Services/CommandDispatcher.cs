@@ -103,9 +103,27 @@ namespace GxMcp.Worker.Services
             try
             {
                 var request = JObject.Parse(line);
-                string method = request["method"] != null ? request["method"].ToString() : null;
-                if (method == "ping") return true;
-                return true;
+                string method = request["method"]?.ToString();
+
+                // Nirvana v19.4 Fix: Unwrap Gateway execute_command
+                if (method == "execute_command")
+                {
+                    var inner = request["params"] as JObject;
+                    if (inner != null)
+                    {
+                        method = inner["module"]?.ToString() ?? method;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(method)) return false;
+                method = method.ToLower();
+
+                // Only allow strictly non-SDK or pure read-cache operations to bypass STA thread
+                if (method == "ping" || method == "search" || method == "health") 
+                    return true;
+                
+                // Any operation interacting with GeneXus SDK (COM objects) MUST run in the STA thread to prevent corruption
+                return false;
             }
             catch { return false; }
         }

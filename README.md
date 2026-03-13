@@ -31,15 +31,25 @@ The project includes **Nexus-IDE**, a lightweight VS Code extension that transfo
 
 ---
 
-## [Setup] Installation & Setup
+## [Setup] Installation & Setup (Zero-Config)
 
-### For Users (Recommended)
+### For Users (Fastest)
 
-1. Install the `.vsix` in VS Code via **Extensions -> Install from VSIX**.
-2. **Open your KB folder** in VS Code (where the `.gxw` file is).
-3. The extension will **auto-discover** your KB and start the backend!
+1. **Clone the repository.**
+2. **Run `.\install.ps1` in PowerShell.**
+   * This universal installer will automatically:
+     * Compile the backend (.NET 8).
+     * Package and install the VS Code Extension (`nexus-ide`).
+     * Automatically inject the local configuration into **Claude Desktop**.
+3. **Open your KB folder** in VS Code (where the `.gxw` file is).
 
-### For Developers (Build from Source)
+### For Cursor / Cline Users (Copy & Paste)
+
+If you are using an AI coding assistant like **Cursor** or **Cline**, simply copy the following prompt and paste it into chat:
+
+> "I want to install the GeneXus MCP Server. Please clone the repo (https://github.com/lennix1337/Genexus18MCP.git), run `.\install.ps1` in Windows PowerShell, and then configure yourself to use the MCP server by adding `{ "command": "<REPO_PATH>\\publish\\start_mcp.bat", "args": [] }` to your MCP settings."
+
+### Manual Development Build
 
 #### 1. Build the Project
 ```powershell

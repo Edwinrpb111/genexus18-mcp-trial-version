@@ -94,6 +94,25 @@ namespace GxMcp.Gateway
 
             StartWorker(config);
 
+            // Subscribing to KB changes for Semantic Cache Invalidation
+            if (!string.IsNullOrEmpty(config.Environment?.KBPath))
+            {
+                try 
+                {
+                    string mirrorPath = Path.Combine(config.Environment.KBPath, ".gx_mirror");
+                    if (!Directory.Exists(mirrorPath)) Directory.CreateDirectory(mirrorPath);
+                    var watcher = new FileSystemWatcher(mirrorPath) 
+                    {
+                        NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
+                        EnableRaisingEvents = true
+                    };
+                    watcher.Changed += (s, e) => {
+                        Log($"[Cache] Invalidation triggered by external change: {e.Name}");
+                        _semanticCache.Clear();
+                    };
+                } catch (Exception ex) { Log($"[Cache] Watcher error: {ex.Message}"); }
+            }
+
             // HTTP Server in background
             if (config.Server?.HttpPort > 0)
             {
@@ -274,10 +293,14 @@ namespace GxMcp.Gateway
                     var tcs = new TaskCompletionSource<string>();
                     _pendingRequests[idStr] = tcs;
 
+                    int timeoutMs = 60000;
+                    if (toolName == "genexus_lifecycle" || toolName == "genexus_analyze" || toolName == "genexus_test")
+                        timeoutMs = 300000; // 5 minutes for heavy operations
+
                     var rpcWrapper = new { jsonrpc = "2.0", id = idStr, method = "execute_command", @params = workerCmd };
                     await _worker!.SendCommandAsync(JsonConvert.SerializeObject(rpcWrapper));
 
-                    var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(60000));
+                    var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs));
                     if (completedTask == tcs.Task)
                     {
                         string resultJson = await tcs.Task;
@@ -366,24 +389,49 @@ namespace GxMcp.Gateway
             if (result is JObject obj)
             {
                 // Intelligent Truncation: Preserve metadata, prune large content
-                if (obj["source"] != null && obj["source"].Type == JTokenType.String)
+                var fieldsToTruncate = new[] { "source", "content", "code", "fileContent", "details" };
+                
+                foreach (var field in fieldsToTruncate)
                 {
-                    string source = obj["source"].ToString();
-                    if (source.Length > 30000)
+                    if (obj[field] != null && obj[field].Type == JTokenType.String)
                     {
-                        obj["source"] = source.Substring(0, 25000) + 
-                                       "\n\n[... TRUNCATED BY GATEWAY TOKEN BUDGET ...] \n\n" + 
-                                       source.Substring(source.Length - 5000);
-                        obj["isTruncated"] = true;
+                        string val = obj[field].ToString();
+                        if (val.Length > 20000)
+                        {
+                            obj[field] = val.Substring(0, 15000) + 
+                                           "\n\n[... TRUNCATED BY GATEWAY TOKEN BUDGET ...] \n\n" + 
+                                           val.Substring(val.Length - 5000);
+                            obj["isTruncated"] = true;
+                        }
                     }
                 }
                 
                 string truncatedRaw = obj.ToString(Formatting.None);
                 if (truncatedRaw.Length > 80000)
                 {
-                    return new JValue(truncatedRaw.Substring(0, 75000) + "... [HARD TRUNCATED]");
+                    // Fallback to ensuring valid JSON structure when heavily nested Strings overfill
+                    return JToken.FromObject(new { 
+                        error = "Response exceeded 80k token budget and could not be safely parsed. Try lower limits or pagination.", 
+                        isTruncated = true 
+                    });
                 }
                 return obj;
+            }
+            else if (result is JArray arr)
+            {
+                // Truncate arrays if they exceed limits
+                while (arr.Count > 5 && arr.ToString(Formatting.None).Length > 80000)
+                {
+                    arr.RemoveAt(arr.Count - 1);
+                }
+                if (arr.ToString(Formatting.None).Length > 80000)
+                {
+                    return JToken.FromObject(new { 
+                        error = "Array response exceeded 80k token budget. Try lower limits or pagination.", 
+                        isTruncated = true 
+                    });
+                }
+                return arr;
             }
 
             return new JValue(raw.Substring(0, 75000) + "... [TRUNCATED]");
