@@ -34,7 +34,7 @@ namespace GxMcp.Worker.Services
                     case "restore":
                         return RestoreSnapshot(target);
                     default:
-                        return "{\"error\": \"Unknown action: " + action + ". Use List, Get_Source, Save or Restore.\"}";
+                        return Models.McpResponse.Error("Unknown history action", target, action, "Supported actions are list, get_source, save and restore.");
                 }
             }
             catch (Exception ex)
@@ -46,7 +46,15 @@ namespace GxMcp.Worker.Services
         private string GetVersionSource(string target, int versionId)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return "{\"error\": \"Object not found\"}";
+            if (obj == null)
+            {
+                return Models.McpResponse.Error(
+                    "Object not found",
+                    target,
+                    "Source",
+                    "The requested object is not available in the active Knowledge Base."
+                );
+            }
 
             try
             {
@@ -81,7 +89,15 @@ namespace GxMcp.Worker.Services
         private string ListRevisions(string target)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return "{\"error\": \"Object not found\"}";
+            if (obj == null)
+            {
+                return Models.McpResponse.Error(
+                    "Object not found",
+                    target,
+                    null,
+                    "The requested object is not available in the active Knowledge Base."
+                );
+            }
 
             var history = new JArray();
             try

@@ -4,6 +4,7 @@ import { GxUriParser } from './utils/GxUriParser';
 
 export class GxDiagnosticProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
+    private readonly pendingRefreshes = new Map<string, Promise<void>>();
 
     constructor(
         private readonly fsProvider: GxFileSystemProvider
@@ -13,7 +14,19 @@ export class GxDiagnosticProvider {
 
     public async refreshDiagnostics(document: vscode.TextDocument): Promise<void> {
         if (document.languageId !== 'genexus') return;
+        if (this.fsProvider.isBulkIndexing || this.fsProvider.isWorkspaceHydrating) return;
+        if (document.getText().startsWith("// GXMCP_PLACEHOLDER:")) {
+            this.clear(document);
+            return;
+        }
 
+        const docKey = document.uri.toString();
+        const existing = this.pendingRefreshes.get(docKey);
+        if (existing) {
+            return existing;
+        }
+
+        const refresh = (async () => {
         try {
             const objName = this.getObjName(document);
             const currentPart = this.getPartName(document.uri);
@@ -79,7 +92,13 @@ export class GxDiagnosticProvider {
             }
         } catch (e) {
             console.error("[Nexus IDE] Diagnostic error:", e);
+        } finally {
+            this.pendingRefreshes.delete(docKey);
         }
+        })();
+
+        this.pendingRefreshes.set(docKey, refresh);
+        return refresh;
     }
 
     public setDiagnostics(document: vscode.TextDocument, issues: any[]): void {
@@ -100,15 +119,20 @@ export class GxDiagnosticProvider {
                 }
             }
 
-            const line = Math.max(0, (issue.line || 1) - 1);
-            const col = Math.max(0, (issue.column || 1) - 1);
+            const maxLine = Math.max(0, document.lineCount - 1);
+            const line = Math.min(maxLine, Math.max(0, (issue.line || 1) - 1));
+            let col = Math.max(0, (issue.column || 1) - 1);
             
             let range: vscode.Range;
             if (issue.snippet && issue.snippet.length > 0) {
+                try {
+                    const lineText = document.lineAt(line).text;
+                    const snippetIndex = lineText.indexOf(issue.snippet);
+                    if (snippetIndex >= 0) col = snippetIndex;
+                } catch {}
                 range = new vscode.Range(line, col, line, col + issue.snippet.length);
             } else {
                 try {
-                    const docLine = document.lineAt(line).text;
                     const wordRange = document.getWordRangeAtPosition(new vscode.Position(line, col));
                     if (wordRange) {
                         range = wordRange;

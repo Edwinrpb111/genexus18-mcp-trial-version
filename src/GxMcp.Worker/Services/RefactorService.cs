@@ -53,7 +53,7 @@ namespace GxMcp.Worker.Services
                     return RenameAttribute(oldName, newName);
                 }
 
-                return "{\"error\":\"Refactor action not found\"}";
+                return Models.McpResponse.Error("Refactor action not found", target, action, "Supported actions are RenameVariable, RenameAttribute, RenameObject and ExtractProcedure.");
             } catch (Exception ex) {
                 return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
@@ -62,10 +62,10 @@ namespace GxMcp.Worker.Services
         private string ExtractProcedure(string sourceObjectName, string codeToExtract, string newProcName)
         {
             if (string.IsNullOrEmpty(codeToExtract) || string.IsNullOrEmpty(newProcName))
-                return "{\"error\":\"Code and new procedure name are required\"}";
+                return Models.McpResponse.Error("Code and new procedure name are required", sourceObjectName, "Source", "Provide both the extracted code block and the new procedure name.");
 
             var sourceObj = _objectService.FindObject(sourceObjectName);
-            if (sourceObj == null) return "{\"error\":\"Source object not found\"}";
+            if (sourceObj == null) return Models.McpResponse.Error("Source object not found", sourceObjectName, "Source", "The source object for extraction is not available in the active Knowledge Base.");
 
             try {
                 Logger.Info($"Extracting code to new procedure: {newProcName} from {sourceObjectName}");
@@ -76,7 +76,7 @@ namespace GxMcp.Worker.Services
                 if (createResult.Contains("error")) return createResult;
 
                 var newProc = _objectService.FindObject(newProcName) as global::Artech.Genexus.Common.Objects.Procedure;
-                if (newProc == null) return "{\"error\":\"Failed to create new procedure object\"}";
+                if (newProc == null) return Models.McpResponse.Error("Failed to create new procedure object", newProcName, "Procedure", "The new procedure could not be created or resolved after extraction.");
 
                 var variablesFound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var matches = System.Text.RegularExpressions.Regex.Matches(codeToExtract, @"&(\w+)");
@@ -124,7 +124,7 @@ namespace GxMcp.Worker.Services
                     return "{\"status\":\"Success\", \"procedure\":\"" + newProcName + "\", \"call\":\"" + callCode + "\"}";
                 }
 
-                return "{\"error\":\"Could not find exact code block in source object\"}";
+                return Models.McpResponse.Error("Code block not found in source object", sourceObjectName, "Source", "The exact code block to extract was not found in the source object.");
             } catch (Exception ex) {
                 return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
@@ -133,14 +133,14 @@ namespace GxMcp.Worker.Services
         private string RenameAttribute(string oldName, string newName)
         {
             if (string.IsNullOrEmpty(oldName) || string.IsNullOrEmpty(newName))
-                return "{\"error\":\"Old and new names are required\"}";
+                return Models.McpResponse.Error("Old and new names are required", oldName, null, "Provide both the current name and the replacement name.");
 
             var kb = _kbService.GetKB();
-            if (kb == null) return "{\"error\":\"KB not open\"}";
+            if (kb == null) return Models.McpResponse.Error("KB not open", oldName, null, "Open a Knowledge Base before running refactor operations.");
 
             var attrObj = _objectService.FindObject(oldName);
             if (attrObj == null || !attrObj.TypeDescriptor.Name.Equals("Attribute", StringComparison.OrdinalIgnoreCase))
-                return "{\"error\":\"Attribute '" + oldName + "' not found\"}";
+                return Models.McpResponse.Error("Attribute not found", oldName, null, "The requested attribute is not available in the active Knowledge Base.");
 
             attrObj.Name = newName;
             attrObj.EnsureSave();
@@ -177,7 +177,7 @@ namespace GxMcp.Worker.Services
             string cleanOld = oldName.StartsWith("&") ? oldName.Substring(1) : oldName;
             string cleanNew = newName.StartsWith("&") ? newName.Substring(1) : newName;
             var obj = _objectService.FindObject(target);
-            if (obj == null) return "{\"error\":\"Object not found\"}";
+            if (obj == null) return Models.McpResponse.Error("Object not found", target, "Variables", "The requested object is not available in the active Knowledge Base.");
 
             bool changed = false;
             var varPart = obj.Parts.Get<VariablesPart>();

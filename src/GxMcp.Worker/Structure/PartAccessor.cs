@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Collections.Generic;
 using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
@@ -84,6 +85,53 @@ namespace GxMcp.Worker.Structure
             }
 
             return null;
+        }
+
+        public static string[] GetAvailableParts(KBObject obj)
+        {
+            if (obj == null)
+            {
+                return new string[0];
+            }
+
+            return obj.Parts
+                .Cast<KBObjectPart>()
+                .Select(GetDisplayPartName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static string GetDisplayPartName(KBObjectPart part)
+        {
+            if (part == null)
+            {
+                return null;
+            }
+
+            if (part is ISource)
+            {
+                var sourceName = part.TypeDescriptor?.Name;
+                if (string.Equals(sourceName, "Events", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "Events";
+                }
+
+                return "Source";
+            }
+
+            if (part.GetType().Name.Equals("VariablesPart", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Variables";
+            }
+
+            if (!string.IsNullOrWhiteSpace(part.TypeDescriptor?.Name))
+            {
+                return part.TypeDescriptor.Name;
+            }
+
+            return part.GetType().Name.Replace("Part", "");
         }
     }
 }

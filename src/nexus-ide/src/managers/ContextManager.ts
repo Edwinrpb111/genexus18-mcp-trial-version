@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
-import { GX_SCHEME, CONTEXT_ACTIVE_PART, DEFAULT_STATUS_BAR_TIMEOUT } from "../constants";
+import { CONTEXT_ACTIVE_PART, DEFAULT_STATUS_BAR_TIMEOUT } from "../constants";
+import { GxUriParser } from "../utils/GxUriParser";
 
 export class ContextManager {
   private statusBarItem: vscode.StatusBarItem;
@@ -25,10 +26,9 @@ export class ContextManager {
   }
 
   updateActiveContext(uri?: vscode.Uri) {
-    if (uri && uri.scheme === GX_SCHEME) {
+    if (uri && GxUriParser.isGeneXusUri(uri)) {
       const part = this.provider.getPart(uri);
-      const pathStr = decodeURIComponent(uri.path.substring(1));
-      const objName = pathStr.split("/").pop()!.replace(".gx", "");
+      const objName = GxUriParser.getObjectName(uri);
 
       vscode.commands.executeCommand("setContext", CONTEXT_ACTIVE_PART, part);
 

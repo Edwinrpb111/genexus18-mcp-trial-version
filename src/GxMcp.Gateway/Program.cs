@@ -137,6 +137,9 @@ namespace GxMcp.Gateway
             // Register encoding provider for Windows-1252 support in .NET 8
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
+            Console.InputEncoding = System.Text.Encoding.UTF8;
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+
             InitializeLogging();
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) => {
@@ -198,7 +201,7 @@ namespace GxMcp.Gateway
             }
 
             // MCP Stdio Loop
-            using (var reader = new StreamReader(Console.OpenStandardInput()))
+            var reader = Console.In;
             {
                 while (true)
                 {
@@ -406,7 +409,7 @@ namespace GxMcp.Gateway
 
                     int timeoutMs = 60000;
                     if (toolName == "genexus_lifecycle" || toolName == "genexus_analyze" || toolName == "genexus_test")
-                        timeoutMs = 300000; // 5 minutes for heavy operations
+                        timeoutMs = 600000; // 10 minutes for heavy operations
 
                     return await SendWorkerCommandAsync(
                         workerCmd,

@@ -28,7 +28,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 Table tbl = null;
                 if (obj is Transaction trn)
@@ -40,7 +40,7 @@ namespace GxMcp.Worker.Services
                     tbl = obj as Table;
                 }
 
-                if (tbl == null) return "{\"error\": \"Table not found for target " + target + "\"}";
+                if (tbl == null) return Models.McpResponse.Error("Associated table not found", target, null, "The target object does not resolve to a Transaction or Table with physical structure.");
 
                 dynamic kb = _kbService.GetKB();
                 var model = kb.DesignModel.Environment.TargetModel;
@@ -174,7 +174,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject();
                 result["objectName"] = obj.Name;

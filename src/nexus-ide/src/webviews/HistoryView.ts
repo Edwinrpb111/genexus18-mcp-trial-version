@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { formatMcpErrorMessage } from "../utils/McpErrorFormatter";
 import { GxUriParser } from "../utils/GxUriParser";
 
 export class HistoryView {
@@ -10,13 +11,13 @@ export class HistoryView {
     provider: GxFileSystemProvider,
     historyProvider: any,
   ) {
-    let targetUri = uri || GxUriParser.getActiveGxUri();
+    const targetUri = uri || GxUriParser.getActiveGxUri();
     const info = targetUri ? GxUriParser.parse(targetUri) : null;
-    let objName = info?.name || "";
+    const objName = info?.name || "";
 
     if (!objName) {
       vscode.window.showErrorMessage(
-        "Abra ou selecione um objeto para ver o histórico.",
+        "Abra ou selecione um objeto para ver o historico.",
       );
       return;
     }
@@ -29,7 +30,7 @@ export class HistoryView {
 
     const panel = vscode.window.createWebviewPanel(
       "gxHistory",
-      `Histórico: ${objName}`,
+      `Historico: ${objName}`,
       vscode.ViewColumn.Beside,
       { enableScripts: true },
     );
@@ -40,7 +41,7 @@ export class HistoryView {
       historyProvider.clear(objName);
     });
 
-    panel.webview.html = `<h1>Carregando Histórico de ${objName}...</h1>`;
+    panel.webview.html = `<h1>Carregando historico de ${objName}...</h1>`;
 
     try {
       const result = await provider.callMcpTool("genexus_history", {
@@ -59,7 +60,7 @@ export class HistoryView {
                     <td style="padding: 10px; border-bottom: 1px solid #333; font-weight: bold; color: #007acc;">#${rev.version || rev.Id || ""}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; white-space: nowrap;">${rev.date || rev.Date || ""}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #333;">${rev.user || rev.User || ""}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #333; font-style: italic; color: #aaa;">${rev.comment || rev.Comment || '<span style="opacity: 0.5;">Sem comentário</span>'}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #333; font-style: italic; color: #aaa;">${rev.comment || rev.Comment || '<span style="opacity: 0.5;">Sem comentario</span>'}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #333; text-align: center;">
                         <button onclick="viewDiff(${rev.version || rev.Id})" style="background: #007acc; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 2px;">Comparar (Diff)</button>
                     </td>
@@ -74,7 +75,7 @@ export class HistoryView {
         panel.webview.onDidReceiveMessage(async (message) => {
           if (message.command === "viewDiff") {
             vscode.window.setStatusBarMessage(
-              `$(sync~spin) Buscando Revisão #${message.versionId} para Diff...`,
+              `$(sync~spin) Buscando revisao #${message.versionId} para diff...`,
               3000,
             );
             try {
@@ -98,19 +99,29 @@ export class HistoryView {
                   "vscode.diff",
                   historyUri,
                   targetUri!,
-                  `${message.objName} (Revisão #${message.versionId}) ↔ (Atual)`,
+                  `${message.objName} (Revisao #${message.versionId}) <-> (Atual)`,
+                );
+              } else {
+                vscode.window.showErrorMessage(
+                  formatMcpErrorMessage(
+                    "Historico:",
+                    codeResult ||
+                      "A revisao selecionada nao retornou codigo-fonte para diff.",
+                  ),
                 );
               }
             } catch (e) {
-              vscode.window.showErrorMessage(`Erro ao buscar versão: ${e}`);
+              vscode.window.showErrorMessage(
+                formatMcpErrorMessage("Erro ao buscar versao:", e),
+              );
             }
           }
         });
       } else {
-        panel.webview.html = "<h1>Histórico não encontrado.</h1>";
+        panel.webview.html = `<h1>${formatMcpErrorMessage("Historico:", result || "Historico nao encontrado.")}</h1>`;
       }
     } catch (e) {
-      panel.webview.html = `<h1>Erro Crítico: ${e}</h1>`;
+      panel.webview.html = `<h1>${formatMcpErrorMessage("Erro critico:", e)}</h1>`;
     }
   }
 
@@ -129,18 +140,18 @@ export class HistoryView {
           </style>
       </head>
       <body>
-          <h2>Histórico de Revisões: ${objName} <span class="badge">SDK Nativo</span></h2>
+          <h2>Historico de revisoes: ${objName} <span class="badge">SDK Nativo</span></h2>
           <table>
               <thead>
                   <tr>
                       <th>Rev</th>
                       <th>Data / Hora</th>
                       <th>Autor</th>
-                      <th>Comentário de Commit</th>
-                      <th>Ações</th>
+                      <th>Comentario de Commit</th>
+                      <th>Acoes</th>
                   </tr>
               </thead>
-              <tbody>${rows || '<tr><td colspan="5" style="padding: 20px; text-align: center;">Nenhuma revisão encontrada.</td></tr>'}</tbody>
+              <tbody>${rows || '<tr><td colspan="5" style="padding: 20px; text-align: center;">Nenhuma revisao encontrada.</td></tr>'}</tbody>
           </table>
           <script>
               const vscode = acquireVsCodeApi();

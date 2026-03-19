@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "./gxFileSystem";
+import { GxUriParser } from "./utils/GxUriParser";
 
 export class GxDefinitionProvider implements vscode.DefinitionProvider {
   private _cache = new Map<
@@ -50,9 +51,7 @@ export class GxDefinitionProvider implements vscode.DefinitionProvider {
         );
         if (exactMatch) {
           const definition = new vscode.Location(
-            vscode.Uri.parse(
-              `gxkb18:/${exactMatch.type}/${exactMatch.name}.gx`,
-            ),
+            GxUriParser.toEditorUri(exactMatch.type, exactMatch.name),
             new vscode.Position(0, 0),
           );
           this._cache.set(cacheKey, {

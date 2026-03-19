@@ -85,8 +85,11 @@ namespace GxMcp.Worker.Services.Structure
 
             bool isModified = false;
 
-            if (desc != null && attrObj.Description != desc) {
-                attrObj.Description = desc; isModified = true;
+            if (desc != null) {
+                string currentDesc = attrObj.Description ?? "";
+                if (currentDesc != desc) {
+                    attrObj.Description = desc; isModified = true;
+                }
             }
 
             if (formula != null) {

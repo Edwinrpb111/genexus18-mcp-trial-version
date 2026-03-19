@@ -1,6 +1,7 @@
 # GeneXus MCP & Nexus IDE - Comprehensive Test Runner
 
 $hadFailures = $false
+$protocolVersion = "2025-06-18"
 
 Write-Host "--- [1/3] Compiling Project ---" -ForegroundColor Cyan
 .\build.ps1
@@ -12,16 +13,21 @@ Write-Host "Waiting for Gateway & Worker to initialize (SDK load)..."
 Start-Sleep -Seconds 15
 
 try {
-    $initializeBody = '{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test-runner","version":"1.0.0"}}}'
-    $initResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $initializeBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = "2025-03-26" } -TimeoutSec 60
+    $initializeBody = "{""jsonrpc"":""2.0"",""id"":""init"",""method"":""initialize"",""params"":{""protocolVersion"":""$protocolVersion"",""capabilities"":{},""clientInfo"":{""name"":""test-runner"",""version"":""1.0.0""}}}"
+    $initResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $initializeBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = $protocolVersion } -TimeoutSec 60
     $sessionId = $null
     if ($initResponse -and $initResponse.Headers) {
         $sessionId = $initResponse.Headers["MCP-Session-Id"]
     }
     if (-not $sessionId) { throw "MCP session not established." }
 
+    $initPayload = $initResponse.Content | ConvertFrom-Json
+    if (-not $initPayload.result -or $initPayload.result.protocolVersion -ne $protocolVersion) {
+        throw "initialize returned an unexpected protocol version."
+    }
+
     $toolsBody = '{"jsonrpc":"2.0","id":"tools","method":"tools/list"}'
-    $toolsResponse = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $toolsBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = "2025-03-26"; "MCP-Session-Id" = $sessionId } -TimeoutSec 60
+    $toolsResponse = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $toolsBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = $protocolVersion; "MCP-Session-Id" = $sessionId } -TimeoutSec 60
     if (-not $toolsResponse -or -not $toolsResponse.result -or -not $toolsResponse.result.tools) {
         throw "tools/list did not return a tool catalog."
     }
@@ -29,7 +35,7 @@ try {
     if (-not ($toolNames -contains "genexus_doc")) { throw "Expected tool genexus_doc not found in tools/list." }
 
     $healthBody = '{"jsonrpc":"2.0","id":"health","method":"tools/call","params":{"name":"genexus_doc","arguments":{"action":"health"}}}'
-    $response = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $healthBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = "2025-03-26"; "MCP-Session-Id" = $sessionId } -TimeoutSec 60
+    $response = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:5000/mcp" -Body $healthBody -ContentType "application/json" -Headers @{ "MCP-Protocol-Version" = $protocolVersion; "MCP-Session-Id" = $sessionId } -TimeoutSec 60
 
     if ($response.error) {
         Write-Host "Gateway Error: $($response.error.message)" -ForegroundColor Red

@@ -1,13 +1,18 @@
 import * as http from "http";
+import * as vscode from "vscode";
 import { GxShadowService } from "../gxShadowService";
 import { DEFAULT_MCP_PORT } from "../constants";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
+const SLOW_REQUEST_MS = 1200;
 
 export class GxGatewayClient {
   private _baseUrl = `http://127.0.0.1:${DEFAULT_MCP_PORT}/mcp`;
   private _mcpSessionId?: string;
   private _shadowService?: GxShadowService;
+  private static readonly outputChannel = vscode.window.createOutputChannel("GeneXus MCP");
+  private static readonly statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
+  private static activeRequests = 0;
 
   constructor(baseUrl: string, shadowService?: GxShadowService) {
     this._baseUrl = baseUrl;
@@ -194,6 +199,15 @@ export class GxGatewayClient {
     extraHeaders?: Record<string, string>,
   ): Promise<{ body: string; headers: http.IncomingHttpHeaders }> {
     return new Promise((resolve, reject) => {
+      const requestLabel = this.describeCommand(command);
+      const startedAt = Date.now();
+      let finished = false;
+      GxGatewayClient.activeRequests++;
+      this.updateBusyStatus(requestLabel);
+      GxGatewayClient.outputChannel.appendLine(
+        `[${new Date(startedAt).toISOString()}] -> ${requestLabel}`,
+      );
+
       if (this._shadowService && command.params) {
         command.params.shadowPath = this._shadowService.shadowRoot;
       }
@@ -223,6 +237,10 @@ export class GxGatewayClient {
           let body = "";
           res.on("data", (chunk) => (body += chunk));
           res.on("end", () => {
+            if (!finished) {
+              finished = true;
+              this.finishTrackedRequest(requestLabel, startedAt, `HTTP ${res.statusCode}`);
+            }
             resolve({ body, headers: res.headers });
           });
         },
@@ -230,12 +248,60 @@ export class GxGatewayClient {
 
       req.on("timeout", () => {
         req.destroy();
+        if (!finished) {
+          finished = true;
+          this.finishTrackedRequest(requestLabel, startedAt, "timeout");
+        }
         reject(new Error(`Timeout Gateway (${timeout / 1000}s)`));
       });
 
-      req.on("error", reject);
+      req.on("error", (error) => {
+        if (!finished) {
+          finished = true;
+          this.finishTrackedRequest(requestLabel, startedAt, `error: ${error.message}`);
+        }
+        reject(error);
+      });
       req.write(data);
       req.end();
     });
+  }
+
+  private describeCommand(command: any): string {
+    if (command?.method === "tools/call") {
+      return `tool:${command?.params?.name ?? "unknown"}`;
+    }
+
+    if (command?.method === "resources/read") {
+      return `resource:${command?.params?.uri ?? "unknown"}`;
+    }
+
+    if (command?.method === "prompts/get") {
+      return `prompt:${command?.params?.name ?? "unknown"}`;
+    }
+
+    return command?.method ?? "unknown";
+  }
+
+  private updateBusyStatus(requestLabel?: string): void {
+    if (GxGatewayClient.activeRequests <= 0) {
+      GxGatewayClient.statusBarItem.hide();
+      return;
+    }
+
+    const suffix = requestLabel ? ` ${requestLabel}` : "";
+    GxGatewayClient.statusBarItem.text = `$(sync~spin) GeneXus MCP: ${GxGatewayClient.activeRequests} op${GxGatewayClient.activeRequests === 1 ? "" : "s"}${suffix}`;
+    GxGatewayClient.statusBarItem.tooltip = "Operacoes MCP em andamento";
+    GxGatewayClient.statusBarItem.show();
+  }
+
+  private finishTrackedRequest(requestLabel: string, startedAt: number, outcome: string): void {
+    const duration = Date.now() - startedAt;
+    const slowMarker = duration >= SLOW_REQUEST_MS ? " SLOW" : "";
+    GxGatewayClient.outputChannel.appendLine(
+      `[${new Date().toISOString()}] <- ${requestLabel} (${duration}ms) ${outcome}${slowMarker}`,
+    );
+    GxGatewayClient.activeRequests = Math.max(0, GxGatewayClient.activeRequests - 1);
+    this.updateBusyStatus();
   }
 }

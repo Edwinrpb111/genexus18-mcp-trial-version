@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
+import * as path from "path";
 import { GxFileSystemProvider } from "./gxFileSystem";
 import { GxTreeProvider } from "./gxTreeProvider";
 import { GxActionsProvider } from "./gxActionsProvider";
@@ -12,6 +13,8 @@ import { ContextManager } from "./managers/ContextManager";
 import { CommandManager } from "./managers/CommandManager";
 import { ProviderManager } from "./managers/ProviderManager";
 import { McpDiscoveryManager } from "./managers/McpDiscoveryManager";
+import { SyncManager } from "./managers/SyncManager";
+import { GxUriParser } from "./utils/GxUriParser";
 import { 
   GX_SCHEME, 
   STATE_KEY_FOLDER_ADDED, 
@@ -26,6 +29,7 @@ import {
 let backendManager: BackendManager;
 const IS_TEST_MODE = process.env.NEXUS_IDE_TEST_MODE === "1";
 let isActivated = false;
+let activeShadowRoot: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
   if (isActivated) {
@@ -95,23 +99,45 @@ export function activate(context: vscode.ExtensionContext) {
   // Auto-add folder will now happen inside initializeExtension or on command
 }
 
-export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000, provider?: any) {
+function resolveShadowRootPath(context: vscode.ExtensionContext): string {
+  const backendConfigCandidates = [
+    path.join(context.extensionPath, "backend", "config.json"),
+    path.join(context.extensionPath, "..", "..", "publish", "config.json"),
+  ];
+
+  for (const candidate of backendConfigCandidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      const json = JSON.parse(fs.readFileSync(candidate, "utf8"));
+      const configured = json?.Environment?.GX_SHADOW_PATH;
+      if (typeof configured === "string" && configured.trim().length > 0) {
+        return configured;
+      }
+    } catch {}
+  }
+
+  return path.join(context.extensionPath, ".gx_mirror");
+}
+
+export async function addKbFolder(
+  context: vscode.ExtensionContext,
+  maxRetries = 5,
+  delayMs = 2000,
+  provider?: any,
+  shadowRoot?: string,
+) {
   const folders = vscode.workspace.workspaceFolders || [];
-  const hasGxFolder = folders.some((f) => f.uri.scheme === GX_SCHEME);
-  if (hasGxFolder) {
-    console.log("[Nexus IDE] Virtual KB folder already mounted. Forcing refresh.");
+  const targetShadowRoot = shadowRoot || activeShadowRoot || resolveShadowRootPath(context);
+  const shadowUri = vscode.Uri.file(targetShadowRoot);
+  const hasShadowFolder = folders.some((f) => f.uri.scheme === "file" && f.uri.fsPath === targetShadowRoot);
+  if (hasShadowFolder) {
+    console.log("[Nexus IDE] Mirror workspace already mounted. Forcing refresh.");
 
     try {
       provider?.clearDirCache?.();
-      provider?._emitter?.fire?.([
-        {
-          type: vscode.FileChangeType.Changed,
-          uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
-        },
-      ]);
       await vscode.commands.executeCommand("nexus-ide.refreshTree");
     } catch (e) {
-      console.warn("[Nexus IDE] Failed to refresh mounted virtual folder:", e);
+      console.warn("[Nexus IDE] Failed to refresh mounted mirror folder:", e);
     }
 
     try {
@@ -125,22 +151,18 @@ export async function addKbFolder(context: vscode.ExtensionContext, maxRetries =
     return;
   }
 
-  if (!hasGxFolder) {
-    console.log(`[Nexus IDE] Checking if KB is accessible for auto-mount...`);
+  if (!hasShadowFolder) {
+    console.log(`[Nexus IDE] Checking if mirror workspace is ready for auto-mount...`);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // No manual initKb here anymore, handled in deferred initializeExtension
+        if (!fs.existsSync(targetShadowRoot)) {
+          fs.mkdirSync(targetShadowRoot, { recursive: true });
+        }
 
-
-        // Double check if we can actually reach the pseudo-root to avoid ghost folders
-        await vscode.workspace.fs.stat(
-          vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
-        );
-
-        console.log(`[Nexus IDE] Adding workspace folder: ${GX_SCHEME}:/ on attempt ${attempt}`);
+        console.log(`[Nexus IDE] Adding workspace folder: ${targetShadowRoot} on attempt ${attempt}`);
         vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
-          uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
+          uri: shadowUri,
           name: "GeneXus KB",
         });
         context.globalState.update(STATE_KEY_FOLDER_ADDED, true);
@@ -154,7 +176,7 @@ export async function addKbFolder(context: vscode.ExtensionContext, maxRetries =
         return; // Success, exit retry loop
       } catch (e) {
         console.warn(
-          `[Nexus IDE] KB mount point not ready yet (Attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
+          `[Nexus IDE] Mirror mount point not ready yet (Attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
         );
         if (attempt < maxRetries) {
           await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -175,11 +197,12 @@ function initializeExtension(
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   const port = config.get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
   provider.baseUrl = `http://127.0.0.1:${port}/mcp`;
+  activeShadowRoot = resolveShadowRootPath(context);
 
   // Initialize Managers
   backendManager = new BackendManager(context);
   const contextManager = new ContextManager(context, provider);
-  const shadowService = new GxShadowService(provider.baseUrl);
+  const shadowService = new GxShadowService(provider.baseUrl, activeShadowRoot);
   provider.setShadowService(shadowService);
 
   const discoveryManager = new McpDiscoveryManager(context, provider);
@@ -190,7 +213,7 @@ function initializeExtension(
   provider.setDiagnosticProvider(diagnosticProvider);
 
   const treeProvider = new GxTreeProvider(
-    provider,
+    shadowService.shadowRoot,
     context.extensionUri,
   );
 
@@ -259,25 +282,20 @@ function initializeExtension(
   console.log("[Nexus IDE] Initiating KB Initialization...");
   provider.initKb().then(async () => {
     console.log("[Nexus IDE] KB background init complete.");
-    treeProvider.refresh();
-
-    // Check if we need indexing
-    if (provider.isBulkIndexing) return;
-
     try {
-      const status = await provider.callMcpTool(
+      let status = await provider.callMcpTool(
         "genexus_lifecycle",
         { action: "status" },
         15000,
       );
 
       const shadowPath = shadowService.shadowRoot;
-      const shadowDirExists =
-        fs.existsSync(shadowPath) && fs.readdirSync(shadowPath).length > 0;
+      const shadowDirExists = fs.existsSync(shadowPath);
+      const indexReady = Boolean(status?.total && status.total > 0 && status.status !== "Error");
 
-      if (status && !status.isIndexing && !shadowDirExists) {
+      if (!indexReady && status && !status.isIndexing) {
         vscode.window.setStatusBarMessage(
-          "$(sync~spin) GeneXus: Preparando ambiente...",
+          "$(sync~spin) GeneXus: Preparando indice da KB...",
           10000,
         );
         provider.isBulkIndexing = true;
@@ -298,12 +316,6 @@ function initializeExtension(
 
           if (currentStatus && currentStatus.status === "Complete") {
             isDone = true;
-            treeProvider.refresh();
-            provider.clearDirCache();
-            vscode.window.setStatusBarMessage(
-              "$(check) GeneXus: Ambiente Pronto!",
-              DEFAULT_STATUS_BAR_TIMEOUT,
-            );
           } else if (currentStatus && currentStatus.isIndexing) {
             vscode.window.setStatusBarMessage(
               `$(sync~spin) GeneXus: Indexando (${currentStatus.processed}/${currentStatus.total})...`,
@@ -313,22 +325,77 @@ function initializeExtension(
             isDone = true;
           }
         }
+
+        status = await provider.callMcpTool(
+          "genexus_lifecycle",
+          { action: "status" },
+          15000,
+        );
       }
+
+      shadowService.consolidateLegacyMirrorFiles();
+      const mirrorReady = shadowService.hasMaterializedWorkspace();
+
+      if (shadowDirExists && mirrorReady) {
+        treeProvider.refresh();
+        provider.clearDirCache();
+        vscode.window.setStatusBarMessage(
+          "$(check) GeneXus: Mirror pronto",
+          DEFAULT_STATUS_BAR_TIMEOUT,
+        );
+        return;
+      }
+
+      provider.isWorkspaceHydrating = true;
+      vscode.window.setStatusBarMessage(
+        "$(sync~spin) GeneXus: Materializando workspace espelho...",
+        5000,
+      );
+      await shadowService.materializeWorkspace(provider);
+      treeProvider.refresh();
+      provider.clearDirCache();
+      vscode.window.setStatusBarMessage(
+        "$(check) GeneXus: Workspace espelho pronto",
+        DEFAULT_STATUS_BAR_TIMEOUT,
+      );
     } catch (e) {
       console.error("[Nexus IDE] Index status check or BulkIndex failed:", e);
     } finally {
       provider.isBulkIndexing = false;
+      provider.isWorkspaceHydrating = false;
     }
   });
 
   // Watch for Save event
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((doc: vscode.TextDocument) => {
-      if (doc.uri.scheme === GX_SCHEME) {
+      if (GxUriParser.isGeneXusUri(doc.uri)) {
         setTimeout(() => {
           diagnosticProvider.refreshAll();
         }, 1000);
       }
+    }),
+    vscode.workspace.onDidOpenTextDocument(async (doc: vscode.TextDocument) => {
+      if (!GxUriParser.isGeneXusUri(doc.uri) || doc.uri.scheme !== "file") {
+        return;
+      }
+
+      const hydrated = await shadowService.hydrateOpenedFile(doc.uri, provider);
+      if (!hydrated || doc.isDirty) {
+        return;
+      }
+
+      const refreshed = await vscode.workspace.openTextDocument(doc.uri);
+      const fullRange = new vscode.Range(
+        refreshed.positionAt(0),
+        refreshed.positionAt(refreshed.getText().length),
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, fullRange, refreshed.getText());
+      await vscode.workspace.applyEdit(edit);
+      setTimeout(() => {
+        diagnosticProvider.refreshDiagnostics(refreshed);
+      }, 250);
     }),
   );
 
@@ -336,7 +403,7 @@ function initializeExtension(
 
   // Final check to add the virtual folder if missing
   setTimeout(() => {
-    addKbFolder(context, 5, 2000, provider);
+    addKbFolder(context, 5, 2000, provider, shadowService.shadowRoot);
   }, 2000);
 }
 

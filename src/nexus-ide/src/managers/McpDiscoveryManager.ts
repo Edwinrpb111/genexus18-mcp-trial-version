@@ -82,7 +82,13 @@ export class McpDiscoveryManager {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) return;
 
-    const physicalFolder = folders.find((f) => f.uri.scheme === "file");
+    // Prefer physical folders that are NOT mirrors
+    const physicalFolder = folders.find((f) => {
+      if (f.uri.scheme !== "file") return false;
+      const fsPath = f.uri.fsPath.toLowerCase();
+      return !fsPath.includes(".gx_mirror") && !fsPath.endsWith("genexus-kb");
+    }) || folders.find((f) => f.uri.scheme === "file");
+
     if (!physicalFolder) return;
 
     const rootPath = physicalFolder.uri.fsPath;

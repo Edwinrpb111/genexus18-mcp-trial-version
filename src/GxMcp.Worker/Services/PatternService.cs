@@ -22,7 +22,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var index = _indexCache.GetIndex();
-                if (index == null) return "{\"error\": \"Search Index not found.\"}";
+                if (index == null) return McpResponse.Error("Search Index not found", type, null, "Run the KB indexing flow before requesting pattern samples.");
 
                 var candidates = index.Objects.Values
                     .Where(o => IsTypeMatch(o.Type, type))
@@ -36,7 +36,7 @@ namespace GxMcp.Worker.Services
                     candidates = index.Objects.Values.Where(o => IsTypeMatch(o.Type, type)).Take(1).ToList();
                 }
 
-                if (candidates.Count == 0) return "{\"error\": \"No objects of type " + type + " found.\"}";
+                if (candidates.Count == 0) return McpResponse.Error("Pattern sample not found", type, null, "No indexed objects matched the requested type.");
 
                 var best = candidates.First();
                 

@@ -5,6 +5,7 @@ using System.Text;
 using GxMcp.Worker.Helpers;
 using Artech.Architecture.Common.Objects;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -28,10 +29,10 @@ namespace GxMcp.Worker.Services
             try
             {
                 var kb = _kbService.GetKB();
-                if (kb == null) return "{\"error\": \"KB not opened\"}";
+                if (kb == null) return McpResponse.Error("KB not opened", targetName, null, "Open a Knowledge Base before requesting dependency injection.");
 
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return "{\"error\": \"Object not found: " + targetName + "\"}";
+                if (obj == null) return McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
 
                 sb.AppendLine($"# Context for {obj.TypeDescriptor.Name} {obj.Name}");
                 sb.AppendLine();

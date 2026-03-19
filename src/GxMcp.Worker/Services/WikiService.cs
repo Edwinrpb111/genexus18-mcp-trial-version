@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 KBObject obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 // Build markdown
                 var md = new StringBuilder();

@@ -5,6 +5,7 @@ import { GxShadowService } from "./gxShadowService";
 import { GxDiagnosticProvider } from "./diagnosticProvider";
 import { GxGatewayClient } from "./infra/GxGatewayClient";
 import { GxUriParser } from "./utils/GxUriParser";
+import { formatMcpErrorMessage } from "./utils/McpErrorFormatter";
 import { GxPartMapper, TYPE_SUFFIX, VALID_TYPES } from "./utils/GxPartMapper";
 import { GxCacheManager } from "./managers/GxCacheManager";
 import { 
@@ -50,6 +51,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   private _shadowService?: GxShadowService;
   private _diagnosticProvider?: GxDiagnosticProvider;
   public isBulkIndexing: boolean = false;
+  public isWorkspaceHydrating: boolean = false;
 
   private _kbInitPromise: Promise<any> | null = null;
   private _pendingQueryRequests = new Map<string, Promise<any>>();
@@ -73,6 +75,15 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     (this._gateway as any)._shadowService = service;
   }
 
+  public ensureMirrorPartFile(
+    type: string,
+    name: string,
+    part: string,
+  ): vscode.Uri | null {
+    const filePath = this._shadowService?.ensureMirrorPartFile({ type, name }, part);
+    return filePath ? vscode.Uri.file(filePath) : null;
+  }
+
   public setDiagnosticProvider(provider: GxDiagnosticProvider) {
     this._diagnosticProvider = provider;
   }
@@ -85,6 +96,10 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   public getPart(uri: vscode.Uri): string {
+    const parsed = GxUriParser.parse(uri);
+    if (parsed?.part) {
+      return parsed.part;
+    }
     return GxPartMapper.getPart(uri, this._cache.filePartState);
   }
 
@@ -444,8 +459,11 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     content: Uint8Array,
     options: { create: boolean; overwrite: boolean },
   ): Promise<void> {
-    const target = GxPartMapper.getObjectTarget(uri.path);
-    const partName = this.getPart(uri);
+    const parsed = GxUriParser.parse(uri);
+    const target = parsed
+      ? `${parsed.type}:${parsed.name}`
+      : GxPartMapper.getObjectTarget(uri.path);
+    const partName = parsed?.part || this.getPart(uri);
     this._cache.contentCache.set(uri.toString(), content);
     this._cache.mtimes.set(uri.toString(), Date.now());
 
@@ -484,7 +502,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
       vscode.window.setStatusBarMessage(`$(check) Saved ${target}`, DEFAULT_STATUS_BAR_TIMEOUT);
     } catch (err: any) {
-      vscode.window.showErrorMessage(`Save Error: ${err}`);
+      vscode.window.showErrorMessage(formatMcpErrorMessage("Save Error:", err));
       throw err;
     }
   }

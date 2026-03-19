@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { GX_SCHEME } from "./constants";
 import { GxFileSystemProvider } from "./gxFileSystem";
+import { GxUriParser } from "./utils/GxUriParser";
 
 export class GxReferenceProvider implements vscode.ReferenceProvider {
   constructor(private readonly provider: GxFileSystemProvider) {}
@@ -11,7 +11,7 @@ export class GxReferenceProvider implements vscode.ReferenceProvider {
     context: vscode.ReferenceContext,
     _token: vscode.CancellationToken,
   ): Promise<vscode.Location[]> {
-    if (document.uri.scheme !== GX_SCHEME) return [];
+    if (!GxUriParser.isGeneXusUri(document.uri)) return [];
 
     const range = document.getWordRangeAtPosition(position);
     const word = document.getText(range);
@@ -25,10 +25,7 @@ export class GxReferenceProvider implements vscode.ReferenceProvider {
       if (results && results.results) {
         return results.results.map((obj: any) => {
           return new vscode.Location(
-            vscode.Uri.from({
-              scheme: GX_SCHEME,
-              path: `/${obj.type}/${obj.name}.gx`,
-            }),
+            GxUriParser.toEditorUri(obj.type, obj.name),
             new vscode.Position(0, 0),
           );
         });

@@ -23,7 +23,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 KBObject instanceObj = null;
                 if (obj is Transaction)
@@ -35,14 +35,14 @@ namespace GxMcp.Worker.Services
                     instanceObj = obj;
                 }
 
-                if (instanceObj == null) return "{\"error\": \"WorkWithPlus instance not found for '" + target + "'\"}";
+                if (instanceObj == null) return Models.McpResponse.Error("WorkWithPlus instance not found", target, null, "No WorkWithPlus instance was resolved for the requested object.");
 
                 var part = instanceObj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => 
                     p.Name.Equals("PatternInstance", StringComparison.OrdinalIgnoreCase) ||
                     p.GetType().Name.Contains("PatternInstance") ||
                     p.Type.Equals(new Guid("a51ced48-7bee-0001-ab12-04e9e32123d1")));
 
-                if (part == null) return "{\"error\": \"PatternInstance part not found in " + instanceObj.Name + "\"}";
+                if (part == null) return Models.McpResponse.Error("PatternInstance part not found", target, "PatternInstance", "The WorkWithPlus instance does not expose a PatternInstance part.", instanceObj.Name, instanceObj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(instanceObj)));
 
                 string xml = "";
                 if (part is ISource sourcePart)
@@ -77,7 +77,7 @@ namespace GxMcp.Worker.Services
                     catch { }
                 }
 
-                if (string.IsNullOrEmpty(xml)) return "{\"error\": \"Could not extract XML from PatternInstance. Object type: " + instanceObj.GetType().Name + "\"}";
+                if (string.IsNullOrEmpty(xml)) return Models.McpResponse.Error("PatternInstance XML not available", target, "PatternInstance", "The PatternInstance content could not be extracted from the resolved WorkWithPlus instance.", instanceObj.Name, instanceObj.TypeDescriptor?.Name);
 
                 var result = ParseWWPXml(xml);
                 result["rawSnippet"] = xml.Length > 5000 ? xml.Substring(0, 5000) : xml;

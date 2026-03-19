@@ -26,15 +26,15 @@ namespace GxMcp.Worker.Services
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, "Structure", "The requested object is not available in the active Knowledge Base.");
                 var trn = obj as Transaction;
-                if (trn == null) return "{\"error\": \"Object is not a Transaction\"}";
+                if (trn == null) return Models.McpResponse.Error("Object is not a Transaction", targetName, "Structure", "Visual structure updates currently support Transaction objects only.", obj.Name, obj.TypeDescriptor?.Name);
 
                 using (var sdkTrans = trn.Model.KB.BeginTransaction()) {
                     try {
                         var json = JObject.Parse(payload);
                         var children = json["children"] as JArray;
-                        if (children == null) return "{\"error\": \"Invalid payload\"}";
+                        if (children == null) return Models.McpResponse.Error("Invalid payload", targetName, "Structure", "The payload must contain a 'children' array for visual structure updates.");
                         
                         // Chamada otimizada com Batch Save interno
                         _visualStructureService.SyncVisualStructure(trn, children);
@@ -59,7 +59,7 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(targetName);
                 if (obj == null) {
                     Logger.Error($"[StructureService] Object not found: {targetName}");
-                    return "{\"error\": \"Object not found\"}";
+                    return Models.McpResponse.Error("Object not found", targetName, "Structure", "The requested object is not available in the active Knowledge Base.");
                 }
                 
                 Logger.Info($"[StructureService] Found object: {obj.Name} ({obj.TypeDescriptor.Name})");
@@ -80,7 +80,7 @@ namespace GxMcp.Worker.Services
                 }
                 else {
                     Logger.Error($"[StructureService] Invalid object type for visual structure: {obj.TypeDescriptor.Name}");
-                    return "{\"error\": \"Invalid object type: " + obj.TypeDescriptor.Name + "\"}";
+                    return Models.McpResponse.Error("Invalid object type", targetName, "Structure", "Visual structure is available only for Transaction, Table or SDT objects.", obj.Name, obj.TypeDescriptor?.Name);
                 }
                 
                 Logger.Info($"[StructureService] Successfully serialized structure for {obj.Name}");
@@ -97,7 +97,7 @@ namespace GxMcp.Worker.Services
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject { ["name"] = obj.Name, ["type"] = obj.TypeDescriptor.Name };
                 var subs = new JArray();

@@ -44,11 +44,11 @@ namespace GxMcp.Worker.Services
                     filterDomain = payload ?? "All";
                 }
                 if (!File.Exists(_indexPath))
-                    return "{\"error\": \"Search Index not found. Run analyze first.\"}";
+                    return McpResponse.Error("Search Index not found", filterName ?? payload, null, "Build the search index before generating the dependency graph.");
 
                 var index = SearchIndex.FromJson(File.ReadAllText(_indexPath));
                 if (index == null || index.Objects.Count == 0)
-                    return "{\"error\": \"Search Index is empty.\"}";
+                    return McpResponse.Error("Search Index is empty", filterName ?? payload, null, "The dependency graph cannot be generated until the search index contains objects.");
 
                 var nodes = new List<object>();
                 var edges = new List<object>();

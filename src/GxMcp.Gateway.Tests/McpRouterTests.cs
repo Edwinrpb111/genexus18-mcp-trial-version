@@ -217,5 +217,21 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("GetVisualStructure", json["action"]?.ToString());
             Assert.Equal("Customer", json["target"]?.ToString());
         }
+
+        [Fact]
+        public void ConvertToolCall_ShouldPreserveHistoryVersionId()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_history","arguments":{"action":"get_source","name":"DebugGravar","versionId":102}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("History", json["module"]?.ToString());
+            Assert.Equal("get_source", json["action"]?.ToString());
+            Assert.Equal("DebugGravar", json["target"]?.ToString());
+            Assert.Equal(102, json["versionId"]?.Value<int>());
+        }
     }
 }

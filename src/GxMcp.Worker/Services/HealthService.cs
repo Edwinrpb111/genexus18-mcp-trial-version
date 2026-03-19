@@ -27,11 +27,11 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (!File.Exists(_indexPath))
-                    return "{\"error\": \"Search Index not found. Run genexus_bulk_index first.\"}";
+                    return McpResponse.Error("Search Index not found", null, null, "Run the KB indexing flow before requesting the health report.");
 
                 var index = SearchIndex.FromJson(File.ReadAllText(_indexPath));
                 if (index == null || index.Objects.Count == 0)
-                    return "{\"error\": \"Search Index is empty.\"}";
+                    return McpResponse.Error("Search Index is empty", null, null, "The health report cannot be generated until the search index contains objects.");
 
                 var report = new JObject();
                 report["timestamp"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");

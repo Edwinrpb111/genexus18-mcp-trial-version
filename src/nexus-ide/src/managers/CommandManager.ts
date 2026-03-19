@@ -57,13 +57,45 @@ export class CommandManager {
     this.registerMiscCommands();
   }
 
+  private stringifyGatewayResult(value: unknown): string {
+    if (value === null || value === undefined) {
+      return "";
+    }
+
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.message === "string" && obj.message.length > 0) {
+        return obj.message;
+      }
+      if (typeof obj.output === "string" && obj.output.length > 0) {
+        return obj.output;
+      }
+      if (typeof obj.error === "string" && obj.error.length > 0) {
+        return obj.error;
+      }
+
+      try {
+        return JSON.stringify(obj, null, 2);
+      } catch {
+        return String(value);
+      }
+    }
+
+    return String(value);
+  }
+
   private registerSwitchPartCommands() {
     const switchPart = async (partName: string, uri?: vscode.Uri) => {
       const targetUri = uri || GxUriParser.getActiveGxUri();
 
       if (!targetUri) return;
-      const isTransaction = targetUri.path.includes("/Transaction/");
-      const isTable = targetUri.path.includes("/Table/");
+      const targetInfo = GxUriParser.parse(targetUri);
+      const isTransaction = targetInfo?.type === "Transaction";
+      const isTable = targetInfo?.type === "Table";
 
       if (
         (partName === "Structure" && (isTransaction || isTable)) ||
@@ -80,14 +112,22 @@ export class CommandManager {
         return;
       }
 
-      this.provider.setPart(targetUri, partName);
-      await vscode.commands.executeCommand("vscode.open", targetUri, {
+      const editorUri = targetInfo
+        ? this.provider.ensureMirrorPartFile(targetInfo.type, targetInfo.name, partName) ||
+          GxUriParser.toEditorUri(targetInfo.type, targetInfo.name, partName)
+        : targetUri;
+
+      if (editorUri.scheme === GX_SCHEME) {
+        this.provider.setPart(editorUri, partName);
+      }
+
+      await vscode.commands.executeCommand("vscode.open", editorUri, {
         preview: false,
         preserveFocus: true,
       });
 
       this.contextManager.setStatusBarMessage(`Switched to ${partName}`, 2000);
-      this.contextManager.updateActiveContext(targetUri);
+      this.contextManager.updateActiveContext(editorUri);
     };
 
     const parts = [
@@ -202,14 +242,17 @@ export class CommandManager {
 
                 if (result && result.status === "Success") {
                   outputChannel.appendLine(
-                    result.output || "Build finalizado com sucesso.",
+                    this.stringifyGatewayResult(result.output || result.message) ||
+                      "Build finalizado com sucesso.",
                   );
                   vscode.window.showInformationMessage(
                     `Build de ${objName} concluído!`,
                   );
                 } else {
                   const errorMsg = result
-                    ? result.error || result.output || JSON.stringify(result)
+                    ? this.stringifyGatewayResult(
+                        result.error || result.output || result,
+                      )
                     : "Resposta vazia do Gateway";
                   outputChannel.appendLine(`ERRO NO BUILD:\n${errorMsg}`);
                   vscode.window.showErrorMessage(
@@ -405,13 +448,7 @@ export class CommandManager {
                 vscode.window.showInformationMessage(
                   `${selectedType} '${name}' created!`,
                 );
-                const suffix = TYPE_SUFFIX[selectedType]
-                  ? `.${TYPE_SUFFIX[selectedType]}`
-                  : "";
-                const uri = vscode.Uri.from({
-                  scheme: GX_SCHEME,
-                  path: `/${selectedType}/${name}${suffix}.gx`,
-                });
+                const uri = GxUriParser.toEditorUri(selectedType, name);
                 await vscode.commands.executeCommand("vscode.open", uri);
                 this.provider.clearDirCache();
                 this.treeProvider.refresh();
@@ -481,8 +518,12 @@ export class CommandManager {
       vscode.commands.registerCommand(
         "nexus-ide.createVariable",
         async (uri: vscode.Uri, varName: string) => {
-          const pathStr = decodeURIComponent(uri.path.substring(1));
-          const objName = pathStr.split("/").pop()!.replace(".gx", "");
+          const info = GxUriParser.parse(uri);
+          const objName = info?.name;
+          if (!objName) {
+            vscode.window.showErrorMessage("Nao foi possivel resolver o objeto alvo.");
+            return;
+          }
           await vscode.window.withProgress(
             {
               location: vscode.ProgressLocation.Notification,
@@ -656,13 +697,13 @@ export class CommandManager {
       vscode.commands.registerCommand("nexus-ide.forceSave", async () => {
         const editor = vscode.window.activeTextEditor;
         let targetUri = editor?.document.uri;
-        if (!targetUri || targetUri.scheme !== GX_SCHEME) {
+        if (!targetUri || !GxUriParser.isGeneXusUri(targetUri)) {
           const visibleGxEditor = vscode.window.visibleTextEditors.find(
-            (e) => e.document.uri.scheme === GX_SCHEME
+            (e) => GxUriParser.isGeneXusUri(e.document.uri)
           );
           if (visibleGxEditor) targetUri = visibleGxEditor.document.uri;
         }
-        if (!targetUri || targetUri.scheme !== GX_SCHEME) return;
+        if (!targetUri || !GxUriParser.isGeneXusUri(targetUri)) return;
         const uri = targetUri;
         const activeEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === uri.toString());
         if (!activeEditor) return;
@@ -749,7 +790,7 @@ export class CommandManager {
           let objName = item?.gxName;
           if (!objName) {
             const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === GX_SCHEME) {
+            if (editor && GxUriParser.isGeneXusUri(editor.document.uri)) {
               objName = GxUriParser.getObjectName(editor.document.uri);
             }
           }
@@ -824,8 +865,10 @@ export class CommandManager {
           const editor = vscode.window.activeTextEditor;
           let activeDoc = editor?.document;
           
-          if (!activeDoc || activeDoc.uri.scheme !== GX_SCHEME) {
-            const visibleEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.scheme === GX_SCHEME);
+          if (!activeDoc || !GxUriParser.isGeneXusUri(activeDoc.uri)) {
+            const visibleEditor = vscode.window.visibleTextEditors.find((e) =>
+              GxUriParser.isGeneXusUri(e.document.uri),
+            );
             activeDoc = visibleEditor?.document;
           }
           
@@ -853,10 +896,7 @@ export class CommandManager {
               cancellable: false,
             },
             async () => {
-              const sourceName = activeDoc!.uri.path
-                .split("/")
-                .pop()
-                ?.replace(".gx", "");
+              const sourceName = GxUriParser.getObjectName(activeDoc!.uri);
               const result = await this.provider.callMcpTool(
                 "genexus_refactor",
                 {
@@ -890,8 +930,10 @@ export class CommandManager {
         const editor = vscode.window.activeTextEditor;
         let activeDoc = editor?.document;
         
-        if (!activeDoc || activeDoc.uri.scheme !== GX_SCHEME) {
-          const visibleEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.scheme === GX_SCHEME);
+        if (!activeDoc || !GxUriParser.isGeneXusUri(activeDoc.uri)) {
+          const visibleEditor = vscode.window.visibleTextEditors.find((e) =>
+            GxUriParser.isGeneXusUri(e.document.uri),
+          );
           activeDoc = visibleEditor?.document;
         }
 
@@ -922,13 +964,17 @@ export class CommandManager {
           },
           async () => {
             try {
+              const activeInfo = GxUriParser.parse(activeDoc.uri);
+              if (!activeInfo?.name) {
+                vscode.window.showErrorMessage(
+                  "Nao foi possivel resolver o objeto GeneXus ativo.",
+                );
+                return;
+              }
               const result = await this.provider.callMcpTool(
                 "genexus_explain_code",
                 {
-                  name: activeDoc.uri.path
-                    .split("/")
-                    .pop()
-                    ?.replace(".gx", ""),
+                  name: activeInfo?.name,
                   code: JSON.stringify({
                     error: error.message,
                     line: error.range.start.line,

@@ -7,6 +7,7 @@ import {
   ruleKeywords,
 } from "./gxNativeFunctions";
 import { GxFileSystemProvider } from "./gxFileSystem";
+import { GxUriParser } from "./utils/GxUriParser";
 
 export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
   private varCache = new Map<string, any[]>();
@@ -318,8 +319,7 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
   }
 
   private getObjName(document: vscode.TextDocument): string {
-    const path = decodeURIComponent(document.uri.path.substring(1));
-    return path.split("/").pop()!.replace(".gx", "");
+    return GxUriParser.getObjectName(document.uri);
   }
 
   private async getVariables(objName: string): Promise<any[]> {

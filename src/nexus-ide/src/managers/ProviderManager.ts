@@ -12,8 +12,6 @@ import { GxFormatProvider } from "../formatProvider";
 import { GxWorkspaceSymbolProvider } from "../workspaceSymbolProvider";
 import { GxCodeLensProvider } from "../codeLensProvider";
 import { GxReferenceProvider } from "../referenceProvider";
-import { TYPE_SUFFIX } from "../utils/GxPartMapper";
-import { GX_SCHEME } from "../constants";
 
 export class ProviderManager {
   public historyProvider: any;
@@ -85,7 +83,6 @@ export class ProviderManager {
     );
 
     this.registerHistoryProvider();
-    this.registerFileSearchProvider();
   }
 
   private registerHistoryProvider() {
@@ -93,11 +90,14 @@ export class ProviderManager {
       implements vscode.TextDocumentContentProvider
     {
       private _data = new Map<string, string>();
+      private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+      readonly onDidChange = this._onDidChange.event;
       provideTextDocumentContent(uri: vscode.Uri): string {
         return this._data.get(uri.toString()) || "";
       }
       update(uri: vscode.Uri, content: string) {
         this._data.set(uri.toString(), content);
+        this._onDidChange.fire(uri);
       }
       clear(uriPrefix: string) {
         for (const key of this._data.keys()) {
@@ -111,50 +111,5 @@ export class ProviderManager {
         this.historyProvider,
       ),
     );
-  }
-
-  private registerFileSearchProvider() {
-    if (!(vscode.workspace as any).registerFileSearchProvider) {
-      return;
-    }
-
-    try {
-      (vscode.workspace as any).registerFileSearchProvider(GX_SCHEME, {
-        provideFileSearchResults: async (
-          query: any,
-          _options: any,
-          token: vscode.CancellationToken,
-        ): Promise<vscode.Uri[]> => {
-          try {
-            const pattern = query.pattern || "";
-            if (pattern.length < 2) return [];
-
-            const result = await this.provider.queryObjects(
-              pattern + " @quick",
-              50,
-              5000,
-            );
-
-            if (token.isCancellationRequested) return [];
-
-            if (result && result.results) {
-              return result.results.map((obj: any) => {
-                const suffix = TYPE_SUFFIX[obj.type]
-                  ? `.${TYPE_SUFFIX[obj.type]}`
-                  : "";
-                return vscode.Uri.parse(
-                  `${GX_SCHEME}:/${obj.type}/${obj.name}${suffix}.gx`,
-                );
-              });
-            }
-          } catch (e) {
-            console.error("[ProviderManager] File search failed:", e);
-          }
-          return [];
-        },
-      });
-    } catch (e) {
-      console.warn("[ProviderManager] File search provider unavailable:", e);
-    }
   }
 }

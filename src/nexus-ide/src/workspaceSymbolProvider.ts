@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { GX_SCHEME } from "./constants";
 import { GxFileSystemProvider } from "./gxFileSystem";
+import { GxUriParser } from "./utils/GxUriParser";
 
 export class GxWorkspaceSymbolProvider
   implements vscode.WorkspaceSymbolProvider
@@ -18,11 +18,7 @@ export class GxWorkspaceSymbolProvider
 
       if (results && results.results) {
         return results.results.map((obj: any) => {
-          // Create a URI for the virtual GeneXus filesystem
-          const uri = vscode.Uri.from({
-            scheme: GX_SCHEME,
-            path: `/${obj.type}/${obj.name}.gx`,
-          });
+          const uri = GxUriParser.toEditorUri(obj.type, obj.name);
 
           let kind = vscode.SymbolKind.Object;
           if (obj.type === "Attribute") kind = vscode.SymbolKind.Property;

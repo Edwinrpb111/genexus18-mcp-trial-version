@@ -66,7 +66,12 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_build":
                     return new { module = "Build", action = args?["action"]?.ToString(), target = target };
                 case "genexus_history":
-                    return new { module = "History", action = args?["action"]?.ToString(), target = args?["name"]?.ToString() };
+                    return new {
+                        module = "History",
+                        action = args?["action"]?.ToString(),
+                        target = args?["name"]?.ToString(),
+                        versionId = args?["versionId"]?.ToObject<int?>()
+                    };
 
                 default:
                     return null;

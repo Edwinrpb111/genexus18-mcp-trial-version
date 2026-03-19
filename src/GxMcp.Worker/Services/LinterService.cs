@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 KBObject obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, specificPart, "The requested object is not available in the active Knowledge Base.");
 
                 var issues = new JArray();
                 var parts = obj.Parts.Cast<KBObjectPart>().ToList();
@@ -237,13 +237,34 @@ namespace GxMcp.Worker.Services
             var usedVariables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var matches = Regex.Matches(cleanAllCode, @"&(\w+)\b", RegexOptions.IgnoreCase);
             foreach (Match m in matches) usedVariables.Add(m.Groups[1].Value);
-
+            string variablesText = VariableInjector.GetVariablesAsText(varPart);
             foreach (var v in varPart.Variables)
             {
                 if (new[] { "Pgmname", "Pgmdesc", "Mode", "Today", "UserId" }.Contains(v.Name, StringComparer.OrdinalIgnoreCase)) continue;
+                int declarationLine = FindVariableDeclarationLine(variablesText, v.Name);
                 if (!usedVariables.Contains(v.Name))
-                    issues.Add(CreateIssue("GX008", "Unused variable", "Warning", $"Variable '&{v.Name}' is never used.", "&" + v.Name, 1, "Variables"));
+                    issues.Add(CreateIssue("GX008", "Unused variable", "Warning", $"Variable '&{v.Name}' is never used.", "&" + v.Name, declarationLine, "Variables"));
             }
+        }
+
+        private int FindVariableDeclarationLine(string variablesText, string variableName)
+        {
+            if (string.IsNullOrWhiteSpace(variablesText) || string.IsNullOrWhiteSpace(variableName))
+                return 1;
+
+            var lines = variablesText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (Regex.IsMatch(
+                    lines[i],
+                    @"^\s*&" + Regex.Escape(variableName) + @"\s*:",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                {
+                    return i + 1;
+                }
+            }
+
+            return 1;
         }
 
         private void CheckSubroutines(string cleanCode, JArray issues, string originalCode, string partName)

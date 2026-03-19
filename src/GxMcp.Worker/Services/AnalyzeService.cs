@@ -36,7 +36,7 @@ namespace GxMcp.Worker.Services
                 if (target == null) return "{\"status\":\"KB analysis not implemented for all objects yet\"}";
                 
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -76,7 +76,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var index = _indexCacheService.GetIndex();
-                if (index == null || index.Objects == null) return "{\"error\": \"Index not found. Run genexus_bulk_index first.\"}";
+                if (index == null || index.Objects == null) return Models.McpResponse.Error("Index not found", targetName, null, "Run the KB indexing flow before requesting impact analysis.");
 
                 // PERFORMANCE: Fix key lookup (Index keys are "Type:Name")
                 SearchIndex.IndexEntry targetNode = null;
@@ -96,7 +96,7 @@ namespace GxMcp.Worker.Services
                         if (obj != null) {
                             return "{\"target\": \"" + obj.Name + "\", \"status\": \"Indexing in progress for this object. Please retry in a few seconds.\", \"totalAffected\": 0}";
                         }
-                        return "{\"error\": \"Object '" + targetName + "' not found in index.\"}";
+                        return Models.McpResponse.Error("Object not found in index", targetName, null, "The object was not found in the search index or the active Knowledge Base.");
                     }
                     
                     // If multiple types match, prioritize Procedures/Transactions/Tables
@@ -240,10 +240,10 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", name, "Variables", "The requested object is not available in the active Knowledge Base.");
 
                 dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
-                if (vPart == null) return "{\"error\":\"Variables part not found\"}";
+                if (vPart == null) return Models.McpResponse.Error("Variables part not found", name, "Variables", "The object does not expose a Variables part.", obj.Name, obj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
 
                 var result = new JArray();
                 foreach (Variable var in vPart.Variables)
@@ -267,7 +267,7 @@ namespace GxMcp.Worker.Services
             {
                 var kb = _kbService.GetKB();
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -312,7 +312,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -487,7 +487,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
 
                 var (parmRule, parms) = _objectService.GetParametersInternal(obj);
                 var result = new JObject();

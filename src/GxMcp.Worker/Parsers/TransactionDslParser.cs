@@ -145,7 +145,13 @@ namespace GxMcp.Worker.Parsers
                         Type attrType = sdkLevel.GetType().Assembly.GetType("Artech.Genexus.Common.Objects.TransactionAttribute");
                         if (attrType != null) {
                             try {
-                                dynamic trnAttr = Activator.CreateInstance(attrType, new object[] { sdkLevel });
+                                var globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(model, pNode.Name);
+                                dynamic trnAttr;
+                                if (globalAttr != null)
+                                    trnAttr = Activator.CreateInstance(attrType, new object[] { sdkLevel.Structure, globalAttr });
+                                else
+                                    trnAttr = Activator.CreateInstance(attrType, new object[] { sdkLevel });
+                                
                                 trnAttr.Name = pNode.Name;
                                 trnAttr.IsKey = pNode.IsKey;
                                 sdkLevel.Attributes.Add(trnAttr);

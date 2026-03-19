@@ -7,6 +7,7 @@ using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
 using Artech.Common.Diagnostics;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -30,7 +31,7 @@ namespace GxMcp.Worker.Services
                 if (_objectService == null) return "{\"status\":\"Success\", \"message\":\"Validation skipped: ObjectService not initialized\"}";
 
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\":\"Object not found for validation: " + target + "\"}";
+                if (obj == null) return McpResponse.Error("Object not found for validation", target, partName, "The requested object is not available in the active Knowledge Base.");
 
                 // 1. FAST PRE-FLIGHT CHECK (Regex based)
                 var structuralErrors = CodeParser.Validate(code);

@@ -29,11 +29,48 @@ export const VALID_TYPES = new Set([
 ]);
 
 export class GxPartMapper {
+  static stripTypeSuffix(nameWithoutGx: string): string {
+    const dotParts = nameWithoutGx.split(".");
+    if (dotParts.length > 1) {
+      const maybeSuffix = dotParts[dotParts.length - 1];
+      if (Object.values(TYPE_SUFFIX).includes(maybeSuffix)) {
+        return dotParts.slice(0, -1).join(".");
+      }
+    }
+
+    return nameWithoutGx;
+  }
+
+  private static getTypeFromPath(uriPath: string): string | null {
+    const cleanPath = uriPath.replace(/^\//, "");
+    const parts = cleanPath.split("/");
+    const firstSegment = parts.length > 1 ? parts[0] : null;
+    if (firstSegment && VALID_TYPES.has(firstSegment)) {
+      return firstSegment;
+    }
+
+    const fileName = parts[parts.length - 1] || "";
+    const nameWithoutGx = fileName.replace(/\.gx$/, "");
+    const dotParts = nameWithoutGx.split(".");
+    if (dotParts.length >= 2) {
+      const maybeSuffix = dotParts[dotParts.length - 1];
+      const mappedType = Object.entries(TYPE_SUFFIX).find(
+        ([, suffix]) => suffix === maybeSuffix,
+      );
+      if (mappedType) {
+        return mappedType[0];
+      }
+    }
+
+    return null;
+  }
+
   static getPart(uri: vscode.Uri, filePartState: Map<string, string>): string {
     const part = filePartState.get(uri.path);
     if (part) return part;
 
-    if (uri.path.includes("/Table/")) return "Structure";
+    const detectedType = this.getTypeFromPath(uri.path);
+    if (detectedType === "Table") return "Structure";
     return "Source";
   }
 
@@ -46,7 +83,7 @@ export class GxPartMapper {
         return dotParts.slice(0, -1).join(".");
       }
     }
-    return nameWithoutGx;
+    return this.stripTypeSuffix(nameWithoutGx);
   }
 
   static getObjectTarget(uriPath: string): string | null {
@@ -56,7 +93,7 @@ export class GxPartMapper {
     }
 
     const parts = cleanPath.split("/");
-    const typeStr = parts.length > 1 ? parts[0] : null;
+    const typeStr = this.getTypeFromPath(uriPath);
     const fileName = parts[parts.length - 1];
     const objName = this.getCleanObjName(fileName);
 

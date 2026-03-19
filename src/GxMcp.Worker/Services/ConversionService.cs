@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -20,11 +21,11 @@ namespace GxMcp.Worker.Services
         public string TranslateTo(string targetName, string targetLanguage)
         {
             try {
-                if (string.IsNullOrWhiteSpace(targetName)) return "{\"error\":\"Object name is required\"}";
-                if (string.IsNullOrWhiteSpace(targetLanguage)) return "{\"error\":\"Target language is required\"}";
+                if (string.IsNullOrWhiteSpace(targetName)) return McpResponse.Error("Object name is required", targetName, null, "Provide the GeneXus object name to translate.");
+                if (string.IsNullOrWhiteSpace(targetLanguage)) return McpResponse.Error("Target language is required", targetName, null, "Provide the destination language, for example 'csharp' or 'typescript'.");
 
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return "{\"error\":\"Object not found\"}";
+                if (obj == null) return McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
 
                 string result = "";
                 if (targetLanguage.Equals("csharp", StringComparison.OrdinalIgnoreCase) || targetLanguage.Equals("cs", StringComparison.OrdinalIgnoreCase))
@@ -37,7 +38,7 @@ namespace GxMcp.Worker.Services
                 }
                 else
                 {
-                    return "{\"error\":\"Language " + targetLanguage + " not supported yet.\"}";
+                    return McpResponse.Error("Target language not supported", targetName, null, "Supported languages are 'csharp' and 'typescript'.");
                 }
 
                 return "{\"status\":\"Success\", \"code\":\"" + CommandDispatcher.EscapeJsonString(result) + "\"}";

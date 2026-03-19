@@ -23,7 +23,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null)
+                {
+                    return Models.McpResponse.Error(
+                        "Object not found",
+                        target,
+                        null,
+                        "The requested object is not available in the active Knowledge Base."
+                    );
+                }
 
                 // Use dynamic to avoid IPropertyContainer ambiguity
                 dynamic container = obj;
@@ -47,7 +55,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null)
+                {
+                    return Models.McpResponse.Error(
+                        "Object not found",
+                        target,
+                        null,
+                        "The requested object is not available in the active Knowledge Base."
+                    );
+                }
 
                 dynamic container = obj;
 
@@ -56,7 +72,10 @@ namespace GxMcp.Worker.Services
                 using (var trans = obj.Model.KB.BeginTransaction())
                 {
                     // Actually, for generic PropertyCollection:
-                    container.Properties.Set(propName, value);
+                    var pInfo = obj.GetType().GetProperty(propName);
+                    if (pInfo != null && pInfo.CanWrite) pInfo.SetValue(obj, value);
+                    else container.SetPropertyValue(propName, value);
+                    try { container.Dirty = true; } catch { }
 
                     obj.Save();
                     trans.Commit();

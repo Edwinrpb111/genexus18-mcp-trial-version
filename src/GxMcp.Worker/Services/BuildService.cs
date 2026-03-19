@@ -72,6 +72,16 @@ namespace GxMcp.Worker.Services
         {
             try
             {
+                if (_kbService != null)
+                {
+                    int waitAttempts = 0;
+                    while (_kbService.IsInitializing && waitAttempts < 15)
+                    {
+                        System.Threading.Thread.Sleep(1000);
+                        waitAttempts++;
+                    }
+                }
+
                 string kbPath = GetKBPath();
                 if (string.IsNullOrEmpty(kbPath)) return "{\"error\": \"KB Path not found in Environment (GX_KB_PATH)\"}";
 
@@ -82,7 +92,7 @@ namespace GxMcp.Worker.Services
                 sb.AppendLine("  <Target Name=\"Execute\">");
                 sb.AppendLine("    <OpenKnowledgeBase Directory=\"" + kbPath + "\" />");
                 if (action.Equals("Build", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(target))
-                    sb.AppendLine("    <BuildOne BuildCalled=\"true\" ObjectName=\"" + target + "\" />");
+                    sb.AppendLine("    <BuildOne BuildCalled=\"true\" ObjectName=\"" + target + "\" ForceRebuild=\"false\" />");
                 else if (action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <RebuildAll />");
                 else if (action.Equals("Reorg", StringComparison.OrdinalIgnoreCase))
@@ -95,7 +105,7 @@ namespace GxMcp.Worker.Services
 
                 var startInfo = new ProcessStartInfo {
                     FileName = _msbuildPath,
-                    Arguments = "/nologo /m /v:q /target:Execute \"" + tempFile + "\"", // PERFORMANCE: /m (parallel) and /v:q (quiet)
+                    Arguments = "/nologo /m /v:q /nodeReuse:false /target:Execute \"" + tempFile + "\"", // PERFORMANCE: /m (parallel) and /v:q (quiet) and /nodeReuse:false
                     UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
                     CreateNoWindow = true, WorkingDirectory = _gxDir
                 };

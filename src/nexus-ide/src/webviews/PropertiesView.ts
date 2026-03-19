@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { formatMcpErrorMessage } from "../utils/McpErrorFormatter";
 
 export class PropertiesView {
   private static currentPanel: vscode.WebviewPanel | undefined;
@@ -30,26 +31,29 @@ export class PropertiesView {
       if (result && !result.error) {
         this.currentPanel.webview.postMessage({ type: "update", properties: result.properties });
       } else {
-        this.currentPanel.webview.html = `<h1>Error: ${result?.error || "Unknown error"}</h1>`;
+        this.currentPanel.webview.html = `<h1>${formatMcpErrorMessage("Properties Error:", result)}</h1>`;
       }
 
       this.currentPanel.webview.onDidReceiveMessage(async (message) => {
         if (message.command === "setProperty") {
           try {
-            await provider.callMcpTool("genexus_properties", {
+            const result = await provider.callMcpTool("genexus_properties", {
               action: "set",
               name: target,
               propertyName: message.name,
               value: message.value,
               control: controlName
             });
+            if (result?.error || result?.status === "Error") {
+              throw result;
+            }
           } catch (e) {
-            vscode.window.showErrorMessage(`Failed to set property: ${e}`);
+            vscode.window.showErrorMessage(formatMcpErrorMessage("Failed to set property:", e));
           }
         }
       });
     } catch (e) {
-      this.currentPanel.webview.html = `<h1>Critical Error: ${e}</h1>`;
+      this.currentPanel.webview.html = `<h1>${formatMcpErrorMessage("Critical Error:", e)}</h1>`;
     }
   }
 

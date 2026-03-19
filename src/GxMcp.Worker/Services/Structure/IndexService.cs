@@ -18,13 +18,13 @@ namespace GxMcp.Worker.Services.Structure
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, "Indexes", "The requested object is not available in the active Knowledge Base.");
                 
                 Table tbl = null;
                 if (obj is Table t) tbl = t;
                 else if (obj is Transaction trn) tbl = trn.Structure.Root.AssociatedTable;
                 
-                if (tbl == null) return "{\"error\": \"Object has no associated table\"}";
+                if (tbl == null) return Models.McpResponse.Error("Associated table not found", targetName, "Indexes", "The requested object does not expose a physical table structure for index inspection.", obj.Name, obj.TypeDescriptor?.Name);
 
                 var result = new JObject();
                 result["name"] = tbl.Name;

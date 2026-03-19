@@ -237,7 +237,7 @@ namespace GxMcp.Worker.Services
                     case "health":
                         return _healthService.GetHealthReport();
                     case "history":
-                        int verId = args?["versionId"]?.ToObject<int>() ?? 0;
+                        int verId = args?["versionId"]?.ToObject<int?>() ?? 0;
                         return _historyService.Execute(target, action, verId);
                     case "property":
                         if (action == "Set")
@@ -256,7 +256,12 @@ namespace GxMcp.Worker.Services
                         return _refactorService.Refactor(target, action, payload);
                 }
 
-                return "{\"error\":\"Method or Action not found\"}";
+                return Models.McpResponse.Error(
+                    "Method or Action not found",
+                    target,
+                    action,
+                    string.Format("Unsupported dispatch combination. Method='{0}', Action='{1}'.", method ?? "", action ?? "")
+                );
             }
             catch (Exception ex)
             {

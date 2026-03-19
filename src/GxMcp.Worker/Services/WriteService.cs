@@ -89,6 +89,8 @@ namespace GxMcp.Worker.Services
         {
             try
             {
+                partName = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+
                 // DEBUG ENCODING: Detect and decode Base64 if needed
                 string decodedCode = code;
                 if (!string.IsNullOrEmpty(code) && (code.EndsWith("=") || code.Length > 100)) {
@@ -116,7 +118,12 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target);
                 if (obj == null) {
                     Logger.Error("[DEBUG-SAVE] Object NOT FOUND: " + target);
-                    return Models.McpResponse.Error("Object not found", target);
+                    return CreateWriteError(
+                        "Object not found",
+                        target,
+                        partName,
+                        "The shadow file points to an object that is not available in the active Knowledge Base."
+                    );
                 }
 
                 Logger.Debug(string.Format("[DEBUG-SAVE] Object Found: {0} ({1})", obj.Name, obj.TypeDescriptor.Name));
@@ -126,7 +133,13 @@ namespace GxMcp.Worker.Services
 
                 if (part == null) {
                     Logger.Error("[DEBUG-SAVE] Part NOT FOUND in object: " + partName);
-                    return Models.McpResponse.Error($"Part not found in {obj.TypeDescriptor.Name}", target);
+                    return CreateWriteError(
+                        $"Part '{partName}' not found in {obj.TypeDescriptor.Name}",
+                        target,
+                        partName,
+                        $"The object '{obj.Name}' of type '{obj.TypeDescriptor.Name}' does not expose the requested part.",
+                        obj
+                    );
                 }
 
                 // 1. SET CONTENT
@@ -286,15 +299,69 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        private string CreateWriteError(
+            string error,
+            string target,
+            string partName,
+            string details,
+            global::Artech.Architecture.Common.Objects.KBObject obj = null)
+        {
+            var response = new JObject
+            {
+                ["status"] = "Error",
+                ["error"] = error
+            };
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                response["target"] = target;
+            }
+
+            if (!string.IsNullOrWhiteSpace(partName))
+            {
+                response["part"] = partName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(details))
+            {
+                response["details"] = details;
+            }
+
+            if (obj != null)
+            {
+                response["objectName"] = obj.Name;
+                response["objectType"] = obj.TypeDescriptor?.Name;
+
+                var availableParts = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+                if (availableParts.Length > 0)
+                {
+                    response["availableParts"] = new JArray(availableParts);
+                }
+            }
+
+            return response.ToString();
+        }
+
         public string AddVariable(string target, string varName, string typeName = null)
         {
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return CreateWriteError(
+                    "Object not found",
+                    target,
+                    "Variables",
+                    "The requested object is not available in the active Knowledge Base."
+                );
 
                 var varPart = obj.Parts.Get<global::Artech.Genexus.Common.Parts.VariablesPart>();
-                if (varPart == null) return "{\"error\": \"Variables part not found\"}";
+                if (varPart == null) return CreateWriteError(
+                    "Variables part not found",
+                    target,
+                    "Variables",
+                    "The object does not expose a Variables part.",
+                    obj
+                );
 
                 if (varPart.Variables.Any(v => string.Equals(v.Name, varName, StringComparison.OrdinalIgnoreCase)))
                     return "{\"status\": \"Variable already exists\"}";
