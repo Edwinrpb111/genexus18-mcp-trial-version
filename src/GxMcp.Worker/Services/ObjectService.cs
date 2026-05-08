@@ -119,6 +119,110 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        public string ReadLogs(int lines, string filterCorrelation, string grepPattern)
+        {
+            try
+            {
+                if (lines <= 0) lines = 50;
+                if (lines > 500) lines = 500;
+
+                string exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly()?.Location ?? Process.GetCurrentProcess().MainModule.FileName) ?? "";
+                string logPath = Path.Combine(exeDir, "worker_debug.log");
+                if (!File.Exists(logPath))
+                {
+                    return "{\"status\":\"Error\", \"error\":\"Log file not found at " + CommandDispatcher.EscapeJsonString(logPath) + "\"}";
+                }
+
+                // Stream-read tail
+                var allLines = new List<string>();
+                using (var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var sr = new StreamReader(fs))
+                {
+                    string ln;
+                    while ((ln = sr.ReadLine()) != null) allLines.Add(ln);
+                }
+
+                IEnumerable<string> filtered = allLines;
+                if (!string.IsNullOrWhiteSpace(filterCorrelation))
+                    filtered = filtered.Where(l => l.IndexOf(filterCorrelation, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!string.IsNullOrWhiteSpace(grepPattern))
+                {
+                    try
+                    {
+                        var rx = new System.Text.RegularExpressions.Regex(grepPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        filtered = filtered.Where(l => rx.IsMatch(l));
+                    }
+                    catch { /* invalid regex falls back to substring */ filtered = filtered.Where(l => l.IndexOf(grepPattern, StringComparison.OrdinalIgnoreCase) >= 0); }
+                }
+
+                var matchList = filtered.ToList();
+                int skip = Math.Max(0, matchList.Count - lines);
+                var tail = matchList.Skip(skip).ToList();
+                var result = new JObject
+                {
+                    ["status"] = "Success",
+                    ["path"] = logPath,
+                    ["totalLines"] = allLines.Count,
+                    ["matched"] = tail.Count,
+                    ["lines"] = string.Join("\n", tail)
+                };
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"status\":\"Error\", \"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        public string WorkerReload(string sourceDir)
+        {
+            try
+            {
+                string currentExe = System.Reflection.Assembly.GetEntryAssembly()?.Location;
+                if (string.IsNullOrEmpty(currentExe)) currentExe = Process.GetCurrentProcess().MainModule?.FileName;
+                string publishDir = Path.GetDirectoryName(currentExe) ?? "";
+                int currentPid = Process.GetCurrentProcess().Id;
+
+                if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir))
+                {
+                    return "{\"status\":\"Error\", \"error\":\"sourceDir must point to a directory with the new worker binaries (typically src/GxMcp.Worker/bin/Release).\"}";
+                }
+
+                // Spawn a detached PowerShell helper that:
+                //   1) waits for THIS worker pid to exit (releases the .exe lock)
+                //   2) copies sourceDir/* → publishDir/*
+                //   3) exits, leaving the gateway to auto-respawn the worker (gateway has a 2s grace).
+                string ps =
+                    "$pid_target=" + currentPid + "; " +
+                    "try { Wait-Process -Id $pid_target -Timeout 30 -ErrorAction SilentlyContinue } catch {}; " +
+                    "Start-Sleep -Milliseconds 300; " +
+                    "Copy-Item '" + sourceDir.Replace("'", "''") + "\\*' '" + publishDir.Replace("'", "''") + "\\' -Recurse -Force -ErrorAction SilentlyContinue; ";
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"" + ps + "\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                Process.Start(psi);
+
+                Logger.Info("WorkerReload: helper spawned (will copy " + sourceDir + " -> " + publishDir + " after exit). Exiting in 1s.");
+                System.Threading.Tasks.Task.Run(async () =>
+                {
+                    await System.Threading.Tasks.Task.Delay(1000);
+                    Logger.Info("WorkerReload: exiting now for respawn.");
+                    Environment.Exit(0);
+                });
+                return "{\"status\":\"Success\", \"sourceDir\":\"" + CommandDispatcher.EscapeJsonString(sourceDir) + "\", \"publishDir\":\"" + CommandDispatcher.EscapeJsonString(publishDir) + "\", \"note\":\"Worker exits in 1s; helper copies new binaries; gateway auto-respawns. Next MCP call may take a few seconds.\"}";
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("WorkerReload failed: " + ex.Message);
+                return "{\"status\":\"Error\", \"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
         public string DeleteObject(string target, string typeFilter, bool confirm)
         {
             try
@@ -681,10 +785,14 @@ namespace GxMcp.Worker.Services
                 JObject result = new JObject();
                 result["part"] = partName;
 
-                // Virtual/DSL Parts (Structure for Trn/Table/SDT) 
+                // Virtual/DSL Parts (Structure for Trn/Table/SDT)
                 // We process this BEFORE the generic part check because Tables might not have a physical Part GUID mapped,
                 // and even if they do, we want our custom DSL representation.
-                if (partName.Equals("Structure", StringComparison.OrdinalIgnoreCase) && 
+                bool isStructurePartAlias = partName.Equals("Structure", StringComparison.OrdinalIgnoreCase)
+                    || partName.Equals("TableStructure", StringComparison.OrdinalIgnoreCase)
+                    || partName.Equals("SDTStructure", StringComparison.OrdinalIgnoreCase)
+                    || partName.Equals("TrnStructure", StringComparison.OrdinalIgnoreCase);
+                if (isStructurePartAlias &&
                         (obj.GetType().Name == "Transaction" || obj.GetType().Name == "Table" || obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase)))
                 {
                     string structureText = StructureParser.SerializeToText(obj);

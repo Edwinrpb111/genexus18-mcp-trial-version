@@ -39,7 +39,12 @@ namespace GxMcp.Worker.Services
                 string cacheKey = BuildCacheKey(target, partName, typeFilter);
                 bool sourceFromCache = false;
                 long readMs = 0;
-                string originalSource = TryGetCachedSource(cacheKey);
+                // Stale-cache prevention: every patch starts from a fresh authoritative read.
+                // Writes that bypass PatchService (or external IDE edits) can leave _sourceCache
+                // holding pre-write text; trusting it produced silent NoChange / wrong-base patches.
+                _sourceCache.TryRemove(cacheKey, out _);
+                _objectService.MarkReadCacheDirty(_objectService.FindObject(target, typeFilter), partName);
+                string originalSource = null;
                 if (originalSource == null)
                 {
                     var readStopwatch = Stopwatch.StartNew();
@@ -683,6 +688,27 @@ namespace GxMcp.Worker.Services
                 Source = source,
                 UpdatedUtc = DateTime.UtcNow
             };
+        }
+
+        public static void InvalidateCachedSource(string target, string partName, string typeFilter)
+        {
+            try
+            {
+                string cacheKey = BuildCacheKey(target, partName, typeFilter);
+                _sourceCache.TryRemove(cacheKey, out _);
+            }
+            catch { }
+        }
+
+        public static void InvalidateAllForTarget(string target)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return;
+            string normalizedTarget = target.Trim();
+            foreach (var key in _sourceCache.Keys)
+            {
+                if (key.IndexOf("|" + normalizedTarget + "|", StringComparison.OrdinalIgnoreCase) >= 0)
+                    _sourceCache.TryRemove(key, out _);
+            }
         }
 
         private bool VerifyPersistedSource(string target, string partName, string typeFilter, string expectedSource, out string error)
