@@ -244,7 +244,7 @@ namespace GxMcp.Worker.Services
 
                 Logger.Info(string.Format("Deleting Object: {0} ({1}, guid={2})", objName, objType, objGuid));
 
-                kb.DesignModel.Objects.Remove(obj);
+                obj.Delete();
 
                 Logger.Info(string.Format("Object deleted: {0} ({1})", objName, objType));
                 return "{\"status\":\"Success\", \"deleted\":\"" + CommandDispatcher.EscapeJsonString(objName) + "\", \"type\":\"" + CommandDispatcher.EscapeJsonString(objType) + "\"}";
