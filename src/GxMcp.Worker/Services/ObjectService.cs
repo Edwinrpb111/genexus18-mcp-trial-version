@@ -102,6 +102,10 @@ namespace GxMcp.Worker.Services
                         }
                     }
                 }
+                else if (type.Equals("SDT", StringComparison.OrdinalIgnoreCase) || type.Equals("StructuredDataType", StringComparison.OrdinalIgnoreCase))
+                {
+                    InitializeSDTWithDefaultItem(newObj, name);
+                }
 
                 newObj.Save();
                 
@@ -112,6 +116,138 @@ namespace GxMcp.Worker.Services
             {
                 Logger.Error("CreateObject failed: " + ex.Message);
                 return "{\"status\":\"Error\", \"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private static readonly Guid SDT_STRUCTURE_PART_GUID = Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
+
+        private static void InitializeSDTWithDefaultItem(KBObject sdt, string sdtName)
+        {
+            try
+            {
+                KBObjectPart structure = null;
+                foreach (KBObjectPart p in sdt.Parts)
+                {
+                    if (p.Type == SDT_STRUCTURE_PART_GUID) { structure = p; break; }
+                    try {
+                        string descName = p.TypeDescriptor?.Name ?? "";
+                        string className = p.GetType().Name;
+                        if (descName.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            className.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0)
+                        { structure = p; break; }
+                    } catch { }
+                }
+
+                if (structure == null)
+                {
+                    Logger.Error("InitializeSDTWithDefaultItem: SDTStructurePart not found for " + sdtName);
+                    return;
+                }
+
+                dynamic ds = structure;
+                dynamic root = null;
+                try { root = ds.Root; } catch { try { root = ds.StructureRoot; } catch { } }
+                if (root == null)
+                {
+                    Logger.Error("InitializeSDTWithDefaultItem: Root not found for " + sdtName);
+                    return;
+                }
+
+                dynamic items = null;
+                try { items = root.Items; } catch { try { items = root.Children; } catch { } }
+                if (items == null)
+                {
+                    Logger.Error("InitializeSDTWithDefaultItem: items collection not found for " + sdtName);
+                    return;
+                }
+
+                // Skip if structure is already populated
+                try {
+                    foreach (dynamic existing in items) { return; }
+                } catch { }
+
+                Type sdtItemType = null;
+                Type rootType = ((object)root).GetType();
+                var asm = rootType.Assembly;
+                string[] namespaces = { "Artech.Genexus.Common.Parts", "Artech.Genexus.Common.Objects", "Artech.Genexus.Common", "Artech.Genexus.Common.Parts.SDT", rootType.Namespace };
+                foreach (var ns in namespaces)
+                {
+                    if (string.IsNullOrEmpty(ns)) continue;
+                    sdtItemType = asm.GetType(ns + ".SDTItem") ?? asm.GetType(ns + ".SDTLevel") ?? asm.GetType(ns + ".StructureItem") ?? asm.GetType(ns + ".StructureLevel");
+                    if (sdtItemType != null) break;
+                }
+
+                if (sdtItemType == null)
+                {
+                    foreach (var loadedAsm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        try
+                        {
+                            foreach (var t in loadedAsm.GetTypes())
+                            {
+                                if (!t.IsClass || t.IsAbstract) continue;
+                                string n = t.Name;
+                                if (n.Equals("SDTItem", StringComparison.OrdinalIgnoreCase) || n.Equals("SDTLevel", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    sdtItemType = t;
+                                    Logger.Info("InitializeSDTWithDefaultItem: SDTItem type resolved via scan: " + t.FullName + " in " + loadedAsm.GetName().Name);
+                                    break;
+                                }
+                            }
+                        }
+                        catch { }
+                        if (sdtItemType != null) break;
+                    }
+                }
+
+                if (sdtItemType == null)
+                {
+                    Logger.Error("InitializeSDTWithDefaultItem: SDTItem type not resolved for " + sdtName + ". Root type=" + rootType.FullName + " Asm=" + asm.GetName().Name);
+                    try
+                    {
+                        var props = string.Join(",", rootType.GetProperties().Select(p => p.Name));
+                        var methods = string.Join(",", rootType.GetMethods().Where(m => !m.IsSpecialName).Select(m => m.Name).Distinct());
+                        Logger.Error("InitializeSDTWithDefaultItem: Root props=[" + props + "] methods=[" + methods + "]");
+                    }
+                    catch { }
+                    return;
+                }
+
+                dynamic newItem = null;
+                Exception lastCtorEx = null;
+                object[][] ctorArgVariants = new object[][] {
+                    new object[] { root },
+                    new object[] { structure },
+                    new object[] { },
+                    new object[] { sdt },
+                    new object[] { structure, root }
+                };
+                foreach (var args in ctorArgVariants)
+                {
+                    try { newItem = Activator.CreateInstance(sdtItemType, args); if (newItem != null) break; }
+                    catch (Exception ex) { lastCtorEx = ex; }
+                }
+                if (newItem == null)
+                {
+                    try
+                    {
+                        var ctors = string.Join("; ", sdtItemType.GetConstructors().Select(c => "(" + string.Join(",", c.GetParameters().Select(p => p.ParameterType.Name)) + ")"));
+                        Logger.Error("InitializeSDTWithDefaultItem: cannot construct SDTItem. Available ctors: [" + ctors + "] LastEx: " + lastCtorEx?.Message);
+                    } catch { }
+                    return;
+                }
+                newItem.Name = "Item1";
+                try
+                {
+                    Type eDBType = asm.GetType("Artech.Genexus.Common.eDBType");
+                    if (eDBType != null) newItem.Type = Enum.Parse(eDBType, "VARCHAR");
+                } catch { }
+                items.Add(newItem);
+                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("InitializeSDTWithDefaultItem failed: " + ex.Message);
             }
         }
 

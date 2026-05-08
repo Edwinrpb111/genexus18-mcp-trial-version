@@ -90,22 +90,51 @@ namespace GxMcp.Worker.Parsers
                 KBObjectPart structure = null;
                 foreach (KBObjectPart p in obj.Parts)
                 {
-                    if (p.Type == SDT_STRUCTURE_PART)
+                    try
                     {
-                        structure = p;
-                        break;
+                        string descName = p.TypeDescriptor?.Name ?? "";
+                        string className = p.GetType().Name;
+                        if (p.Type == SDT_STRUCTURE_PART ||
+                            descName.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            descName.Equals("Structure", StringComparison.OrdinalIgnoreCase) ||
+                            className.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            structure = p;
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+
+                if (structure == null)
+                {
+                    foreach (KBObjectPart p in obj.Parts)
+                    {
+                        try
+                        {
+                            dynamic dp = p;
+                            if (dp.Root != null) { structure = p; break; }
+                        }
+                        catch { }
                     }
                 }
 
-                if (structure != null)
+                if (structure == null)
                 {
-                    var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                                    .Where(l => !string.IsNullOrWhiteSpace(l))
-                                    .ToList();
-                    var parsedNodes = DslParserUtils.ParseLinesIntoNodes(lines);
-                    dynamic ds = structure;
-                    SyncSDTNodes(ds.Root, parsedNodes);
+                    Logger.Error("[SDT PARSE] Structure part not found for " + obj.Name);
+                    return;
                 }
+
+                Logger.Info("[SDT PARSE] Begin parse for " + obj.Name + " using part " + structure.GetType().Name);
+                var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                                .Where(l => !string.IsNullOrWhiteSpace(l))
+                                .ToList();
+                var parsedNodes = DslParserUtils.ParseLinesIntoNodes(lines);
+                dynamic ds = structure;
+                dynamic root = null;
+                try { root = ds.Root; } catch { try { root = ds.StructureRoot; } catch { } }
+                if (root == null) { Logger.Error("[SDT PARSE] Root not found for " + obj.Name); return; }
+                SyncSDTNodes(root, parsedNodes);
             }
         }
 
@@ -131,6 +160,22 @@ namespace GxMcp.Worker.Parsers
                 try { typeStr = level.Type != null ? level.Type.ToString() : "Unknown"; } catch { }
                 sb.AppendLine($"{indentStr}{level.Name} : {typeStr}{collectionMarker}");
             }
+        }
+
+        private static object ResolveDbType(Type eDBTypeT, string typeStr)
+        {
+            if (eDBTypeT == null) return null;
+            string name;
+            if (string.IsNullOrEmpty(typeStr)) name = "VARCHAR";
+            else if (typeStr.StartsWith("Numeric", StringComparison.OrdinalIgnoreCase)) name = "NUMERIC";
+            else if (typeStr.StartsWith("Char", StringComparison.OrdinalIgnoreCase)) name = "CHARACTER";
+            else if (typeStr.StartsWith("Varchar", StringComparison.OrdinalIgnoreCase)) name = "VARCHAR";
+            else if (typeStr.StartsWith("Date", StringComparison.OrdinalIgnoreCase)) name = "DATE";
+            else if (typeStr.StartsWith("Bool", StringComparison.OrdinalIgnoreCase)) name = "Boolean";
+            else if (typeStr.StartsWith("LongVarchar", StringComparison.OrdinalIgnoreCase)) name = "LONGVARCHAR";
+            else name = typeStr.ToUpperInvariant();
+            try { return Enum.Parse(eDBTypeT, name, true); }
+            catch { try { return Enum.Parse(eDBTypeT, "VARCHAR", true); } catch { return null; } }
         }
 
         private void SyncSDTNodes(dynamic node, List<DslParserUtils.ParsedNode> parsedNodes)
@@ -173,12 +218,61 @@ namespace GxMcp.Worker.Parsers
                         if (sdtItemType != null) break;
                     }
 
-                    if (sdtItemType != null) {
-                        try {
-                            targetChild = Activator.CreateInstance(sdtItemType, new object[] { node });
-                            targetChild.Name = pNode.Name;
-                            items.Add(targetChild);
-                        } catch { }
+                    bool added = false;
+                    try
+                    {
+                        Type nodeType = ((object)node).GetType();
+                        if (pNode.IsCompound)
+                        {
+                            MethodInfo addLevel = nodeType.GetMethod("AddLevel", new Type[] { typeof(string) })
+                                                ?? nodeType.GetMethods().FirstOrDefault(m => m.Name == "AddLevel" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(string));
+                            if (addLevel != null)
+                            {
+                                targetChild = addLevel.Invoke(node, new object[] { pNode.Name });
+                                added = (targetChild != null);
+                            }
+                        }
+                        else
+                        {
+                            Type eDBTypeT = nodeType.Assembly.GetType("Artech.Genexus.Common.eDBType");
+                            object dbType = ResolveDbType(eDBTypeT, pNode.TypeStr);
+                            MethodInfo addItem = nodeType.GetMethod("AddItem", new Type[] { typeof(string), eDBTypeT });
+                            if (addItem != null && eDBTypeT != null && dbType != null)
+                            {
+                                targetChild = addItem.Invoke(node, new object[] { pNode.Name, dbType });
+                                added = (targetChild != null);
+                            }
+                            else
+                            {
+                                var sigs = string.Join("; ", nodeType.GetMethods().Where(m => m.Name == "AddItem").Select(m => "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")"));
+                                Logger.Error("[SDT PARSE] AddItem(string, eDBType) not invokable. eDBType=" + (eDBTypeT?.FullName ?? "null") + " resolved=" + (dbType?.ToString() ?? "null") + " Sigs=[" + sigs + "]");
+                            }
+                        }
+                    }
+                    catch (Exception ex) { Logger.Error("[SDT PARSE] AddItem/AddLevel('" + pNode.Name + "') failed: " + (ex.InnerException?.Message ?? ex.Message)); }
+
+                    if (!added && sdtItemType != null)
+                    {
+                        object[][] ctorArgVariants = new object[][] {
+                            new object[] { node },
+                            new object[] { },
+                            new object[] { items }
+                        };
+                        foreach (var args in ctorArgVariants)
+                        {
+                            try { targetChild = Activator.CreateInstance(sdtItemType, args); if (targetChild != null) { added = true; break; } }
+                            catch { targetChild = null; }
+                        }
+                        if (added)
+                        {
+                            try { targetChild.Name = pNode.Name; items.Add(targetChild); }
+                            catch (Exception ex) { Logger.Error("[SDT PARSE] Manual add fallback failed: " + ex.Message); added = false; }
+                        }
+                    }
+
+                    if (!added)
+                    {
+                        Logger.Error("[SDT PARSE] Could not add item '" + pNode.Name + "'");
                     }
                 }
 
