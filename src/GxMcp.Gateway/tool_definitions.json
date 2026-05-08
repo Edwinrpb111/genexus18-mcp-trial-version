@@ -499,6 +499,43 @@
     }
   },
   {
+    "name": "genexus_logs",
+    "description": "Reads the worker_debug.log file from the active worker. Useful for diagnosing 'Erro' responses, validating that fixes deployed, or correlating a specific call (correlationId) with internal logging. Default returns the last 50 lines.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "integer",
+          "description": "Tail size (1-500). Default 50."
+        },
+        "filterCorrelation": {
+          "type": "string",
+          "description": "Optional substring (e.g. correlationId) to filter log lines."
+        },
+        "grep": {
+          "type": "string",
+          "description": "Optional regex (case-insensitive) applied before tailing."
+        }
+      }
+    }
+  },
+  {
+    "name": "genexus_worker_reload",
+    "description": "Hot-reloads the worker process: copies new binaries from sourceDir into the publish path (after worker exits) and triggers gateway respawn. Use after rebuilding GxMcp.Worker so subsequent MCP calls run the new code without closing Claude Code. Next call after reload may take a few seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sourceDir": {
+          "type": "string",
+          "description": "Absolute path to the freshly built bin/Release folder (e.g. C:/.../src/GxMcp.Worker/bin/Release)."
+        }
+      },
+      "required": [
+        "sourceDir"
+      ]
+    }
+  },
+  {
     "name": "genexus_delete_object",
     "description": "Deletes an object from the active Knowledge Base. Irreversible — requires confirm=true.",
     "inputSchema": {

@@ -29,6 +29,26 @@ namespace GxMcp.Gateway.Routers
                         confirm = args?["confirm"]?.ToObject<bool?>() ?? false
                     };
 
+                case "genexus_worker_reload":
+                    return new
+                    {
+                        module = "Object",
+                        action = "WorkerReload",
+                        target = "_self",
+                        sourceDir = args?["sourceDir"]?.ToString()
+                    };
+
+                case "genexus_logs":
+                    return new
+                    {
+                        module = "Object",
+                        action = "ReadLogs",
+                        target = "_self",
+                        lines = args?["lines"]?.ToObject<int?>() ?? 50,
+                        filterCorrelation = args?["filterCorrelation"]?.ToString(),
+                        grep = args?["grep"]?.ToString()
+                    };
+
                 case "genexus_refactor":
                     return ConvertRefactorToolCall(args);
 

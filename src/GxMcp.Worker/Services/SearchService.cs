@@ -25,9 +25,14 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                 if (_indexCacheService.IsIndexMissing && !_indexCacheService.IsScanning) 
-                     return "{\"error\": \"Index missing. Please run genexus_lifecycle(action='index') to build the search index before using this tool.\"}";
- 
+                 if (_indexCacheService.IsIndexMissing && !_indexCacheService.IsScanning)
+                 {
+                     // Auto-bootstrap: kick off indexing in the background instead of erroring out.
+                     // The first call returns a hint so the agent can poll genexus_lifecycle status.
+                     try { _indexCacheService.KbService?.BulkIndex(); } catch { }
+                     return "{\"count\": 0, \"results\": [], \"info\": \"Index missing — auto-started indexing in background. Retry in a few seconds, or call genexus_lifecycle(action='status') to monitor.\", \"autoIndexed\": true}";
+                 }
+
                  var index = _indexCacheService.GetIndex();
                  if (index == null || index.Objects.Count == 0) {
                      if (_indexCacheService.IsScanning) return "{\"count\": 0, \"results\": [], \"info\": \"Indexing in progress...\"}";

@@ -214,6 +214,11 @@ namespace GxMcp.Worker.Services
                         if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
                         if (action == "Create") return _objectService.CreateObject(args?["type"]?.ToString(), target);
                         if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false);
+                        if (action == "WorkerReload") return _objectService.WorkerReload(args?["sourceDir"]?.ToString());
+                        if (action == "ReadLogs") return _objectService.ReadLogs(
+                            args?["lines"]?.ToObject<int?>() ?? 50,
+                            args?["filterCorrelation"]?.ToString(),
+                            args?["grep"]?.ToString());
                         if (action == "ExportText")
                         {
                             return _objectService.ExportObjectToText(
