@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.3 — 2026-05-09
+
+### Fixed
+- CI: `GxMcp.Gateway.csproj` now copies `config.sample.json` (linked as `config.json`) instead of the gitignored `config.json`. v2.0.1 and v2.0.2 release workflows failed at the build step for this reason and never reached the npm publish stage; this release ships the SEO content (keywords, README) and the v2.0.1 worker hardening together.
+
 ## v2.0.2 — 2026-05-09
 
 ### Changed
