@@ -17,7 +17,7 @@
     <PackageReference Include="System.Security.Permissions" Version="10.0.3" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\config.json" Link="config.json">
+    <None Include="..\..\config.sample.json" Link="config.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Include="tool_definitions.json">
