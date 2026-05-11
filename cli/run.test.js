@@ -135,6 +135,7 @@ test('non-interactive init supports idempotent no-op', () => {
         kbDir,
         '--gx',
         'C:\\Program Files (x86)\\GeneXus\\GeneXus18',
+        '--no-smoke',
         '--format',
         'json'
     ];
@@ -143,6 +144,10 @@ test('non-interactive init supports idempotent no-op', () => {
     assert.equal(first.status, 0);
     const firstParsed = JSON.parse(first.stdout);
     assert.equal(firstParsed.ok.noOp, false);
+    assert.ok(firstParsed.ok.verification, 'init should include verification block');
+    assert.ok(firstParsed.ok.verification.summary, 'verification should have summary');
+    assert.ok(Array.isArray(firstParsed.ok.verification.checks), 'verification should have checks array');
+    assert.equal(firstParsed.meta.smokeSkipped, true, '--no-smoke should be reflected in meta');
 
     const second = runCli(args);
     assert.equal(second.status, 0);
@@ -153,6 +158,257 @@ test('non-interactive init supports idempotent no-op', () => {
     assert.equal(fs.existsSync(cfgPath), true);
 
     fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('whoami without config returns disconnected state', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const res = runCli(['whoami', '--format', 'json'], { cwd: tempRoot });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.connected, false);
+    assert.ok(parsed.ok.reason, 'should explain why not connected');
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('whoami with config returns kb and geneXus details', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-w');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const res = runCli(['whoami', '--format', 'json'], { cwd: kbDir });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.connected, true);
+    assert.equal(parsed.ok.kb.path, kbDir);
+    assert.equal(parsed.ok.kb.name, path.basename(kbDir));
+    assert.equal(parsed.ok.geneXus.installationPath, 'C:\\Program Files (x86)\\GeneXus\\GeneXus18');
+    assert.equal(parsed.meta.command, 'whoami');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('uninstall --yes removes local config and reports plan', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-u');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const cfgPath = path.join(kbDir, 'config.json');
+    assert.equal(fs.existsSync(cfgPath), true, 'precondition: config.json exists');
+
+    const res = runCli(['uninstall', '--yes', '--format', 'json'], { cwd: kbDir });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.action, 'uninstall');
+    assert.equal(parsed.ok.cancelled, false);
+    assert.equal(parsed.ok.configRemoved, true);
+    assert.equal(fs.existsSync(cfgPath), false, 'config.json should be deleted');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('uninstall --help returns usage entry', () => {
+    const res = runCli(['uninstall', '--help', '--format', 'json']);
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.command, 'uninstall');
+    assert.ok(parsed.ok.usage.includes('--yes'), 'usage should mention --yes flag');
+});
+
+test('whoami --help returns usage entry', () => {
+    const res = runCli(['whoami', '--help', '--format', 'json']);
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.command, 'whoami');
+});
+
+test('init auto-discovers KB from cwd when --kb is omitted', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-disco');
+    fs.mkdirSync(kbDir, { recursive: true });
+    fs.writeFileSync(path.join(kbDir, 'KnowledgeBase.Connection'), '');
+
+    const res = runCli(
+        ['init', '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json'],
+        { cwd: kbDir }
+    );
+
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.ok.resolved.kb.path, kbDir);
+    assert.equal(parsed.ok.resolved.kb.source, 'cwd');
+    assert.equal(parsed.ok.resolved.gx.source, 'flag');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('init fails clearly when paths cannot be auto-discovered', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+
+    const res = runCli(
+        ['init', '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json'],
+        { cwd: tempRoot }
+    );
+
+    assert.equal(res.status, 2);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.error.code, 'usage_error');
+    assert.ok(parsed.error.message.includes('--kb'), 'error should mention --kb');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb list shows the KB auto-registered by init', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-list');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const res = runCli(['kb', 'list', '--format', 'json'], { cwd: kbDir });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.meta.command, 'kb.list');
+    assert.equal(parsed.ok.activeKb, path.basename(kbDir));
+    assert.equal(parsed.ok.kbs.length, 1);
+    assert.equal(parsed.ok.kbs[0].active, true);
+    assert.equal(parsed.ok.kbs[0].path, kbDir);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb add and switch update active KB', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbA = path.join(tempRoot, 'kb-a');
+    const kbB = path.join(tempRoot, 'kb-b');
+    fs.mkdirSync(kbA, { recursive: true });
+    fs.mkdirSync(kbB, { recursive: true });
+
+    runCli(['init', '--kb', kbA, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const addRes = runCli(['kb', 'add', '--name', 'bravo', '--kb', kbB, '--format', 'json'], { cwd: kbA });
+    assert.equal(addRes.status, 0);
+    const addParsed = JSON.parse(addRes.stdout);
+    assert.equal(addParsed.ok.registeredCount, 2);
+    assert.equal(addParsed.ok.activeKb, path.basename(kbA), 'active KB should remain the first one');
+
+    const switchRes = runCli(['kb', 'switch', '--name', 'bravo', '--format', 'json'], { cwd: kbA });
+    assert.equal(switchRes.status, 0);
+    const switchParsed = JSON.parse(switchRes.stdout);
+    assert.equal(switchParsed.ok.activeKb, 'bravo');
+    assert.equal(switchParsed.ok.kbPath, kbB);
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(kbA, 'config.json'), 'utf8'));
+    assert.equal(cfg.Environment.KBPath, kbB, 'legacy KBPath should be updated');
+    assert.equal(cfg.Environment.ActiveKb, 'bravo');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb switch rejects unknown name', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-x');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const res = runCli(['kb', 'switch', '--name', 'nonexistent', '--format', 'json'], { cwd: kbDir });
+    assert.equal(res.status, 2);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.error.code, 'usage_error');
+    assert.ok(parsed.error.message.includes('nonexistent'));
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb remove deletes entry and reassigns active when applicable', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbA = path.join(tempRoot, 'kb-r-a');
+    const kbB = path.join(tempRoot, 'kb-r-b');
+    fs.mkdirSync(kbA, { recursive: true });
+    fs.mkdirSync(kbB, { recursive: true });
+
+    runCli(['init', '--kb', kbA, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+    runCli(['kb', 'add', '--name', 'second', '--kb', kbB, '--format', 'json'], { cwd: kbA });
+
+    const removeRes = runCli(['kb', 'remove', '--name', path.basename(kbA), '--format', 'json'], { cwd: kbA });
+    assert.equal(removeRes.status, 0);
+    const parsed = JSON.parse(removeRes.stdout);
+    assert.equal(parsed.ok.removed, true);
+    assert.equal(parsed.ok.activeKb, 'second', 'active should fall back to remaining KB');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb switch --kb refuses to overwrite existing entry with different path', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbA = path.join(tempRoot, 'a', 'Sales');
+    const kbB = path.join(tempRoot, 'b', 'Sales');
+    fs.mkdirSync(kbA, { recursive: true });
+    fs.mkdirSync(kbB, { recursive: true });
+
+    runCli(['init', '--kb', kbA, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const res = runCli(['kb', 'switch', '--kb', kbB, '--format', 'json'], { cwd: kbA });
+    assert.equal(res.status, 2);
+    const parsed = JSON.parse(res.stdout);
+    assert.ok(/already registered/i.test(parsed.error.message), 'should warn about basename collision');
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(kbA, 'config.json'), 'utf8'));
+    assert.equal(cfg.Environment.KBs.Sales, kbA, 'original entry must be preserved');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb remove of last KB clears legacy KBPath', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-last');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    runCli(['kb', 'remove', '--name', path.basename(kbDir), '--format', 'json'], { cwd: kbDir });
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(kbDir, 'config.json'), 'utf8'));
+    assert.equal(cfg.Environment.KBPath, undefined, 'KBPath should be cleared after removing last KB');
+    assert.equal(cfg.Environment.ActiveKb, undefined, 'ActiveKb should be cleared');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('kb subcommand validation: missing subcommand returns usage error', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const kbDir = path.join(tempRoot, 'kb-v');
+    fs.mkdirSync(kbDir, { recursive: true });
+
+    runCli(['init', '--kb', kbDir, '--gx', 'C:\\Program Files (x86)\\GeneXus\\GeneXus18', '--no-smoke', '--format', 'json']);
+
+    const res = runCli(['kb', '--format', 'json'], { cwd: kbDir });
+    assert.equal(res.status, 2);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.error.code, 'usage_error');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('tool_definitions.json is valid and disambiguation tools have use-when guidance', () => {
+    const defsPath = path.join(__dirname, '..', 'src', 'GxMcp.Gateway', 'tool_definitions.json');
+    const defs = JSON.parse(fs.readFileSync(defsPath, 'utf8'));
+    assert.ok(Array.isArray(defs) && defs.length > 0, 'tool defs should be a non-empty array');
+
+    const byName = Object.fromEntries(defs.map((t) => [t.name, t]));
+    const disambiguationTools = ['genexus_inspect', 'genexus_analyze', 'genexus_summarize', 'genexus_doc'];
+    for (const name of disambiguationTools) {
+        assert.ok(byName[name], `${name} should exist`);
+        const desc = byName[name].description || '';
+        assert.ok(
+            /use when|don't use|use this|use to/i.test(desc),
+            `${name} description should include use-when/don't-use guidance`
+        );
+    }
 });
 
 test('tools list supports query and category aggregate', () => {
