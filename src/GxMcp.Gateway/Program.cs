@@ -192,6 +192,101 @@ namespace GxMcp.Gateway
             });
         }
 
+        internal static string? DetectGeneXusVersion(string? installationPath)
+        {
+            if (string.IsNullOrWhiteSpace(installationPath)) return null;
+            string[] candidates = {
+                Path.Combine(installationPath, "version.txt"),
+                Path.Combine(installationPath, "Version.txt"),
+                Path.Combine(installationPath, "GeneXus.version")
+            };
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    string raw = File.ReadAllText(candidate).Trim();
+                    if (!string.IsNullOrEmpty(raw))
+                    {
+                        return raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        internal const string SupportedGeneXusMajor = "18";
+
+        private static void LogGeneXusVersionCheck(Configuration config)
+        {
+            string? gxPath = config.GeneXus?.InstallationPath;
+            string? detected = DetectGeneXusVersion(gxPath);
+            if (string.IsNullOrEmpty(gxPath))
+            {
+                Log("[Gateway] GeneXus installation path is not configured.");
+                return;
+            }
+            if (detected == null)
+            {
+                Log($"[Gateway] GeneXus version not detected at '{gxPath}' (no version.txt). Target major: {SupportedGeneXusMajor}.");
+                return;
+            }
+            Log($"[Gateway] Detected GeneXus version: {detected} (target major: {SupportedGeneXusMajor}).");
+            if (!detected.StartsWith(SupportedGeneXusMajor, StringComparison.OrdinalIgnoreCase))
+            {
+                Log($"[Gateway] WARNING: detected GeneXus version '{detected}' may not match MCP target major '{SupportedGeneXusMajor}'. Some tools may behave unexpectedly.");
+            }
+        }
+
+        internal static JObject BuildWhoamiPayload()
+        {
+            var cfg = _activeConfig;
+            string? kbPath = cfg?.Environment?.KBPath;
+            string? gxPath = cfg?.GeneXus?.InstallationPath;
+            string? kbName = !string.IsNullOrEmpty(kbPath) ? Path.GetFileName(kbPath!.TrimEnd('\\', '/')) : null;
+            bool kbExists = !string.IsNullOrEmpty(kbPath) && Directory.Exists(kbPath);
+            bool kbValid = false;
+            if (kbExists)
+            {
+                try
+                {
+                    kbValid = Directory.EnumerateFiles(kbPath!).Any(f =>
+                        f.EndsWith(".gxw", StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetFileName(f).Equals("KnowledgeBase.Connection", StringComparison.OrdinalIgnoreCase));
+                }
+                catch { }
+            }
+            string? gxVersion = DetectGeneXusVersion(gxPath);
+
+            return new JObject
+            {
+                ["connected"] = cfg != null,
+                ["kb"] = new JObject
+                {
+                    ["name"] = kbName,
+                    ["path"] = kbPath,
+                    ["exists"] = kbExists,
+                    ["looksValid"] = kbValid
+                },
+                ["geneXus"] = new JObject
+                {
+                    ["installationPath"] = gxPath,
+                    ["version"] = gxVersion,
+                    ["supportedMajor"] = SupportedGeneXusMajor,
+                    ["versionMatches"] = gxVersion != null && gxVersion.StartsWith(SupportedGeneXusMajor, StringComparison.OrdinalIgnoreCase)
+                },
+                ["config"] = new JObject
+                {
+                    ["path"] = Configuration.CurrentConfigPath
+                },
+                ["mcp"] = new JObject
+                {
+                    ["serverVersion"] = McpRouter.ServerVersion,
+                    ["protocolVersion"] = McpRouter.SupportedProtocolVersion
+                }
+            };
+        }
+
         public static async Task Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += async (s, e) => {
@@ -217,6 +312,7 @@ namespace GxMcp.Gateway
             InitializeLogging();
             var config = Configuration.Load();
             _activeConfig = config;
+            LogGeneXusVersionCheck(config);
             Log("[Gateway] Startup orphan-kill disabled. Existing gateway reuse is handled by the extension client.");
             AppDomain.CurrentDomain.ProcessExit += (_, __) =>
             {
@@ -927,6 +1023,17 @@ namespace GxMcp.Gateway
                         ["method"] = "tools/call",
                         ["params"] = tcParams
                     };
+
+                    // Gateway-served tools (no worker involvement)
+                    if (string.Equals(tName, "genexus_whoami", StringComparison.OrdinalIgnoreCase))
+                    {
+                        JObject whoami = BuildWhoamiPayload();
+                        return new JObject
+                        {
+                            ["isError"] = false,
+                            ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = whoami.ToString(Formatting.None) } }
+                        };
+                    }
 
                     object? rawWorkerCmd = null;
                     if (string.Equals(tName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase))
