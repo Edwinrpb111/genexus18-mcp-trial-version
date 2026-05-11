@@ -15,6 +15,9 @@ const {
     handleToolsList,
     handleConfigShow,
     handleInit,
+    handleWhoami,
+    handleUninstall,
+    handleKb,
     handleHome,
     handleLlmHelp,
     handleLayout,
@@ -37,6 +40,10 @@ const GLOBAL_DEFAULTS = {
     interactive: false,
     writeClients: false,
     mcpSmoke: false,
+    noSmoke: false,
+    warm: false,
+    yes: false,
+    name: null,
     limit: 100,
     query: null,
     quiet: false,
@@ -44,7 +51,7 @@ const GLOBAL_DEFAULTS = {
     help: false
 };
 
-const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'help', 'home', 'axi', 'llm', 'layout', 'update']);
+const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'whoami', 'uninstall', 'kb', 'help', 'home', 'axi', 'llm', 'layout', 'update']);
 
 function parseArgs(argv) {
     const result = {
@@ -99,6 +106,11 @@ function parseArgs(argv) {
         tokens.shift();
     }
 
+    if (result.command === 'kb' && ['list', 'add', 'remove', 'switch'].includes(tokens[0])) {
+        result.subcommand = tokens[0];
+        tokens.shift();
+    }
+
     if (result.command === 'layout' && (tokens[0] === 'status' || tokens[0] === 'run' || tokens[0] === 'inspect')) {
         result.subcommand = tokens[0];
         tokens.shift();
@@ -146,6 +158,12 @@ function parseArgs(argv) {
                 const val = takeValue();
                 if (val) result.options.gx = val;
                 else result.unknownFlags.push('--gx requires a value');
+                break;
+            }
+            case 'name': {
+                const val = takeValue();
+                if (val) result.options.name = val;
+                else result.unknownFlags.push('--name requires a value');
                 break;
             }
             case 'limit': {
@@ -237,6 +255,15 @@ function parseArgs(argv) {
                 break;
             case 'mcp-smoke':
                 result.options.mcpSmoke = true;
+                break;
+            case 'no-smoke':
+                result.options.noSmoke = true;
+                break;
+            case 'warm':
+                result.options.warm = true;
+                break;
+            case 'yes':
+                result.options.yes = true;
                 break;
             case 'quiet':
                 result.options.quiet = true;
@@ -332,6 +359,9 @@ function resolveMetaCommand(parsed, targetHelp) {
         if (parsed.subcommand === 'run') return 'layout.run';
         if (parsed.subcommand === 'inspect') return 'layout.inspect';
         return 'layout.status';
+    }
+    if (parsed.command === 'kb') {
+        return parsed.subcommand ? `kb.${parsed.subcommand}` : 'kb';
     }
     if (parsed.command === 'update') return 'update';
     return parsed.command || 'unknown';
@@ -443,6 +473,23 @@ async function main(argv) {
             break;
         case 'init':
             result = await handleInit(parsed.options, ctx);
+            break;
+        case 'whoami':
+            result = await handleWhoami(parsed.options, ctx);
+            break;
+        case 'uninstall':
+            result = await handleUninstall(parsed.options, ctx);
+            break;
+        case 'kb':
+            if (!parsed.subcommand || !['list', 'add', 'remove', 'switch'].includes(parsed.subcommand)) {
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('kb requires subcommand `list`, `add`, `remove`, or `switch`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
+                return EXIT_CODES.USAGE;
+            }
+            result = await handleKb(parsed.subcommand, parsed.options, ctx);
             break;
         case 'update':
             result = await handleUpdate(parsed.options, ctx);

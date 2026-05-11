@@ -10,7 +10,15 @@ const {
     directoryLooksLikeKnowledgeBase,
     createConfigFile,
     patchClientConfig,
-    discoverGeneXusInstallation
+    unpatchClientConfig,
+    getLocalAppDataCacheDir,
+    readGeneXusVersionFromInstall,
+    discoverGeneXusInstallation,
+    discoverKnowledgeBase,
+    readKbCatalog,
+    addKbToConfig,
+    removeKbFromConfig,
+    switchActiveKb
 } = require('../lib/config');
 
 function parseFieldSelection(raw) {
@@ -127,10 +135,8 @@ function buildStatusData(cwd) {
     return { ready, configFound, gatewayExeFound, kbLooksValid, configPath, gatewayExePath, kbPath, gxPath, configSource };
 }
 
-async function probeGatewaySpawn(gatewayExePath) {
-    if (!fs.existsSync(gatewayExePath)) {
-        return { status: 'fail', detail: 'Gateway executable does not exist for spawn probe.' };
-    }
+async function spawnGatewayProbe({ env = process.env, spawnHoldMs, timeoutMs, label, successDetail }) {
+    const gatewayExePath = getGatewayExePath();
 
     return await new Promise((resolve) => {
         let done = false;
@@ -144,35 +150,38 @@ async function probeGatewaySpawn(gatewayExePath) {
             const child = spawn(gatewayExePath, ['--axi-spawn-probe'], {
                 stdio: 'ignore',
                 windowsHide: true,
-                env: process.env
+                env
             });
 
             child.once('error', (err) => {
-                finish({ status: 'fail', detail: `Spawn probe failed: ${err.message}` });
+                finish({ status: 'fail', detail: `${label} failed: ${err.message}` });
             });
 
             child.once('spawn', () => {
                 setTimeout(() => {
-                    try {
-                        child.kill();
-                    } catch {
-                    }
-                    finish({ status: 'pass', detail: 'Gateway process can be spawned (probe launched and terminated).' });
-                }, 180);
+                    try { child.kill(); } catch { }
+                    finish({ status: 'pass', detail: successDetail });
+                }, spawnHoldMs);
             });
 
             setTimeout(() => {
                 if (!done) {
-                    try {
-                        child.kill();
-                    } catch {
-                    }
-                    finish({ status: 'warn', detail: 'Spawn probe timed out; process was force-stopped.' });
+                    try { child.kill(); } catch { }
+                    finish({ status: 'warn', detail: `${label} timed out; process was force-stopped.` });
                 }
-            }, 900);
+            }, timeoutMs);
         } catch (err) {
-            finish({ status: 'fail', detail: `Spawn probe threw: ${err.message}` });
+            finish({ status: 'fail', detail: `${label} threw: ${err.message}` });
         }
+    });
+}
+
+async function probeGatewaySpawn() {
+    return spawnGatewayProbe({
+        spawnHoldMs: 180,
+        timeoutMs: 900,
+        label: 'Spawn probe',
+        successDetail: 'Gateway process can be spawned (probe launched and terminated).'
     });
 }
 
@@ -339,7 +348,7 @@ async function handleDoctor(options, ctx) {
     ];
 
     if (options.full) {
-        const probe = await probeGatewaySpawn(gatewayExePath);
+        const probe = await probeGatewaySpawn();
         checks.push({ id: 'gateway_spawn_probe', status: probe.status, detail: probe.detail });
     } else {
         checks.push({ id: 'gateway_spawn_probe', status: 'warn', detail: 'Spawn probe skipped by default. Run doctor with --full.' });
@@ -795,18 +804,70 @@ async function handleInit(options, ctx) {
         return runInteractiveInit({ ...ctx, options });
     }
 
-    if (!options.kb || !options.gx) {
+    const resolution = {
+        kb: { value: options.kb || null, source: options.kb ? 'flag' : null },
+        gx: { value: options.gx || null, source: options.gx ? 'flag' : null }
+    };
+
+    if (!resolution.kb.value) {
+        const fromCwd = discoverKnowledgeBase(ctx.cwd);
+        if (fromCwd) {
+            resolution.kb.value = fromCwd;
+            resolution.kb.source = 'cwd';
+        }
+    }
+
+    if (!resolution.gx.value) {
+        const fromDisco = discoverGeneXusInstallation();
+        if (fromDisco) {
+            resolution.gx.value = fromDisco;
+            resolution.gx.source = 'auto-discovery';
+        }
+    }
+
+    if (!resolution.kb.value || !resolution.gx.value) {
+        const missing = [];
+        if (!resolution.kb.value) missing.push('--kb (and current directory is not a GeneXus KB)');
+        if (!resolution.gx.value) missing.push('--gx (and no GeneXus installation was auto-discovered)');
         return {
             exitCode: ctx.EXIT_CODES.USAGE,
-            envelope: usageEnvelope('Missing required flags for non-interactive init. Use --kb and --gx.', ctx.EXIT_CODES.USAGE)
+            envelope: usageEnvelope(
+                `Cannot resolve required paths: ${missing.join('; ')}. Pass flags explicitly or run from inside a KB folder.`,
+                ctx.EXIT_CODES.USAGE
+            )
         };
     }
 
     try {
-        const created = createConfigFile(options.kb, options.gx);
+        const created = createConfigFile(resolution.kb.value, resolution.gx.value);
+        const kbName = path.basename(resolution.kb.value);
+        addKbToConfig(created.targetConfigPath, kbName, resolution.kb.value);
+
         let patchResult = { patched: [], failed: [] };
         if (options.writeClients) {
             patchResult = patchClientConfig(created.targetConfigPath);
+        }
+
+        const verification = await runPostInitVerification({
+            cwd: ctx.cwd,
+            includeSmoke: !options.noSmoke,
+            ctx
+        });
+
+        let warm = null;
+        if (options.warm) {
+            warm = await warmGateway({ configPath: created.targetConfigPath });
+        }
+
+        const help = [];
+        if (patchResult.patched.length === 0 && !options.writeClients) {
+            help.push('Run `genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>" --write-clients` to patch supported clients.');
+        }
+        if (verification.summary.fail > 0 || verification.summary.warn > 0) {
+            help.push('Some verification checks did not pass. Run `genexus-mcp doctor --full --mcp-smoke` for details.');
+        }
+        if (options.noSmoke) {
+            help.push('MCP protocol smoke was skipped (--no-smoke). Re-run `genexus-mcp doctor --mcp-smoke` to validate end-to-end.');
         }
 
         return {
@@ -818,14 +879,23 @@ async function handleInit(options, ctx) {
                     configPath: created.targetConfigPath,
                     configFound: true,
                     noOp: !created.changed,
-                    clientsPatchedCount: patchResult.patched.length
+                    clientsPatchedCount: patchResult.patched.length,
+                    resolved: {
+                        kb: { path: resolution.kb.value, source: resolution.kb.source },
+                        gx: { path: resolution.gx.value, source: resolution.gx.source }
+                    },
+                    verification: {
+                        summary: verification.summary,
+                        checks: verification.checks
+                    },
+                    warm: warm || null
                 },
-                help: patchResult.patched.length === 0 && !options.writeClients
-                    ? ['Run `genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>" --write-clients` to patch supported clients.']
-                    : [],
+                help,
                 meta: {
                     patchedClients: patchResult.patched,
-                    failedClients: patchResult.failed
+                    failedClients: patchResult.failed,
+                    smokeSkipped: !!options.noSmoke,
+                    warmed: !!warm && warm.status === 'pass'
                 }
             }
         };
@@ -835,6 +905,301 @@ async function handleInit(options, ctx) {
             envelope: operationalErrorEnvelope('Failed to write configuration.', ctx.EXIT_CODES.ERROR)
         };
     }
+}
+
+async function warmGateway({ configPath }) {
+    return spawnGatewayProbe({
+        env: { ...process.env, GX_CONFIG_PATH: configPath },
+        spawnHoldMs: 1500,
+        timeoutMs: 12000,
+        label: 'Warm spawn',
+        successDetail: 'Gateway warmed (worker process kicked).'
+    });
+}
+
+async function runPostInitVerification({ cwd, includeSmoke, ctx }) {
+    const doctorResult = await handleDoctor(
+        { full: false, mcpSmoke: !!includeSmoke, fields: null, limit: 100 },
+        { cwd, EXIT_CODES: ctx.EXIT_CODES }
+    );
+
+    const { checks, summary } = doctorResult.envelope.ok;
+    return { checks, summary };
+}
+
+async function handleWhoami(options, ctx) {
+    const data = buildStatusData(ctx.cwd);
+
+    if (!data.configFound) {
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    connected: false,
+                    reason: 'No GeneXus MCP configuration was found in the current context.'
+                },
+                help: [
+                    'Run `genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>"` to configure.',
+                    'Or run `genexus-mcp init --interactive` for a guided setup.'
+                ]
+            }
+        };
+    }
+
+    const kbPath = data.kbPath;
+    const gxPath = data.gxPath;
+    const kbName = kbPath ? path.basename(kbPath) : null;
+    const kbExists = !!(kbPath && fs.existsSync(kbPath));
+    const kbValid = data.kbLooksValid;
+    const gxVersion = readGeneXusVersionFromInstall(gxPath);
+
+    const ok = {
+        connected: true,
+        kb: {
+            name: kbName,
+            path: kbPath,
+            exists: kbExists,
+            looksValid: kbValid
+        },
+        geneXus: {
+            installationPath: gxPath,
+            version: gxVersion
+        },
+        config: {
+            path: data.configPath,
+            source: data.configSource
+        }
+    };
+
+    const help = [];
+    if (!kbExists) help.push('Configured KB path does not exist on disk.');
+    if (kbExists && !kbValid) help.push('KB path exists but does not look like a GeneXus KB (no `.gxw` or `KnowledgeBase.Connection`).');
+    if (!gxVersion) help.push('Could not read GeneXus version from installation folder (no version.txt detected).');
+
+    return { exitCode: ctx.EXIT_CODES.OK, envelope: { ok, help } };
+}
+
+async function promptYesNo(question) {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+        rl.question(`${question} [y/N]: `, (answer) => {
+            rl.close();
+            const trimmed = (answer || '').trim().toLowerCase();
+            resolve(trimmed === 'y' || trimmed === 'yes');
+        });
+    });
+}
+
+async function handleUninstall(options, ctx) {
+    const data = buildStatusData(ctx.cwd);
+    const cacheDir = getLocalAppDataCacheDir();
+    const cacheDirExists = !!(cacheDir && fs.existsSync(cacheDir));
+    const localConfigPath = data.configPath;
+    const hasLocalConfig = !!localConfigPath && fs.existsSync(localConfigPath);
+
+    const plan = {
+        clientEntries: 'Remove `mcpServers.genexus` from any detected AI client config.',
+        cacheDir: cacheDirExists ? `Delete ${cacheDir}` : 'No cache directory present.',
+        localConfig: hasLocalConfig ? `Delete ${localConfigPath}` : 'No local config.json detected.'
+    };
+
+    if (!options.yes) {
+        process.stderr.write('\n[genexus-mcp uninstall] The following actions will be performed:\n');
+        process.stderr.write(`  - ${plan.clientEntries}\n`);
+        process.stderr.write(`  - ${plan.cacheDir}\n`);
+        process.stderr.write(`  - ${plan.localConfig}\n\n`);
+        const confirmed = await promptYesNo('Proceed?');
+        if (!confirmed) {
+            return {
+                exitCode: ctx.EXIT_CODES.OK,
+                envelope: {
+                    ok: { action: 'uninstall', cancelled: true, plan },
+                    help: ['Pass --yes to skip the interactive confirmation.']
+                }
+            };
+        }
+    }
+
+    const unpatch = unpatchClientConfig();
+
+    let cacheRemoved = false;
+    let cacheError = null;
+    if (cacheDirExists) {
+        try {
+            fs.rmSync(cacheDir, { recursive: true, force: true });
+            cacheRemoved = true;
+        } catch (err) {
+            cacheError = err && err.message ? err.message : 'Unknown error removing cache dir';
+        }
+    }
+
+    let configRemoved = false;
+    let configError = null;
+    if (hasLocalConfig) {
+        try {
+            fs.unlinkSync(localConfigPath);
+            configRemoved = true;
+        } catch (err) {
+            configError = err && err.message ? err.message : 'Unknown error removing config.json';
+        }
+    }
+
+    const help = [];
+    if (cacheError) help.push(`Cache removal failed: ${cacheError}`);
+    if (configError) help.push(`Local config removal failed: ${configError}`);
+    if (unpatch.failed.length > 0) help.push(`Some client configs could not be updated (see meta.failedClients).`);
+    if (unpatch.removed.length > 0) help.push('Restart your AI clients to release any stale MCP connections.');
+
+    return {
+        exitCode: ctx.EXIT_CODES.OK,
+        envelope: {
+            ok: {
+                action: 'uninstall',
+                cancelled: false,
+                removedClients: unpatch.removed,
+                cacheRemoved,
+                cacheDir: cacheDir || null,
+                configRemoved,
+                configPath: localConfigPath || null
+            },
+            help,
+            meta: {
+                skippedClients: unpatch.skipped,
+                failedClients: unpatch.failed
+            }
+        }
+    };
+}
+
+async function handleKb(subcommand, options, ctx) {
+    const data = buildStatusData(ctx.cwd);
+    if (!data.configPath) {
+        return {
+            exitCode: ctx.EXIT_CODES.ERROR,
+            envelope: operationalErrorEnvelope(
+                'No GeneXus MCP config.json found. Run `genexus-mcp init` first.',
+                ctx.EXIT_CODES.ERROR,
+                ['Run `genexus-mcp init --kb "<path>" --gx "<path>"` to create one.']
+            )
+        };
+    }
+
+    const configPath = data.configPath;
+
+    if (subcommand === 'list') {
+        const catalog = readKbCatalog(configPath);
+        const entries = Object.entries(catalog.kbs).map(([name, p]) => ({
+            name,
+            path: p,
+            active: name === catalog.activeKb,
+            exists: fs.existsSync(p)
+        }));
+        if (entries.length === 0 && catalog.kbPath) {
+            entries.push({ name: '(legacy)', path: catalog.kbPath, active: true, exists: fs.existsSync(catalog.kbPath) });
+        }
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    activeKb: catalog.activeKb,
+                    kbs: entries,
+                    returned: entries.length,
+                    total: entries.length
+                },
+                help: entries.length === 0
+                    ? ['No KBs registered. Run `genexus-mcp kb add --name <name> --kb <path>` to register one.']
+                    : []
+            }
+        };
+    }
+
+    if (subcommand === 'add') {
+        if (!options.name || !options.kb) {
+            return {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope('`kb add` requires --name and --kb.', ctx.EXIT_CODES.USAGE)
+            };
+        }
+        const catalog = addKbToConfig(configPath, options.name, options.kb);
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    action: 'kb.add',
+                    name: options.name,
+                    path: options.kb,
+                    activeKb: catalog.activeKb,
+                    registeredCount: Object.keys(catalog.kbs).length
+                },
+                help: catalog.activeKb === options.name
+                    ? ['Restart your AI client to pick up the new active KB.']
+                    : [`KB registered. Run \`genexus-mcp kb switch --name ${options.name}\` to make it active.`]
+            }
+        };
+    }
+
+    if (subcommand === 'remove') {
+        if (!options.name) {
+            return {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope('`kb remove` requires --name.', ctx.EXIT_CODES.USAGE)
+            };
+        }
+        const { catalog, removed } = removeKbFromConfig(configPath, options.name);
+        if (!removed) {
+            return {
+                exitCode: ctx.EXIT_CODES.OK,
+                envelope: {
+                    ok: { action: 'kb.remove', name: options.name, removed: false },
+                    help: [`KB '${options.name}' was not registered. Run \`genexus-mcp kb list\` to see available names.`]
+                }
+            };
+        }
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    action: 'kb.remove',
+                    name: options.name,
+                    removed: true,
+                    activeKb: catalog.activeKb,
+                    registeredCount: Object.keys(catalog.kbs).length
+                },
+                help: ['Restart your AI client to apply changes.']
+            }
+        };
+    }
+
+    if (subcommand === 'switch') {
+        const result = switchActiveKb(configPath, { name: options.name, path: options.kb });
+        if (!result.ok) {
+            return {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope(result.reason, ctx.EXIT_CODES.USAGE)
+            };
+        }
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    action: 'kb.switch',
+                    activeKb: result.switchedTo.name,
+                    kbPath: result.switchedTo.path
+                },
+                help: [
+                    'Restart your AI client (or run `genexus_lifecycle action=stop-worker` via MCP) so the worker reloads with the new KB.'
+                ]
+            }
+        };
+    }
+
+    return {
+        exitCode: ctx.EXIT_CODES.USAGE,
+        envelope: usageEnvelope(
+            `Unknown kb subcommand '${subcommand}'. Use list, add, remove, or switch.`,
+            ctx.EXIT_CODES.USAGE
+        )
+    };
 }
 
 function commandHelpMap() {
@@ -864,8 +1229,31 @@ function commandHelpMap() {
             examples: ['genexus-mcp config show', 'genexus-mcp config show --full --format json']
         },
         init: {
-            usage: 'genexus-mcp init --kb <path> --gx <path> [--write-clients] [--format ...] OR genexus-mcp init --interactive',
-            examples: ['genexus-mcp init --kb "C:\\KBs\\MyKB" --gx "C:\\Program Files (x86)\\GeneXus\\GeneXus18"', 'genexus-mcp init --interactive']
+            usage: 'genexus-mcp init [--kb <path>] [--gx <path>] [--write-clients] [--no-smoke] [--warm] [--format ...] OR genexus-mcp init --interactive',
+            examples: [
+                'genexus-mcp init   # zero-config: auto-discovers GX from registry/Program Files and KB from cwd',
+                'genexus-mcp init --kb "C:\\KBs\\MyKB" --gx "C:\\Program Files (x86)\\GeneXus\\GeneXus18"',
+                'genexus-mcp init --interactive',
+                'genexus-mcp init --kb <path> --gx <path> --no-smoke'
+            ]
+        },
+        whoami: {
+            usage: 'genexus-mcp whoami [--format toon|json|text]',
+            examples: ['genexus-mcp whoami', 'genexus-mcp whoami --format json']
+        },
+        uninstall: {
+            usage: 'genexus-mcp uninstall [--yes] [--format toon|json|text]',
+            examples: ['genexus-mcp uninstall', 'genexus-mcp uninstall --yes --format json']
+        },
+        kb: {
+            usage: 'genexus-mcp kb <list|add|remove|switch> [--name <name>] [--kb <path>] [--format ...]',
+            examples: [
+                'genexus-mcp kb list',
+                'genexus-mcp kb add --name sales --kb "C:\\KBs\\SalesProd"',
+                'genexus-mcp kb switch --name sales',
+                'genexus-mcp kb switch --kb "C:\\KBs\\NewKB"   # auto-registers by folder name',
+                'genexus-mcp kb remove --name sales'
+            ]
         },
         llm: {
             usage: 'genexus-mcp llm help [--full] [--fields f1,f2] [--format toon|json|text]',
@@ -939,7 +1327,7 @@ async function handleHelp(targetCommand, ctx) {
                 bin: binPath,
                 command: 'genexus-mcp',
                 description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
-                commands: ['home', 'axi home', 'status', 'doctor', 'tools list', 'config show', 'layout status', 'layout run', 'layout inspect', 'init', 'llm help', 'update', 'help'],
+                commands: ['home', 'axi home', 'status', 'doctor', 'tools list', 'config show', 'layout status', 'layout run', 'layout inspect', 'init', 'whoami', 'uninstall', 'kb list', 'kb add', 'kb remove', 'kb switch', 'llm help', 'update', 'help'],
                 defaults: { format: 'toon', limit: 100 }
             },
             help: [
@@ -1042,6 +1430,9 @@ module.exports = {
     handleToolsList,
     handleConfigShow,
     handleInit,
+    handleWhoami,
+    handleUninstall,
+    handleKb,
     handleHome,
     handleLlmHelp,
     handleLayout,

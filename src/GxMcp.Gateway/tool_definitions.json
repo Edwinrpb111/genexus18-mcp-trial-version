@@ -253,7 +253,7 @@
   },
   {
     "name": "genexus_inspect",
-    "description": "Comprehensive object inspection. Returns metadata, variables, structure, and signature in a single call.",
+    "description": "One-call snapshot of an object: metadata + variables + structure + signature. Use when you need a quick overview of an object you already found (typical second call after genexus_query). DON'T use to get full source — use genexus_read('Source') instead. DON'T use to change properties — use genexus_properties or genexus_edit.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -289,7 +289,7 @@
   },
   {
     "name": "genexus_analyze",
-    "description": "Deep semantic and structural analysis using various specialized engines.",
+    "description": "Deep semantic analysis engines (impact analysis, dependencies, cyclomatic complexity, naming conventions, dead code). Use when the user asks 'what depends on X', 'is this safe to delete', 'show me complexity', or similar diagnostic questions across the KB. DON'T use to read source (genexus_read), to explain a single snippet (genexus_explain_code), or to summarize one object (genexus_summarize).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -319,7 +319,7 @@
   },
   {
     "name": "genexus_summarize",
-    "description": "Creates a semantically compressed summary of a GeneXus object to save tokens.",
+    "description": "Token-efficient natural-language summary of a single object (purpose, inputs, outputs, key logic). Use when the user needs a quick understanding without reading source, or before deciding whether to genexus_read the full source. DON'T use for KB-wide overviews (use genexus_query/genexus_analyze) or when the user explicitly asks for source code (use genexus_read).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1004,7 +1004,7 @@
   },
   {
     "name": "genexus_doc",
-    "description": "Knowledge extraction and documentation generation.",
+    "description": "Generates structured documentation artifacts for objects or modules (markdown, sequence diagrams, API contracts) — meant to produce shareable docs. Use when the user asks 'document this', 'generate readme', or wants persistent documentation. DON'T use for ad-hoc explanations (use genexus_explain_code or genexus_summarize) or for raw source (use genexus_read).",
     "inputSchema": {
       "type": "object",
       "properties": {
