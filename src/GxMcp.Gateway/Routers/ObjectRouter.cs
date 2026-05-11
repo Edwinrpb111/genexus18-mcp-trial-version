@@ -1,9 +1,48 @@
+using System.Linq;
 using Newtonsoft.Json.Linq;
 namespace GxMcp.Gateway.Routers
 {
     public class ObjectRouter : IMcpModuleRouter
     {
         public string ModuleName => "Object";
+
+        private static readonly string[] _validEditModes = { "xml", "ops", "patch", "full" };
+
+        // Keep in sync with GxMcp.Worker.Services.SemanticOpsService.Dispatch — adding an op
+        // there without adding it here will cause the gateway to reject the call before it
+        // ever reaches the worker.
+        private static readonly string[] _validSemanticOps = {
+            "set_attribute", "add_attribute", "remove_attribute",
+            "add_rule", "remove_rule", "set_property"
+        };
+
+        private static void ValidateEditMode(string? mode)
+        {
+            if (string.IsNullOrEmpty(mode)) return;
+            if (_validEditModes.Contains(mode)) return;
+            throw new UsageException(
+                "usage_error",
+                DidYouMean.FormatSuggestionMessage("edit mode", mode, _validEditModes)
+            );
+        }
+
+        private static void ValidateSemanticOps(JToken? opsTok)
+        {
+            if (!(opsTok is JArray ops)) return;
+            for (int i = 0; i < ops.Count; i++)
+            {
+                string? opName = (ops[i] as JObject)?["op"]?.ToString();
+                if (string.IsNullOrEmpty(opName))
+                {
+                    throw new UsageException("usage_error", $"ops[{i}]: 'op' field is required.");
+                }
+                if (_validSemanticOps.Contains(opName)) continue;
+                throw new UsageException(
+                    "usage_error",
+                    DidYouMean.FormatSuggestionMessage($"ops[{i}].op", opName, _validSemanticOps)
+                );
+            }
+        }
 
         public object? ConvertToolCall(string toolName, JObject? args)
         {
@@ -68,8 +107,10 @@ namespace GxMcp.Gateway.Routers
                     }
 
                     string? mode = args?["mode"]?.ToString();
+                    ValidateEditMode(mode);
                     if (mode == "ops")
                     {
+                        ValidateSemanticOps(args?["ops"]);
                         return new {
                             module = "SemanticOps",
                             action = "Apply",

@@ -1,5 +1,13 @@
 [
   {
+    "name": "genexus_whoami",
+    "description": "Returns the currently connected GeneXus context: active KB (name, path, validity), GeneXus installation (path, detected version, target major), MCP server version, and config source. Use this as your first call to confirm the AI is operating on the KB the user expects, especially when the user manages multiple KBs. Lightweight — does not require the worker.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
     "name": "genexus_query",
     "description": "Primary discovery tool. Start here to find objects and references before read/edit. Supports prefixes like 'usedby:Name', 'type:Type', 'description:Text', 'parent:FolderName', and 'parentPath:\"Module/Folder\"'. For token efficiency set limit and (optionally) fields/axiCompact. If it returns 'Index missing', run genexus_lifecycle(action='index') first.",
     "inputSchema": {
