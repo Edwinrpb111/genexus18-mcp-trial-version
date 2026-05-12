@@ -1,32 +1,25 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - package.json
+  release:
+    types: [published]
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  test:
-    uses: ./.github/workflows/ci.yml
-
-  publish-and-release:
-    needs: test
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -39,88 +32,76 @@ jobs:
           npm install -g npm@11
           npm --version
 
-      - name: Detect version bump
-        id: version
+      - name: Resolve package metadata
+        id: pkg
         shell: bash
         run: |
           set -euo pipefail
-
-          CURRENT_VERSION="$(node -p "require('./package.json').version")"
-          PACKAGE_NAME="$(node -p "require('./package.json').name")"
-
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            PREVIOUS_VERSION="$(git show HEAD^:package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
-          else
-            PREVIOUS_VERSION=""
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${{ github.event.release.tag_name }}"
+          EXPECTED="v$VERSION"
+          if [[ "$TAG" != "$EXPECTED" ]]; then
+            echo "::error::Release tag $TAG does not match package.json version $EXPECTED."
+            exit 1
           fi
+          echo "name=$NAME"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-
-          if [[ "$CURRENT_VERSION" == "$PREVIOUS_VERSION" ]]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Version unchanged ($CURRENT_VERSION); skipping publish."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Version bumped: $PREVIOUS_VERSION -> $CURRENT_VERSION"
-          fi
-
-      - name: Check if version is already published on npm
+      - name: Check npm registry
         id: npm_check
-        if: steps.version.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          PKG="${{ steps.version.outputs.package_name }}"
-          VER="${{ steps.version.outputs.version }}"
-
-          if npm view "${PKG}@${VER}" version >/dev/null 2>&1; then
+          if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "${PKG}@${VER} already on npm; will skip publish."
+            echo "Already on npm; skipping publish."
           else
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Download publish.zip from Release
+        if: steps.npm_check.outputs.already_published == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.event.release.tag_name }}" \
+            --pattern publish.zip \
+            --dir .
+
+      - name: Unpack publish/
+        if: steps.npm_check.outputs.already_published == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p publish
+          unzip -q publish.zip -d publish
+          test -f publish/GxMcp.Gateway.exe || { echo "::error::GxMcp.Gateway.exe missing in publish.zip"; exit 1; }
+          test -f publish/worker/GxMcp.Worker.exe || { echo "::error::worker/GxMcp.Worker.exe missing in publish.zip"; exit 1; }
+
       - name: Install dependencies
-        if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
+        if: steps.npm_check.outputs.already_published == 'false'
         run: npm install
 
       - name: Enforce OIDC-only npm auth
-        if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
+        if: steps.npm_check.outputs.already_published == 'false'
         shell: bash
         run: |
           set -euo pipefail
-
-          # Remove any injected legacy token auth; Trusted Publishing must use OIDC.
           unset NODE_AUTH_TOKEN NPM_TOKEN
-
           if [[ -n "${NPM_CONFIG_USERCONFIG:-}" && -f "${NPM_CONFIG_USERCONFIG}" ]]; then
             sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG}" || true
           fi
-
           OIDC_NPMRC="$RUNNER_TEMP/npmrc-oidc"
           {
             echo "registry=https://registry.npmjs.org/"
             echo "always-auth=false"
           } > "$OIDC_NPMRC"
-
           echo "NPM_CONFIG_USERCONFIG=$OIDC_NPMRC" >> "$GITHUB_ENV"
 
-      - name: Publish to npm
-        if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
+      - name: Publish to npm with provenance
+        if: steps.npm_check.outputs.already_published == 'false'
         shell: bash
         run: |
           set -euo pipefail
           unset NODE_AUTH_TOKEN NPM_TOKEN
           npm publish --access public --provenance
-
-      - name: Create GitHub Release
-        if: steps.version.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          generate_release_notes: true
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: false
