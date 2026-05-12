@@ -10,7 +10,7 @@ namespace GxMcp.Gateway
 {
     public class McpRouter
     {
-        public const string ServerVersion = "1.1.7";
+        public const string ServerVersion = "2.1.2";
         public const string SupportedProtocolVersion = "2025-06-18";
 
         private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };

@@ -130,17 +130,110 @@ namespace GxMcp.Worker.Helpers
                 return;
             }
 
-            dynamic fallbackPart = part;
-            XmlDocument existingDocument = fallbackPart.Document as XmlDocument;
-            if (existingDocument == null)
+            // CANONICAL IDE FLOW for WebFormPart (verified via SDK reflection):
+            //   Step A: assign EditableContent (string) — fills m_EditableContent and sets
+            //           m_EditableToStoredNeeded = true. Does NOT immediately materialise the data model.
+            //   Step B: invoke EditableToStored() — converts m_EditableContent → m_Document + parsed Form
+            //           tree (the structures actually persisted on save).
+            // Skipping step B leaves the part with the new string in memory but the OLD parsed Form on
+            // disk after save. We always run both.
+            bool setterUsed = TrySetEditableContent(part, normalized);
+            if (!setterUsed)
             {
-                throw new InvalidOperationException("The WebForm part does not expose an XML document.");
+                dynamic fallbackPart = part;
+                XmlDocument existingDocument = fallbackPart.Document as XmlDocument;
+                if (existingDocument == null)
+                {
+                    throw new InvalidOperationException("The WebForm part does not expose an XML document.");
+                }
+                existingDocument.RemoveAll();
+                existingDocument.LoadXml(normalized);
             }
 
-            var xmlDocument = new XmlDocument();
-            xmlDocument.LoadXml(normalized);
-            existingDocument.RemoveAll();
-            existingDocument.LoadXml(xmlDocument.OuterXml);
+            PushDocumentToStoredModel(part);
+        }
+
+        private static bool TrySetEditableContent(object part, string normalizedXml)
+        {
+            var type = part.GetType();
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+            var prop = type.GetProperty("EditableContent", flags);
+            if (prop == null || !prop.CanWrite || prop.PropertyType != typeof(string)) return false;
+
+            try
+            {
+                prop.SetValue(part, normalizedXml);
+                Logger.Info($"[LayoutFix] Set EditableContent on {type.Name} ({normalizedXml.Length} chars).");
+
+                // Best-effort: invalidate the "last modification" snapshot so dirty tracking notices the change.
+                try
+                {
+                    var invalidate = type.GetMethod("InvalidateLastModification", flags, null, Type.EmptyTypes, null);
+                    invalidate?.Invoke(part, null);
+                }
+                catch { }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Info($"[LayoutFix] Setting EditableContent threw: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static void PushDocumentToStoredModel(object part)
+        {
+            var type = part.GetType();
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+
+            // Use DeserializeDataFromDocument ONLY — NOT EditableToStored.
+            //
+            // EditableToStored() in the WebFormPart performs strict attribute-reference resolution
+            // (AttributeVariableConverter.GetAttVarByName) that throws "Atributo desconhecido 'att:NNNN'"
+            // when invoked from the headless worker context (the lookup against KBModel returns null even
+            // for valid att IDs that the form references — likely because the worker doesn't fully prime
+            // the same model lookup tables the IDE does). The throw poisons the part state, leaving
+            // controls partially mutated, which is why downstream Save persists corrupted XML missing
+            // the modified controls.
+            //
+            // DeserializeDataFromDocument() reparses the same WebTags but is tolerant of unresolved
+            // references — it walks the tree without throwing, and updates the internal Properties so
+            // BeforeSaveKBObject's SaveProperties pass writes the NEW values back to m_Document instead
+            // of the old in-memory ones.
+            string[] candidates = { "DeserializeDataFromDocument" };
+            foreach (var name in candidates)
+            {
+                var method = type.GetMethods(flags).FirstOrDefault(m =>
+                    string.Equals(m.Name, name, StringComparison.Ordinal) &&
+                    m.GetParameters().Length == 0);
+                if (method == null) continue;
+
+                try
+                {
+                    method.Invoke(part, null);
+                    Logger.Info($"[LayoutFix] Invoked {name}() on {type.Name} to push Document into stored model.");
+
+                    // Invalidate the "last modification" cache so the SDK's dirty-tracking notices the change.
+                    var invalidate = type.GetMethods(flags).FirstOrDefault(m =>
+                        string.Equals(m.Name, "InvalidateLastModification", StringComparison.Ordinal) &&
+                        m.GetParameters().Length == 0);
+                    try { invalidate?.Invoke(part, null); } catch { }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex.InnerException ?? ex;
+                    Logger.Info($"[LayoutFix] {name}() threw: {inner.GetType().Name}: {inner.Message}");
+                    if (inner.StackTrace != null)
+                    {
+                        var firstFrame = inner.StackTrace.Split('\n')[0].Trim();
+                        Logger.Info($"[LayoutFix]   at {firstFrame}");
+                    }
+                }
+            }
+
+            Logger.Info("[LayoutFix] No editable→stored conversion method found on " + type.FullName +
+                        " — falling back to Document-only update (Form cache may stay stale).");
         }
     }
 }

@@ -92,6 +92,7 @@ namespace GxMcp.Worker.Services
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
             _buildService.SetKbService(_kbService);
+            _buildService.SetIndexCacheService(_indexCacheService);
             _indexCacheService.SetBuildService(_buildService);
             _validationService.SetObjectService(_objectService);
             _writeService.SetValidationService(_validationService);
@@ -370,6 +371,7 @@ namespace GxMcp.Worker.Services
                         break;
                     case "build":
                         if (action == "Status") return _buildService.GetStatus(target);
+                        if (action == "Cancel") return _buildService.Cancel(target);
                         return _buildService.Build(action, target);
                     case "validation":
                         return _validationService.ValidateCode(target, action, payload);

@@ -16,6 +16,7 @@ namespace GxMcp.Gateway.Routers
                     switch (action)
                     {
                         case "build": return new { module = "Build", action = "Build", target = target };
+                        case "cancel": return new { module = "Build", action = "Cancel", target = target };
                         case "rebuild": return new { module = "Build", action = "RebuildAll", target = target };
                         case "reorg": return new { module = "Build", action = "Reorg", target = target };
                         case "validate": return new { module = "Validation", action = "Check", target = target, payload = args?["code"]?.ToString() };

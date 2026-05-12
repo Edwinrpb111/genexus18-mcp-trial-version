@@ -212,6 +212,21 @@ namespace GxMcp.Gateway
                 }
                 catch { }
             }
+            // Fallback: read FileVersion from GeneXus.exe metadata (standard install layout)
+            try
+            {
+                string exePath = Path.Combine(installationPath, "GeneXus.exe");
+                if (File.Exists(exePath))
+                {
+                    var info = FileVersionInfo.GetVersionInfo(exePath);
+                    string? version = info.ProductVersion ?? info.FileVersion;
+                    if (!string.IsNullOrWhiteSpace(version))
+                    {
+                        return version.Trim();
+                    }
+                }
+            }
+            catch { }
             return null;
         }
 
@@ -1008,9 +1023,17 @@ namespace GxMcp.Gateway
                         BroadcastResourceUpdated("genexus://objects", $"tool:{tName}");
                     }
 
-                    // 2. SEMANTIC CACHE: Try to get from cache for read-only tools
+                    // 2. SEMANTIC CACHE: Try to get from cache for read-only tools.
+                    // Skip caching for live-progress lifecycle reads (status/result/cancel) and logs —
+                    // these must always reflect current worker state, not a stale snapshot.
+                    string lcAction = tArgs?["action"]?.ToString()?.ToLowerInvariant();
+                    bool isLiveLifecycle = string.Equals(tName, "genexus_lifecycle", StringComparison.OrdinalIgnoreCase)
+                                           && (lcAction == "status" || lcAction == "result" || lcAction == "cancel");
+                    bool isLiveTool = isLiveLifecycle
+                                      || string.Equals(tName, "genexus_logs", StringComparison.OrdinalIgnoreCase);
+
                     string cKey = $"{tName}:{tArgs?.ToString(Formatting.None)}";
-                    if (_semanticCache.TryGetValue(cKey, out var cachedResponse))
+                    if (!isLiveTool && _semanticCache.TryGetValue(cKey, out var cachedResponse))
                     {
                         Log($"[Cache] HIT for {tName}");
                         var cached = cachedResponse["result"] as JObject;
@@ -1121,7 +1144,7 @@ namespace GxMcp.Gateway
                                 ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = axiPayload.ToString(Formatting.None) } }
                             };
 
-                            if (!isErr && !tName.Contains("write") && !tName.Contains("patch"))
+                            if (!isErr && !tName.Contains("write") && !tName.Contains("patch") && !isLiveTool)
                             {
                                 // Store full envelope in semantic cache (rebuilt on hit above)
                                 _semanticCache[cKey] = new JObject

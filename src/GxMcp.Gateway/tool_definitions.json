@@ -364,7 +364,7 @@
   },
   {
     "name": "genexus_lifecycle",
-    "description": "Lifecycle and long-running operation control. Use for build/validate/index and for polling timed-out operations via action='status' or action='result' with target='op:<operationId>'.",
+    "description": "Lifecycle and long-running operation control. Use for build/validate/index and for polling timed-out operations via action='status' or action='result' with target='op:<operationId>'.\n\nBATCH BUILD (\"Build With These Only\") — action='build' accepts MULTIPLE object names in 'target' as a comma- or semicolon-separated list (e.g. target='SalvarRegProfAluno,ListaAtiCPAlunoUniGra'). All listed objects are compiled inside a SINGLE MSBuild + OpenKnowledgeBase cycle, saving ~30s of KB-open overhead per object compared to N separate build calls. ALWAYS prefer the batch form when you have 2+ related objects to build (e.g. a Procedure plus its callers). The response includes 'targets' (the parsed list) and status reports 'TargetsTotal'/'TargetsDone'.\n\nPROGRESS — action='build' returns a taskId immediately; poll with action='status' target=<taskId> to see real-time phase ('OpeningKB' → 'Specifying' → 'Generating' → 'Compiling' → 'Done'), current object being processed, errorCount/warningCount, elapsed seconds, and last lines emitted. Use action='cancel' target=<taskId> to abort a runaway build.\n\nCALLERS — a single-object action='build' does NOT cascade to callers: when you build a Procedure (or any reusable object), the DLLs of WebPanels/Procedures/Transactions/DPs that CALL it are NOT regenerated, so the produced C# stays linked against the old version until you build the callers too. The build response includes a 'callersToAlsoBuild' list (when an index is available); pass them ALL plus the target itself as a comma-separated 'target' to the next build call (batch form) — never serialise them into separate build calls when you can batch.\n\nNEVER suggest action='rebuild' (Rebuild All) — full rebuilds take HOURS on real KBs and block the developer; only the user themselves should ever invoke 'rebuild'.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -372,6 +372,7 @@
           "type": "string",
           "enum": [
             "build",
+            "cancel",
             "rebuild",
             "reorg",
             "validate",
@@ -387,7 +388,7 @@
         },
         "target": {
           "type": "string",
-          "description": "Object or environment name, taskId for build status, or op:<operationId> for gateway operation tracking."
+          "description": "Context depends on action. action='build': one object name, OR a comma/semicolon-separated list of object names for batch 'Build With These Only' in a single MSBuild cycle (e.g. 'ProcA,WebPanelB,TransactionC'). action='status'|'cancel': the taskId returned by a prior 'build' call. action='result' with op:<operationId>: gateway operation tracking. Other actions take a single environment/object name."
         },
         "code": {
           "type": "string",
@@ -995,18 +996,6 @@
       },
       "required": [
         "action"
-      ],
-      "anyOf": [
-        {
-          "required": [
-            "name"
-          ]
-        },
-        {
-          "required": [
-            "target"
-          ]
-        }
       ]
     }
   },

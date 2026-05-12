@@ -640,6 +640,11 @@ namespace GxMcp.Worker.Services
                 {
                     source = GxMcp.Worker.Helpers.StructureParser.SerializeToText(obj);
                 }
+                else if (GxMcp.Worker.Helpers.WebFormXmlHelper.IsVisualPart(resolvedPart))
+                {
+                    // WebForm/Layout: expose the GxMultiForm XML as patchable text.
+                    source = GxMcp.Worker.Helpers.WebFormXmlHelper.ReadEditableXml(obj);
+                }
                 else if (part is ISource sourcePart)
                 {
                     source = sourcePart.Source;
