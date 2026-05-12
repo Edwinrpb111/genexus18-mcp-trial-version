@@ -320,6 +320,12 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        public bool LooksLikeAttributeName(string term)
+        {
+            if (string.IsNullOrEmpty(term)) return false;
+            return GetIndex().Objects.ContainsKey($"Attribute:{term}");
+        }
+
         public void UpdateIndex(SearchIndex index)
         {
             lock (_lock)

@@ -151,7 +151,7 @@ namespace GxMcp.Worker.Services
 
                         if (criteria.Terms.Count > 0)
                         {
-                            score = CalculateSemanticScore(entry, criteria.Terms);
+                            score = CalculateSemanticScore(entry, criteria.Terms, criteria.TypeFilter);
 
                             // SHORT-CIRCUIT: If exact keyword match failed entirely and it's a structural container, skip vector math entirely
                             if (score <= 0 && (entry.Type == "Folder" || entry.Type == "Module"))
@@ -253,23 +253,29 @@ namespace GxMcp.Worker.Services
             catch (Exception ex) { return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
         }
 
-        private int CalculateSemanticScore(SearchIndex.IndexEntry entry, HashSet<string> terms)
+        private int CalculateSemanticScore(SearchIndex.IndexEntry entry, HashSet<string> terms, string typeFilter)
         {
             int score = 0;
             string name = entry.Name ?? "";
             string desc = entry.Description ?? "";
-            
+
             foreach (var term in terms) {
                 if (name.Equals(term, StringComparison.OrdinalIgnoreCase)) score += 10000;
                 else if (name.StartsWith(term, StringComparison.OrdinalIgnoreCase)) score += 1000;
                 else if (name.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0) score += 500;
-                
+
                 if (desc.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0) score += 300;
 
                 if (entry.Keywords != null && entry.Keywords.Contains(term, StringComparer.OrdinalIgnoreCase)) score += 800;
                 if (entry.Tags != null && entry.Tags.Contains(term, StringComparer.OrdinalIgnoreCase)) score += 800;
 
-                if (entry.Tables != null && entry.Tables.Contains(term, StringComparer.OrdinalIgnoreCase)) score += 400;
+                if (entry.Tables != null && entry.Tables.Contains(term, StringComparer.OrdinalIgnoreCase))
+                {
+                    bool boostForAttributeMember = string.Equals(typeFilter, "Table", StringComparison.OrdinalIgnoreCase)
+                                                   && string.Equals(entry.Type, "Table", StringComparison.OrdinalIgnoreCase)
+                                                   && _indexCacheService.LooksLikeAttributeName(term);
+                    score += boostForAttributeMember ? 5000 : 400;
+                }
                 if (entry.Calls != null && entry.Calls.Contains(term, StringComparer.OrdinalIgnoreCase)) score += 400;
             }
             return score;
