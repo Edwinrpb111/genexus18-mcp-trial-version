@@ -939,20 +939,12 @@ namespace GxMcp.Worker.Services
 
         private void ProcessSourceContent(KBObject obj, string content, int? offset, int? limit, JObject result, string client = "ide")
         {
-            // Performance: Use StringReader to process line by line without immediate massive splitting
             using (var reader = new StringReader(content))
             {
+                bool mcpDefault = !offset.HasValue && !limit.HasValue && client == "mcp";
                 int start = offset ?? 0;
-                int count = limit ?? int.MaxValue;
+                int count = limit ?? (mcpDefault ? 200 : int.MaxValue);
                 bool includeDerivedMetadata = client != "mcp";
-                
-                if (!offset.HasValue && !limit.HasValue && client == "mcp")
-                {
-                    start = 0;
-                    count = 200;
-                    result["isTruncatedByWorker"] = true;
-                    result["message"] = "MCP read defaulted to the first 200 lines to control context size. Use genexus_read with offset/limit to paginate.";
-                }
 
                 var paginatedLines = new List<string>();
                 int currentLine = 0;
@@ -961,24 +953,20 @@ namespace GxMcp.Worker.Services
 
                 while ((line = reader.ReadLine()) != null)
                 {
-                    if (currentLine >= start && paginatedLines.Count < count)
-                    {
-                        paginatedLines.Add(line);
-                    }
+                    if (currentLine >= start && paginatedLines.Count < count) paginatedLines.Add(line);
                     currentLine++;
                     totalLinesInFile = currentLine;
-                    
-                    // Optimization: If we already have what we need AND we don't need total count, we could break.
-                    // But for metadata accuracy, we continue to count totalLinesInFile unless it's too much.
-                    if (paginatedLines.Count >= count && totalLinesInFile > 10000) break; 
+                    if (paginatedLines.Count >= count && totalLinesInFile > 10000) break;
                 }
+
+                bool actuallyTruncated = (start + paginatedLines.Count) < totalLinesInFile;
+                result["isTruncatedByWorker"] = actuallyTruncated;
+                if (actuallyTruncated && mcpDefault)
+                    result["message"] = "MCP read defaulted to the first 200 lines to control context size. Use genexus_read with offset/limit to paginate.";
 
                 string paginatedContent = string.Join(Environment.NewLine, paginatedLines);
-
-                if (paginatedLines.Count < totalLinesInFile && !result.ContainsKey("isTruncatedByWorker"))
-                {
+                if (actuallyTruncated)
                     paginatedContent += "\n\n// ... [CONTENT TRUNCATED. USE PAGINATION (offset/limit) TO READ FURTHER] ... //\n";
-                }
 
                 ProcessTextResponse(paginatedContent, result, client);
                 result["offset"] = start;
