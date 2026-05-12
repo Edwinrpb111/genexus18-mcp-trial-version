@@ -23,7 +23,7 @@ namespace GxMcp.Worker.Services
             _patternAnalysisService = patternAnalysisService;
         }
 
-        public string GetTableDDL(string target)
+        public string GetTableDDL(string target, bool includeSubordinated = false)
         {
             try
             {
@@ -31,8 +31,10 @@ namespace GxMcp.Worker.Services
                 if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 Table tbl = null;
+                Transaction trnObj = null;
                 if (obj is Transaction trn)
                 {
+                    trnObj = trn;
                     tbl = _objectService.FindObject(trn.Name) as Table;
                 }
                 else if (obj is Table)
@@ -72,12 +74,82 @@ namespace GxMcp.Worker.Services
                     result["source"] = "Heuristic (SDK Structure)";
                 }
 
+                // Subordinated Levels enumeration (for Transactions only)
+                if (trnObj != null)
+                {
+                    var subTables = ResolveSubordinatedTables(trnObj);
+                    var subNames = new JArray();
+                    foreach (var s in subTables) subNames.Add(s.Name);
+                    result["subordinatedTables"] = subNames;
+
+                    if (includeSubordinated && subTables.Count > 0)
+                    {
+                        var ddlMap = new JObject();
+                        foreach (var s in subTables)
+                        {
+                            string subDdl;
+                            string subNativeSql = TryGetNativeSql(s);
+                            if (!string.IsNullOrEmpty(subNativeSql)) subDdl = subNativeSql;
+                            else subDdl = GenerateHeuristicSql(s, dbmsType);
+                            ddlMap[s.Name] = subDdl;
+                        }
+                        result["subordinatedDDL"] = ddlMap;
+                    }
+                }
+
                 return result.ToString();
             }
             catch (Exception ex)
             {
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
+        }
+
+        private List<Table> ResolveSubordinatedTables(Transaction trn)
+        {
+            var result = new List<Table>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { trn.Name };
+
+            try
+            {
+                var stack = new Stack<dynamic>();
+                try
+                {
+                    dynamic root = trn.Structure.Root;
+                    if (root?.Levels != null)
+                        foreach (dynamic child in root.Levels) stack.Push(child);
+                }
+                catch { return result; }
+
+                while (stack.Count > 0)
+                {
+                    dynamic level = stack.Pop();
+
+                    // Resolve the physical table for this level. Try common SDK property names.
+                    string tableName = null;
+                    try { tableName = (string)level.AssociatedTableName; } catch { }
+                    if (string.IsNullOrEmpty(tableName))
+                        try { tableName = (string)level.AssociatedTable?.Name; } catch { }
+                    if (string.IsNullOrEmpty(tableName))
+                        try { tableName = (string)level.Name; } catch { }
+
+                    if (!string.IsNullOrEmpty(tableName) && seen.Add(tableName))
+                    {
+                        if (_objectService.FindObject(tableName) is Table t)
+                            result.Add(t);
+                    }
+
+                    try
+                    {
+                        if (level.Levels != null)
+                            foreach (dynamic child in level.Levels) stack.Push(child);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return result;
         }
 
         private string TryGetNativeSql(Table tbl)

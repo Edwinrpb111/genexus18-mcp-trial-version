@@ -19,7 +19,8 @@ namespace GxMcp.Gateway.Routers
                     return new { module = "Analyze", action = "Summarize", target = target, type = type };
 
                 case "genexus_get_sql":
-                    return new { module = "Analyze", action = "GetSQL", target = target, type = type };
+                    bool includeSubordinated = args?["includeSubordinated"]?.Value<bool>() ?? false;
+                    return new { module = "Analyze", action = "GetSQL", target = target, includeSubordinated = includeSubordinated, type = type };
 
                 case "genexus_inject_context":
                     bool recursive = args?["recursive"]?.Value<bool>() ?? false;

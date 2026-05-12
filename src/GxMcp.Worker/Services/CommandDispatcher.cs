@@ -275,7 +275,11 @@ namespace GxMcp.Worker.Services
                         if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType);
                         if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
                         if (action == "Summarize") return _summarizeService.Summarize(target, analyzeType);
-                        if (action == "GetSQL") return _dataInsightService.GetTableDDL(target);
+                        if (action == "GetSQL")
+                        {
+                            bool includeSub = args?["includeSubordinated"]?.ToObject<bool?>() ?? false;
+                            return _dataInsightService.GetTableDDL(target, includeSub);
+                        }
                         if (action == "ExplainCode") return _analyzeService.ExplainCode(target, payload);
                         if (action == "InjectContext")
                         {

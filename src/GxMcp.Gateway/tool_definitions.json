@@ -475,13 +475,18 @@
   },
   {
     "name": "genexus_get_sql",
-    "description": "Returns the SQL DDL (CREATE TABLE) for a specific Transaction or Table object.",
+    "description": "Returns the SQL DDL (CREATE TABLE) for a specific Transaction or Table object. For Transactions with Levels, always lists subordinated tables; set includeSubordinated=true to also return their full DDL.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
           "description": "The name of the Transaction or Table."
+        },
+        "includeSubordinated": {
+          "type": "boolean",
+          "description": "When true and the target is a Transaction with Levels, include full CREATE TABLE DDL for each subordinated physical table in subordinatedDDL. Defaults to false.",
+          "default": false
         }
       },
       "required": [
