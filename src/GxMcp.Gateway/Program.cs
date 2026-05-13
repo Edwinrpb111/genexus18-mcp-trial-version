@@ -1136,6 +1136,16 @@ namespace GxMcp.Gateway
                             }
 
                             bool isErr = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+
+                            // ResponseSizeGuard: replace oversize JObject results with a truncation sentinel.
+                            // Gated by PerfProfile.V1Enabled so it can be disabled via MCP_PERF_PROFILE=legacy.
+                            if (!isErr && PerfProfile.V1Enabled && finalResult is JObject finalJObj)
+                            {
+                                var guard = new ResponseSizeGuard();
+                                var (guarded, _) = guard.Apply(finalJObj, tName, tArgs);
+                                finalResult = guarded;
+                            }
+
                             JToken axiPayload = NormalizeToolPayloadForAxi(finalResult, tName, tArgs, isErr);
 
                             var toolResult = new JObject
