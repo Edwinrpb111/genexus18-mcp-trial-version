@@ -9,8 +9,16 @@ namespace GxMcp.Gateway.Tests
         [Fact]
         public void V1Enabled_DefaultsToTrue_WhenEnvVarNotSet()
         {
+            string? previous = Environment.GetEnvironmentVariable("MCP_PERF_PROFILE");
             Environment.SetEnvironmentVariable("MCP_PERF_PROFILE", null);
-            Assert.True(PerfProfile.V1Enabled);
+            try
+            {
+                Assert.True(PerfProfile.V1Enabled);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("MCP_PERF_PROFILE", previous);
+            }
         }
 
         [Fact]

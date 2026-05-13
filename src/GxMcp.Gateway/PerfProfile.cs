@@ -1,3 +1,5 @@
+using System;
+
 namespace GxMcp.Gateway
 {
     public static class PerfProfile
@@ -6,9 +8,9 @@ namespace GxMcp.Gateway
         {
             get
             {
-                string? v = System.Environment.GetEnvironmentVariable("MCP_PERF_PROFILE");
+                string? v = Environment.GetEnvironmentVariable("MCP_PERF_PROFILE");
                 if (string.IsNullOrWhiteSpace(v)) return true;
-                return !string.Equals(v, "legacy", System.StringComparison.OrdinalIgnoreCase);
+                return !string.Equals(v, "legacy", StringComparison.OrdinalIgnoreCase);
             }
         }
     }
