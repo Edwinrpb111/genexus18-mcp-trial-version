@@ -46,12 +46,17 @@ composition-pointer fix; this release wraps up the rest of the friction tail.
   index instead of erroring out with `"Index empty."`. Friction-report #9a.
   (commit `085b9e0`)
 
-### Verified already-closed
-- **Variables-part patch mode** has worked since `e10d382` —
-  `PatchService.ReadSourceFast` exposes the DSL via `GetVariablesAsText` and
-  the write back routes through `WriteService.WriteObject` →
-  `SetVariablesFromText`. Friction-report #5 closure noted in
-  `docs/mcp-friction-report-2026-05-08.md`.
+- **Variables-part patch mode now persists and verifies correctly.** Live
+  smoke against AcademicoHomolog1 caught two write-side bugs that the
+  earlier "read side works since e10d382" assessment missed:
+  (a) `SetVariablesFromText` aliased `Character → VARCHAR`, so a Variables
+  patch round-tripped `&Time : CHARACTER(8)` as VARCHAR(8) and the auto-
+  rollback compounded the data loss; (b) the SDK's VariablesPart collection
+  inserts new vars at the FRONT, so the patch's line-by-line verify rejected
+  semantically-equivalent persisted state. Removes the lossy alias and
+  introduces `NormalizeForPartCompare` (set-based equality on Variables,
+  strict ordering elsewhere). Friction-report #5 write side. (commit on
+  top of `085b9e0`)
 
 ## v2.1.3 — 2026-05-12
 

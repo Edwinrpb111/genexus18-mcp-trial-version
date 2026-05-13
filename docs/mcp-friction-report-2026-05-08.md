@@ -60,11 +60,20 @@ Mesmo passando `typeName="SdtAluUniGraInfo"`, o read da Variables DSL mostra `&S
 
 ## 5. Variables part: `mode=patch` não funciona
 
-**Status:** ✅ RESOLVED in `e10d382` (v2.1.2, verified for v2.1.6 release).
-`PatchService.ReadSourceFast` exposes the Variables part as DSL text via
-`VariableInjector.GetVariablesAsText`, and the write back routes through
-`WriteService.WriteObject` → `SetVariablesFromText`. The original "Patch read
-failed: Part does not expose text source" observation predates this fix.
+**Status:** ✅ RESOLVED — read side fixed in `e10d382` (v2.1.2);
+**write side** fixed in v2.1.6 (commit on top of `085b9e0`). Live smoke against
+AcademicoHomolog1 caught two write-side bugs:
+(a) `SetVariablesFromText` aliased `Character → VARCHAR`, so the DSL read
+`&Time : CHARACTER(8)` round-tripped as VARCHAR(8) and the auto-rollback
+compounded the data loss → removed the alias so `eDBType.CHARACTER`
+round-trips intact via `Enum.TryParse(ignoreCase: true)`;
+(b) the SDK's `VariablesPart.Variables` collection inserts new vars at the
+FRONT of the list, so the patch's line-by-line verify rejected semantically-
+equivalent persisted state → introduced `NormalizeForPartCompare` (set-based
+equality on Variables, strict ordering elsewhere).
+Live proof: `genexus_edit part=Variables mode=patch operation=Append` on a
+fresh procedure returns `persistedVerified=true, patchStatus=Applied`,
+subsequent read shows the new var plus standard ones with CHARACTER preserved.
 
 
 
