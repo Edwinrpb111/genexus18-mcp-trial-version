@@ -508,10 +508,13 @@ namespace GxMcp.Worker.Helpers
 
         public static bool TryParseDbType(string typeStr, out global::Artech.Genexus.Common.eDBType type)
         {
-            // Type Aliases mapping
+            // Type Aliases mapping. NOTE: 'Character' is NOT mapped to VARCHAR — it must
+            // round-trip to eDBType.CHARACTER via the case-insensitive Enum.TryParse below.
+            // Aliasing CHARACTER → VARCHAR makes Variables-DSL patch verification fail because
+            // GetVariablesAsText emits the original eDBType.CHARACTER string while
+            // SetVariablesFromText would persist VARCHAR (friction-report #5 write side).
             var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                { "Character", "VARCHAR" },
                 { "VarChar", "VARCHAR" },
                 { "Numeric", "NUMERIC" },
                 { "Boolean", "Boolean" },

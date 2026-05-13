@@ -183,7 +183,7 @@ namespace GxMcp.Worker.Services
                     return AttachTimings(failure, readMs, patchMs, 0, sourceFromCache);
                 }
 
-                if (NormalizeSourceForComparison(workSource) == NormalizeSourceForComparison(updatedSource))
+                if (NormalizeForPartCompare(partName, workSource) == NormalizeForPartCompare(partName, updatedSource))
                 {
                     string noChange = BuildPatchResult("NoChange", partName, normalizedOperation, expectedCount, matchCount, "Patch produced no effective changes. Write skipped.");
                     return AttachTimings(noChange, readMs, patchMs, 0, sourceFromCache);
@@ -294,7 +294,7 @@ namespace GxMcp.Worker.Services
                     {
                         var verifyJson = JObject.Parse(verifyReadResponse);
                         string persistedSource = verifyJson["source"]?.ToString() ?? string.Empty;
-                        bool applyVerified = NormalizeSourceForComparison(persistedSource) == NormalizeSourceForComparison(finalCode);
+                        bool applyVerified = NormalizeForPartCompare(partName, persistedSource) == NormalizeForPartCompare(partName, finalCode);
                         writePayload["applyVerified"] = applyVerified;
                         writePayload["verifyRollback"] = true;
                         if (!applyVerified)
@@ -327,7 +327,7 @@ namespace GxMcp.Worker.Services
                         {
                             var rollbackReadJson = JObject.Parse(rollbackReadResponse);
                             string rollbackSource = rollbackReadJson["source"]?.ToString() ?? string.Empty;
-                            bool rollbackVerified = NormalizeSourceForComparison(rollbackSource) == NormalizeSourceForComparison(originalSource);
+                            bool rollbackVerified = NormalizeForPartCompare(partName, rollbackSource) == NormalizeForPartCompare(partName, originalSource);
                             writePayload["rollbackVerified"] = rollbackVerified;
                             if (!rollbackVerified)
                             {
@@ -589,6 +589,24 @@ namespace GxMcp.Worker.Services
             return text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
         }
 
+        // Friction-report #5 write-side: VariablesPart's underlying SDK collection inserts new
+        // variables at the FRONT of the list, so a patch that produced `<original>...\n&NewVar`
+        // round-trips through SetVariablesFromText / GetVariablesAsText as
+        // `&NewVar\n<original>...`. Line-by-line equality verification then fails even though
+        // the persisted state semantically matches. Use a set-based comparison for Variables
+        // so patch verification reflects semantic equality, not the SDK's collection order.
+        private static string NormalizeForPartCompare(string partName, string text)
+        {
+            string normalized = NormalizeSourceForComparison(text);
+            if (!string.Equals(partName, "Variables", StringComparison.OrdinalIgnoreCase)) return normalized;
+            var lines = normalized
+                .Split('\n')
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0)
+                .OrderBy(l => l, StringComparer.Ordinal);
+            return string.Join("\n", lines);
+        }
+
         private static JObject ParseWriteResult(string writeResult)
         {
             try { return JObject.Parse(writeResult); }
@@ -756,7 +774,7 @@ namespace GxMcp.Worker.Services
 
                 var verifyJson = JObject.Parse(verifyReadResponse);
                 string persistedSource = verifyJson["source"]?.ToString() ?? string.Empty;
-                return NormalizeSourceForComparison(persistedSource) == NormalizeSourceForComparison(expectedSource);
+                return NormalizeForPartCompare(partName, persistedSource) == NormalizeForPartCompare(partName, expectedSource);
             }
             catch (Exception ex)
             {

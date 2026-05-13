@@ -366,7 +366,7 @@ namespace GxMcp.Worker.Services
                 ["status"] = "Error",
                 ["error"] = enrichedError
             };
-            if (!string.Equals(enrichedError, ex.Message ?? string.Empty, System.StringComparison.Ordinal))
+            if (!string.Equals(enrichedError, (ex.Message ?? string.Empty).Trim(), System.StringComparison.Ordinal))
             {
                 errorRes["originalError"] = ex.Message;
             }
@@ -817,7 +817,7 @@ namespace GxMcp.Worker.Services
                 ["status"] = "Error",
                 ["error"] = display
             };
-            if (!string.Equals(enriched, baseMessage, System.StringComparison.Ordinal))
+            if (!string.Equals(enriched, baseMessage.Trim(), System.StringComparison.Ordinal))
             {
                 payload["originalError"] = baseMessage;
             }
