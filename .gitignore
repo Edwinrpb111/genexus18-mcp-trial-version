@@ -43,3 +43,6 @@ out/
 
 # --- Scratch / debug artifacts ---
 scripts/_*
+
+# --- Claude Code session state (per-user, not source) ---
+.claude/
