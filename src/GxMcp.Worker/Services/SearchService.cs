@@ -24,18 +24,40 @@ namespace GxMcp.Worker.Services
         {
             try
             {
+                 // Friction-report #9a: instead of erroring out on the first genexus_query call
+                 // and forcing the agent to chain genexus_lifecycle(action='index') manually,
+                 // auto-start the bulk index in the background and report the nudge via _meta.
                  if (_indexCacheService.IsIndexMissing && !_indexCacheService.IsScanning)
                  {
-                     // Auto-bootstrap: kick off indexing in the background instead of erroring out.
-                     // The first call returns a hint so the agent can poll genexus_lifecycle status.
                      try { _indexCacheService.KbService?.BulkIndex(); } catch { }
-                     return "{\"count\": 0, \"results\": [], \"info\": \"Index missing — auto-started indexing in background. Retry in a few seconds, or call genexus_lifecycle(action='status') to monitor.\", \"autoIndexed\": true}";
+                     return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                         count = 0,
+                         results = new object[0],
+                         info = "Index missing — auto-started indexing in background. Retry in a few seconds, or call genexus_lifecycle(action='status') to monitor.",
+                         _meta = new { autoIndexed = true, indexStatus = "starting" }
+                     });
                  }
 
                  var index = _indexCacheService.GetIndex();
                  if (index == null || index.Objects.Count == 0) {
-                     if (_indexCacheService.IsScanning) return "{\"count\": 0, \"results\": [], \"info\": \"Indexing in progress...\"}";
-                     return "{\"error\": \"Index empty.\"}";
+                     if (_indexCacheService.IsScanning)
+                     {
+                         return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                             count = 0,
+                             results = new object[0],
+                             info = "Indexing in progress...",
+                             _meta = new { autoIndexed = true, indexStatus = "scanning" }
+                         });
+                     }
+                     // No index, not scanning, and bulk index can't be kicked off (no KbService).
+                     // Still attempt the auto-start once more in case the state flipped.
+                     try { _indexCacheService.KbService?.BulkIndex(); } catch { }
+                     return Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                         count = 0,
+                         results = new object[0],
+                         info = "Index empty — attempting auto-bootstrap; call genexus_lifecycle(action='status') if this persists.",
+                         _meta = new { autoIndexed = true, indexStatus = "empty" }
+                     });
                  }
 
                 if (index.LastUpdated > _lastIndexTime) { _queryCache.Clear(); _lastIndexTime = index.LastUpdated; }
