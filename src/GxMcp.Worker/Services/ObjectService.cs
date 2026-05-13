@@ -5,6 +5,7 @@ using System.Text;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Reflection;
 using Artech.Architecture.Common.Objects;
 using Artech.Architecture.Common.Descriptors;
 using Artech.Genexus.Common.Objects;
@@ -71,9 +72,20 @@ namespace GxMcp.Worker.Services
 
                 if (typeGuid == Guid.Empty) return "{\"status\":\"Error\", \"error\":\"Unsupported object type: " + type + "\"}";
 
+                // Pre-flight duplicate check: gives a clear, structured error before the SDK throws.
+                try
+                {
+                    var existing = kb.DesignModel.Objects.Get(typeGuid, name);
+                    if (existing != null)
+                    {
+                        return "{\"status\":\"Error\", \"code\":\"AlreadyExists\", \"error\":\"" + type + " '" + CommandDispatcher.EscapeJsonString(name) + "' already exists.\"}";
+                    }
+                }
+                catch { /* lookup is best-effort; if it throws, Save will surface the duplicate error anyway */ }
+
                 KBObject newObj = KBObject.Create(kb.DesignModel, typeGuid);
                 newObj.Name = name;
-                
+
                 // Initialize with some default content if possible
                 if (newObj.GetType().Name == "Procedure")
                 {
@@ -106,11 +118,26 @@ namespace GxMcp.Worker.Services
                 {
                     InitializeSDTWithDefaultItem(newObj, name);
                 }
+                else if (newObj is Artech.Genexus.Common.Objects.Transaction newTrn)
+                {
+                    InitializeTransactionWithDefaultKey(newTrn, name);
+                }
 
                 newObj.Save();
-                
+
+                // Best-effort: refresh search index so subsequent list/query calls see this object
+                // without waiting for a full reindex.
+                try
+                {
+                    var idx = _kbService?.GetIndexCache();
+                    if (idx != null) idx.UpdateEntry(newObj);
+                }
+                catch (Exception ex) { Logger.Error("CreateObject: index UpdateEntry failed for " + name + ": " + ex.Message); }
+
                 Logger.Info(string.Format("Object created successfully in {0}ms", sw.ElapsedMilliseconds));
-                return "{\"status\":\"Success\", \"type\":\"" + type + "\", \"name\":\"" + name + "\"}";
+                string idStr = "";
+                try { idStr = newObj.Key?.Id.ToString() ?? ""; } catch { try { idStr = newObj.Guid.ToString(); } catch { } }
+                return "{\"status\":\"Success\", \"type\":\"" + type + "\", \"name\":\"" + name + "\", \"id\":\"" + CommandDispatcher.EscapeJsonString(idStr) + "\"}";
             }
             catch (Exception ex)
             {
@@ -256,6 +283,78 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // Mirrors the SDT init: a freshly created Transaction with zero attributes fails the
+        // SDK validation on Save. We seed it with a Numeric(4) key attribute named
+        // "<TrnName>Id" — same convention the GeneXus IDE uses when you create a new Trn.
+        private static void InitializeTransactionWithDefaultKey(Artech.Genexus.Common.Objects.Transaction trn, string trnName)
+        {
+            try
+            {
+                dynamic root = null;
+                try { root = trn.Structure?.Root; } catch { }
+                if (root == null) { Logger.Error("InitializeTransactionWithDefaultKey: Structure.Root null for " + trnName); return; }
+
+                // If, somehow, attributes already exist, leave the Trn alone.
+                try { foreach (var _ in root.Attributes) return; } catch { }
+
+                string keyName = trnName + "Id";
+
+                // Reuse an existing global Attribute with the conventional "<TrnName>Id" name;
+                // otherwise create one (Numeric(4)) — same convention the GeneXus IDE uses.
+                Artech.Genexus.Common.Objects.Attribute globalAttr = null;
+                try { globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(trn.Model, keyName); }
+                catch (Exception ex) { Logger.Error("InitializeTransactionWithDefaultKey: global attr lookup failed: " + ex.Message); }
+
+                if (globalAttr == null)
+                {
+                    try
+                    {
+                        var attrGuid = KBObjectDescriptor.Get<Artech.Genexus.Common.Objects.Attribute>().Id;
+                        var newAttr = KBObject.Create(trn.Model, attrGuid);
+                        newAttr.Name = keyName;
+                        globalAttr = newAttr as Artech.Genexus.Common.Objects.Attribute;
+                        if (globalAttr != null)
+                        {
+                            try { globalAttr.Type = Artech.Genexus.Common.eDBType.NUMERIC; } catch { }
+                            try { globalAttr.Length = 4; } catch { }
+                            try { globalAttr.Decimals = 0; } catch { }
+                        }
+                        newAttr.Save();
+                        if (globalAttr == null) globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(trn.Model, keyName);
+                        Logger.Info("InitializeTransactionWithDefaultKey: created global Attribute " + keyName);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error("InitializeTransactionWithDefaultKey: global Attribute creation failed: " + (ex.InnerException?.Message ?? ex.Message));
+                        return;
+                    }
+                }
+
+                if (globalAttr == null)
+                {
+                    Logger.Error("InitializeTransactionWithDefaultKey: global Attribute still null for " + keyName);
+                    return;
+                }
+
+                // TransactionLevel exposes a typed AddAttribute(Attribute) that returns the wrapped
+                // TransactionAttribute. Use it directly via dynamic dispatch (root is dynamic).
+                try
+                {
+                    var trnAttr = root.AddAttribute(globalAttr);
+                    try { trnAttr.IsKey = true; } catch { }
+                    Logger.Info("InitializeTransactionWithDefaultKey: added key '" + keyName + "' to " + trnName);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("InitializeTransactionWithDefaultKey: AddAttribute failed: " + (ex.InnerException?.Message ?? ex.Message));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("InitializeTransactionWithDefaultKey failed: " + ex.Message);
+            }
+        }
+
         private static readonly Guid SDT_STRUCTURE_PART_GUID = Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
 
         private static void InitializeSDTWithDefaultItem(KBObject sdt, string sdtName)
@@ -303,9 +402,47 @@ namespace GxMcp.Worker.Services
                     foreach (dynamic existing in items) { return; }
                 } catch { }
 
-                Type sdtItemType = null;
                 Type rootType = ((object)root).GetType();
                 var asm = rootType.Assembly;
+
+                // Preferred path: invoke the real SDK API root.AddItem(string, eDBType) — same
+                // approach SdtDslParser uses. Ctor + items.Add doesn't work because SDTItem has
+                // no public ctor we can satisfy; that path always returned null and left the
+                // SDT empty, which then made Save() reject it.
+                Type eDBTypeT = asm.GetType("Artech.Genexus.Common.eDBType");
+                if (eDBTypeT != null)
+                {
+                    MethodInfo addItem = rootType.GetMethod("AddItem", new Type[] { typeof(string), eDBTypeT });
+                    if (addItem != null)
+                    {
+                        try
+                        {
+                            object varchar = Enum.Parse(eDBTypeT, "VARCHAR");
+                            object added = addItem.Invoke(root, new object[] { "Item1", varchar });
+                            if (added != null)
+                            {
+                                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName + " via AddItem(string, eDBType)");
+                                return;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error("InitializeSDTWithDefaultItem: AddItem(string, eDBType) threw for " + sdtName + ": " + (ex.InnerException?.Message ?? ex.Message));
+                        }
+                    }
+                    else
+                    {
+                        var sigs = string.Join("; ", rootType.GetMethods().Where(m => m.Name == "AddItem").Select(m => "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")"));
+                        Logger.Error("InitializeSDTWithDefaultItem: AddItem(string, eDBType) not found on " + rootType.FullName + ". Sigs=[" + sigs + "]");
+                    }
+                }
+                else
+                {
+                    Logger.Error("InitializeSDTWithDefaultItem: Artech.Genexus.Common.eDBType not resolvable in " + asm.GetName().Name);
+                }
+
+                // Fallback: legacy ctor path (kept in case SDK API surface differs in some build).
+                Type sdtItemType = null;
                 string[] namespaces = { "Artech.Genexus.Common.Parts", "Artech.Genexus.Common.Objects", "Artech.Genexus.Common", "Artech.Genexus.Common.Parts.SDT", rootType.Namespace };
                 foreach (var ns in namespaces)
                 {
@@ -313,7 +450,6 @@ namespace GxMcp.Worker.Services
                     sdtItemType = asm.GetType(ns + ".SDTItem") ?? asm.GetType(ns + ".SDTLevel") ?? asm.GetType(ns + ".StructureItem") ?? asm.GetType(ns + ".StructureLevel");
                     if (sdtItemType != null) break;
                 }
-
                 if (sdtItemType == null)
                 {
                     foreach (var loadedAsm in AppDomain.CurrentDomain.GetAssemblies())
@@ -327,7 +463,6 @@ namespace GxMcp.Worker.Services
                                 if (n.Equals("SDTItem", StringComparison.OrdinalIgnoreCase) || n.Equals("SDTLevel", StringComparison.OrdinalIgnoreCase))
                                 {
                                     sdtItemType = t;
-                                    Logger.Info("InitializeSDTWithDefaultItem: SDTItem type resolved via scan: " + t.FullName + " in " + loadedAsm.GetName().Name);
                                     break;
                                 }
                             }
@@ -336,17 +471,9 @@ namespace GxMcp.Worker.Services
                         if (sdtItemType != null) break;
                     }
                 }
-
                 if (sdtItemType == null)
                 {
-                    Logger.Error("InitializeSDTWithDefaultItem: SDTItem type not resolved for " + sdtName + ". Root type=" + rootType.FullName + " Asm=" + asm.GetName().Name);
-                    try
-                    {
-                        var props = string.Join(",", rootType.GetProperties().Select(p => p.Name));
-                        var methods = string.Join(",", rootType.GetMethods().Where(m => !m.IsSpecialName).Select(m => m.Name).Distinct());
-                        Logger.Error("InitializeSDTWithDefaultItem: Root props=[" + props + "] methods=[" + methods + "]");
-                    }
-                    catch { }
+                    Logger.Error("InitializeSDTWithDefaultItem: SDTItem type not resolved for " + sdtName + " (fallback path).");
                     return;
                 }
 
@@ -366,21 +493,16 @@ namespace GxMcp.Worker.Services
                 }
                 if (newItem == null)
                 {
-                    try
-                    {
-                        var ctors = string.Join("; ", sdtItemType.GetConstructors().Select(c => "(" + string.Join(",", c.GetParameters().Select(p => p.ParameterType.Name)) + ")"));
-                        Logger.Error("InitializeSDTWithDefaultItem: cannot construct SDTItem. Available ctors: [" + ctors + "] LastEx: " + lastCtorEx?.Message);
-                    } catch { }
+                    Logger.Error("InitializeSDTWithDefaultItem: ctor fallback failed for " + sdtName + ". LastEx: " + lastCtorEx?.Message);
                     return;
                 }
                 newItem.Name = "Item1";
                 try
                 {
-                    Type eDBType = asm.GetType("Artech.Genexus.Common.eDBType");
-                    if (eDBType != null) newItem.Type = Enum.Parse(eDBType, "VARCHAR");
+                    if (eDBTypeT != null) newItem.Type = Enum.Parse(eDBTypeT, "VARCHAR");
                 } catch { }
                 items.Add(newItem);
-                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName);
+                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName + " via ctor fallback");
             }
             catch (Exception ex)
             {

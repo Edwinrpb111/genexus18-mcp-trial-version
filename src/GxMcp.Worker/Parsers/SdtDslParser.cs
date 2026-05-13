@@ -171,8 +171,17 @@ namespace GxMcp.Worker.Parsers
             string collectionMarker = "";
             try { collectionMarker = level.IsCollection ? " Collection" : ""; } catch { }
             
-            bool isLeaf = true;
-            try { isLeaf = level.IsLeafItem; } catch { }
+            // Default to leaf=false when we can probe the Items collection: an item with
+            // children must serialize as compound. Falling back to leaf=true silently flattens
+            // nested structures when the SDK doesn't expose IsLeafItem on this build.
+            bool isLeaf;
+            try { isLeaf = level.IsLeafItem; }
+            catch
+            {
+                bool hasChildren = false;
+                try { foreach (var _ in level.Items) { hasChildren = true; break; } } catch { }
+                isLeaf = !hasChildren;
+            }
             
             if (!isLeaf)
             {
@@ -278,28 +287,14 @@ namespace GxMcp.Worker.Parsers
                     }
                     catch (Exception ex) { Logger.Error("[SDT PARSE] AddItem/AddLevel('" + pNode.Name + "') failed: " + (ex.InnerException?.Message ?? ex.Message)); }
 
-                    if (!added && sdtItemType != null)
-                    {
-                        object[][] ctorArgVariants = new object[][] {
-                            new object[] { node },
-                            new object[] { },
-                            new object[] { items }
-                        };
-                        foreach (var args in ctorArgVariants)
-                        {
-                            try { targetChild = Activator.CreateInstance(sdtItemType, args); if (targetChild != null) { added = true; break; } }
-                            catch { targetChild = null; }
-                        }
-                        if (added)
-                        {
-                            try { targetChild.Name = pNode.Name; items.Add(targetChild); }
-                            catch (Exception ex) { Logger.Error("[SDT PARSE] Manual add fallback failed: " + ex.Message); added = false; }
-                        }
-                    }
-
+                    // Note: a previous fallback tried Activator.CreateInstance(SDTItem, ...) + items.Add.
+                    // That path is known to silently produce items the SDK rejects on Save (proved by
+                    // the original ObjectService.InitializeSDTWithDefaultItem bug). We deliberately
+                    // do NOT fall back to it — if AddItem/AddLevel didn't work we fail loudly so the
+                    // caller can see the real problem instead of a half-broken SDT.
                     if (!added)
                     {
-                        Logger.Error("[SDT PARSE] Could not add item '" + pNode.Name + "'");
+                        Logger.Error("[SDT PARSE] Could not add item '" + pNode.Name + "' via AddItem/AddLevel (node type=" + ((object)node).GetType().FullName + "). sdtItemType=" + (sdtItemType?.FullName ?? "null"));
                     }
                 }
 
