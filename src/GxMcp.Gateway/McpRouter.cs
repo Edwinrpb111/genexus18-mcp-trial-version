@@ -818,5 +818,20 @@ namespace GxMcp.Gateway
 
             return null;
         }
+
+        internal static void StripNulls(JObject obj)
+        {
+            var toRemove = new List<string>();
+            foreach (var prop in obj.Properties())
+            {
+                if (prop.Value is null || prop.Value.Type == JTokenType.Null)
+                    toRemove.Add(prop.Name);
+                else if (prop.Value is JObject child)
+                    StripNulls(child);
+                else if (prop.Value is JArray arr)
+                    foreach (var item in arr) if (item is JObject o) StripNulls(o);
+            }
+            foreach (var name in toRemove) obj.Remove(name);
+        }
     }
 }

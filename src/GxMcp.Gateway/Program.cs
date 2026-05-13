@@ -1146,6 +1146,13 @@ namespace GxMcp.Gateway
                                 finalResult = guarded;
                             }
 
+                            // StripNulls: remove null-valued properties from the result to reduce wire size.
+                            // Runs after ResponseSizeGuard so the guard measures the pre-stripped payload.
+                            if (PerfProfile.V1Enabled && finalResult is JObject stripObj)
+                            {
+                                McpRouter.StripNulls(stripObj);
+                            }
+
                             JToken axiPayload = NormalizeToolPayloadForAxi(finalResult, tName, tArgs, isErr);
 
                             var toolResult = new JObject
