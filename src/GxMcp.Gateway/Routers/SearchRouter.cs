@@ -44,7 +44,7 @@ namespace GxMcp.Gateway.Routers
                         module = "List",
                         action = "Objects",
                         target = args?["filter"]?.ToString() ?? "",
-                        limit = args?["limit"]?.ToObject<int?>() ?? 5000,
+                        limit = args?["limit"]?.ToObject<int?>() ?? 100,
                         offset = args?["offset"]?.ToObject<int?>() ?? 0,
                         parent = args?["parent"]?.ToString(),
                         parentPath = args?["parentPath"]?.ToString(),

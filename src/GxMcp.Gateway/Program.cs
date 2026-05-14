@@ -1106,6 +1106,7 @@ namespace GxMcp.Gateway
                             {
                                 try
                                 {
+                                    // Step 1: Kick off the build on the worker — returns {status:"Accepted", taskId:...}
                                     var buildCmd = new JObject
                                     {
                                         ["module"] = "Build",
@@ -1116,29 +1117,80 @@ namespace GxMcp.Gateway
                                         ["client"] = "mcp"
                                     };
 
-                                    JObject? workerResult = await SendWorkerCommandAsync(
+                                    JObject? ackEnvelope = await SendWorkerCommandAsync(
                                         buildCmd,
-                                        600000,
-                                        $"Timeout waiting for async build (job={job.Id})",
-                                        resultObj => resultObj,
-                                        (_, correlationId) => new JObject
-                                        {
-                                            ["status"] = "Error",
-                                            ["error"] = "Gateway timeout waiting for build.",
-                                            ["correlationId"] = correlationId
-                                        },
-                                        toolName: tName,
-                                        toolArgs: tArgs,
-                                        trackOperation: false);
+                                        60000,
+                                        $"Timeout starting async build (job={job.Id})",
+                                        env => env,
+                                        (_, correlationId) => new JObject { ["error"] = "Gateway timeout starting build.", ["correlationId"] = correlationId },
+                                        toolName: tName, toolArgs: tArgs, trackOperation: false);
 
-                                    bool success = workerResult != null
-                                        && workerResult["error"] == null
-                                        && !string.Equals(workerResult["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+                                    JObject? ack = (ackEnvelope?["result"] as JObject) ?? ackEnvelope;
+                                    if (ack == null || ack["error"] != null)
+                                    {
+                                        JobRegistry.Complete(job.Id, false,
+                                            $"Build start failed: {ack?["error"]?.ToString() ?? "unknown error"}", ack);
+                                        return;
+                                    }
+
+                                    string? taskId = ack["taskId"]?.ToString();
+                                    if (string.IsNullOrEmpty(taskId))
+                                    {
+                                        // No taskId means the worker returned a synchronous result already
+                                        // (or an error response). Complete with what we have.
+                                        bool syncSuccess = !string.Equals(ack["status"]?.ToString(), "Error",
+                                            StringComparison.OrdinalIgnoreCase) && ack["error"] == null;
+                                        JobRegistry.Complete(job.Id, syncSuccess,
+                                            syncSuccess ? "Build completed (sync)" : $"Build error: {ack["error"]?.ToString() ?? "unknown"}",
+                                            ack);
+                                        return;
+                                    }
+
+                                    Log($"[AsyncBuild] job={job.Id} taskId={taskId} — polling status until terminal");
+
+                                    // Step 2: Poll worker Build/Status until status is terminal.
+                                    // Terminal states from BuildTaskStatus: Succeeded | Failed | Error | Cancelled.
+                                    JObject? finalStatus = null;
+                                    var hardCap = DateTime.UtcNow.AddMinutes(30);
+                                    while (DateTime.UtcNow < hardCap)
+                                    {
+                                        await Task.Delay(2000).ConfigureAwait(false);
+
+                                        var statusCmd = new JObject
+                                        {
+                                            ["module"] = "Build",
+                                            ["action"] = "Status",
+                                            ["target"] = taskId
+                                        };
+                                        JObject? statusEnv = await SendWorkerCommandAsync(
+                                            statusCmd,
+                                            30000,
+                                            $"Timeout polling build status (job={job.Id})",
+                                            env => env,
+                                            (_, correlationId) => new JObject { ["error"] = "Status poll timeout", ["correlationId"] = correlationId },
+                                            toolName: tName, toolArgs: tArgs, trackOperation: false);
+
+                                        finalStatus = (statusEnv?["result"] as JObject) ?? statusEnv;
+                                        string? s = finalStatus?["status"]?.ToString() ?? finalStatus?["Status"]?.ToString();
+                                        if (string.Equals(s, "Succeeded", StringComparison.OrdinalIgnoreCase)
+                                            || string.Equals(s, "Failed", StringComparison.OrdinalIgnoreCase)
+                                            || string.Equals(s, "Error", StringComparison.OrdinalIgnoreCase)
+                                            || string.Equals(s, "Cancelled", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    // Step 3: Complete the JobRegistry entry with the real final status.
+                                    string? finalState = finalStatus?["status"]?.ToString() ?? finalStatus?["Status"]?.ToString() ?? "Timeout";
+                                    bool success = string.Equals(finalState, "Succeeded", StringComparison.OrdinalIgnoreCase);
+                                    int errs = finalStatus?["errorCount"]?.ToObject<int?>() ?? finalStatus?["ErrorCount"]?.ToObject<int?>() ?? 0;
+                                    int warns = finalStatus?["warningCount"]?.ToObject<int?>() ?? finalStatus?["WarningCount"]?.ToObject<int?>() ?? 0;
                                     string summary = success
-                                        ? $"Build {lcAction} completed successfully."
-                                        : $"Build {lcAction} failed: {workerResult?["error"]?.ToString() ?? workerResult?["message"]?.ToString() ?? "unknown error"}";
-                                    JobRegistry.Complete(job.Id, success, summary, workerResult);
-                                    Log($"[AsyncBuild] Completed job={job.Id} success={success}");
+                                        ? $"Build succeeded: {warns} warnings, {errs} errors"
+                                        : $"Build {finalState}: {errs} errors, {warns} warnings";
+                                    JobRegistry.Complete(job.Id, success, summary, finalStatus);
+                                    Log($"[AsyncBuild] Completed job={job.Id} status={finalState} errors={errs} warnings={warns}");
                                 }
                                 catch (Exception ex)
                                 {
