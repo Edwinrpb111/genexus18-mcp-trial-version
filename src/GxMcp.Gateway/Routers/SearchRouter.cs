@@ -21,6 +21,7 @@ namespace GxMcp.Gateway.Routers
                         typeFilter = args?["typeFilter"]?.ToString(),
                         domainFilter = args?["domainFilter"]?.ToString(),
                         exactMatch = args?["exactMatch"]?.ToObject<bool?>() ?? false,
+                        inline_read_top = args?["inline_read_top"]?.ToObject<int?>() ?? 0,
                     };
                 case "genexus_search_source":
                     return new
@@ -49,6 +50,7 @@ namespace GxMcp.Gateway.Routers
                         parentPath = args?["parentPath"]?.ToString(),
                         typeFilter = args?["typeFilter"]?.ToString(),
                         verbose = args?["verbose"]?.ToObject<bool?>() ?? false,
+                        inline_read_top = args?["inline_read_top"]?.ToObject<int?>() ?? 0,
                     };
                 default:
                     return null;

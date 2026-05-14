@@ -75,6 +75,18 @@ namespace GxMcp.Gateway.Routers
                             part = part
                         };
                     }
+                    var partsTok = args?["parts"];
+                    bool hasParts = partsTok is JArray partsArr && partsArr.Count > 0;
+                    if (hasParts)
+                    {
+                        return new {
+                            module = "Read",
+                            action = "ExtractParts",
+                            target = target,
+                            parts = (JArray)partsTok!,
+                            type = args?["type"]?.ToString()
+                        };
+                    }
                     return new {
                         module = "Read",
                         action = "ExtractSource",
