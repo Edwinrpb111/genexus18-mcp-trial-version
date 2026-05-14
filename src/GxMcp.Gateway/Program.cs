@@ -1119,11 +1119,8 @@ namespace GxMcp.Gateway
                                 string? alias = args?["alias"]?.ToString();
                                 string? path = args?["path"]?.ToString();
                                 KbHandle handleToOpen;
-                                if (!string.IsNullOrWhiteSpace(alias) && _activeConfig != null)
-                                {
-                                    handleToOpen = new KbResolver(_activeConfig).Resolve(alias, _workerPool.ListOpen());
-                                }
-                                else if (!string.IsNullOrWhiteSpace(path))
+                                // Path wins: register ad-hoc (with optional caller-supplied alias).
+                                if (!string.IsNullOrWhiteSpace(path))
                                 {
                                     string finalAlias = string.IsNullOrWhiteSpace(alias)
                                         ? System.IO.Path.GetFileName(path!.TrimEnd('\\', '/')).ToLowerInvariant()
@@ -1131,9 +1128,14 @@ namespace GxMcp.Gateway
                                     if (string.IsNullOrEmpty(finalAlias)) finalAlias = "adhoc";
                                     handleToOpen = new KbHandle(finalAlias, path!);
                                 }
+                                // No path → resolve the alias against config-declared KBs.
+                                else if (!string.IsNullOrWhiteSpace(alias) && _activeConfig != null)
+                                {
+                                    handleToOpen = new KbResolver(_activeConfig).Resolve(alias, _workerPool.ListOpen());
+                                }
                                 else
                                 {
-                                    throw new ArgumentException("Provide 'alias' (for declared KBs) or 'path' (for ad-hoc).");
+                                    throw new ArgumentException("Provide 'path' (ad-hoc) or 'alias' of a KB declared in config.Environment.KBs[].");
                                 }
 
                                 var w = await _workerPool.AcquireAsync(handleToOpen, CancellationToken.None);
@@ -1141,7 +1143,7 @@ namespace GxMcp.Gateway
                                 {
                                     ["opened"] = handleToOpen.Alias,
                                     ["path"] = handleToOpen.Path,
-                                    ["workerPid"] = w == null ? null : (JToken?)null
+                                    ["workerPid"] = w?.Pid
                                 };
                                 break;
                             }
