@@ -28,9 +28,10 @@ This repository is MCP-first. The official transport is MCP over stdio or HTTP a
   - `dryRun: true` — returns a preview envelope `{_meta:{dryRun,schemaVersion}, plan:{touchedObjects, xmlDiff, brokenRefs, warnings}}` without mutating the KB.
   - `idempotencyKey: '<token>'` (`[A-Za-z0-9_-]{1,128}`) — deduplicates retries; concurrent calls with the same key are coalesced; cache is per-KB, sliding TTL 15 min default. `dryRun` bypasses the cache.
 - `genexus_inspect`: get structured conversion or object context.
-- `genexus_analyze`: navigation, lint, UI, and summary analysis modes.
+- `genexus_analyze`: one tool with `mode`: `linter | navigation | hierarchy | impact | data_context | ui_context | pattern_metadata | summary | explain` (the last two replaced the standalone `genexus_summarize` and `genexus_explain_code` in v2.3.0; `explain` takes `code`).
 - `genexus_lifecycle`: build, validate, index, and KB lifecycle operations.
-- `genexus_get_sql`: extract DDL and SQL-oriented schema insights.
+- `genexus_sql`: `action=ddl` for Transaction/Table DDL or `action=navigation` for the SQL of a procedure's For Each (replaces `genexus_get_sql` and `genexus_get_sql_for_navigation` in v2.3.0).
+- `genexus_kb`: multi-KB pool management (`action`: `list | open | close | set_default`). Replaces `genexus_open_kb` in v2.3.0.
 - `genexus_create_object`: create new KB objects.
 - `genexus_refactor`: supported rename and extraction refactors.
 - `genexus_add_variable`: add variables through the worker contract.
@@ -40,6 +41,16 @@ This repository is MCP-first. The official transport is MCP over stdio or HTTP a
 - `genexus_history`: list, read, save, and restore object history.
 - `genexus_structure`: read or update logical and visual structure.
 - `genexus_doc`: access documentation, health, and visualization flows.
+
+## Multi-KB (v2.3.0+)
+
+The gateway can hold up to `Server.MaxOpenKbs` (default 3) KBs open simultaneously, each in its own Worker process. Calls to **different** KBs execute in parallel — no serialization between them. Calls to the **same** KB remain serialized by the SDK's STA constraint.
+
+- Every non-meta tool accepts an optional `kb` argument: an alias from `config.Environment.KBs[]` or an absolute path (registered ad-hoc on first use).
+- With 0 KBs open and a `DefaultKb` configured, that KB is acquired lazily. With exactly 1 KB open the `kb` arg is optional; with 2+ open it is required (server returns `KB_AMBIGUOUS` with the open list).
+- `genexus_kb action=list` returns each open KB's PID, working-set memory, and idle seconds — useful to pick a candidate before triggering eviction via `action=close`.
+- Pool full (`MaxOpenKbs` reached, no idle Worker to evict): server returns `KB_POOL_FULL`. Close one explicitly or wait for idle eviction (`WorkerIdleTimeoutMinutes`).
+- Legacy `Environment.KBPath` configs auto-migrate to `KBs[]` + `DefaultKb` on load; existing single-KB workflows keep working with no client change.
 
 ## Resource-first patterns
 
@@ -58,7 +69,16 @@ Prefer resources when the data is naturally browsable or cacheable:
 ## Operating rules
 
 - Do not design new features around non-MCP transport contracts.
-- Do not use retired tool names such as `genexus_patch`, `genexus_read_source`, `genexus_write_object`, `genexus_batch_read`, or `genexus_batch_edit`. The latter two were removed in v2.0.0 — use `genexus_read`/`genexus_edit` with `targets[]`. Calls to removed tools return JSON-RPC `-32601` with `error.data.replacedBy` and `error.data.argHint`; `initialize` advertises `_meta.removedTools` for proactive detection.
+- Do not use retired tool names. Removed (with their replacements):
+  - `genexus_patch`, `genexus_read_source`, `genexus_write_object` (pre-v2.0.0).
+  - `genexus_batch_read` → `genexus_read` with `targets[]` (v2.0.0).
+  - `genexus_batch_edit` → `genexus_edit` with `targets[]` (v2.0.0).
+  - `genexus_open_kb` → `genexus_kb action=open` (v2.3.0).
+  - `genexus_get_sql` → `genexus_sql action=ddl` (v2.3.0).
+  - `genexus_get_sql_for_navigation` → `genexus_sql action=navigation` (v2.3.0).
+  - `genexus_summarize` → `genexus_analyze mode=summary` (v2.3.0).
+  - `genexus_explain_code` → `genexus_analyze mode=explain` (v2.3.0).
+  Calls to removed tools return JSON-RPC `-32601` with `error.data.replacedBy` and `error.data.argHint`; `initialize` advertises `_meta.removedTools` for proactive detection.
 - Do not pass the legacy `changes` argument to `genexus_edit` — it was removed in v2.0.0; use `targets[]` instead.
 - Read first, then edit. Use paginated reads for large objects.
 - Prefer MCP discovery over hardcoded assumptions about available tools or resources.

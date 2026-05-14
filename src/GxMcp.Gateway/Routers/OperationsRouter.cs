@@ -62,15 +62,6 @@ namespace GxMcp.Gateway.Routers
                         typeName = args?["typeName"]?.ToString()
                     };
 
-                case "genexus_explain_code":
-                    return new
-                    {
-                        module = "Analyze",
-                        action = "ExplainCode",
-                        target = args?["name"]?.ToString(),
-                        payload = args?["code"]?.ToString()
-                    };
-
                 case "genexus_format":
                     return new
                     {

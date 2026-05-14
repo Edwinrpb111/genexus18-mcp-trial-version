@@ -51,14 +51,6 @@ namespace GxMcp.Gateway.Routers
 
             switch (toolName)
             {
-                case "genexus_open_kb":
-                    return new
-                    {
-                        module = "KB",
-                        action = "Open",
-                        target = args?["path"]?.ToString()
-                    };
-
                 case "genexus_read":
                 {
                     var targetsTokRead = args?["targets"];

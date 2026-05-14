@@ -15,13 +15,6 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_inspect":
                     return new { module = "Analyze", action = "GetConversionContext", target = target, include = args?["include"], type = type };
 
-                case "genexus_summarize":
-                    return new { module = "Analyze", action = "Summarize", target = target, type = type };
-
-                case "genexus_get_sql":
-                    bool includeSubordinated = args?["includeSubordinated"]?.Value<bool>() ?? false;
-                    return new { module = "Analyze", action = "GetSQL", target = target, includeSubordinated = includeSubordinated, type = type };
-
                 case "genexus_inject_context":
                     bool recursive = args?["recursive"]?.Value<bool>() ?? false;
                     return new { module = "Analyze", action = "InjectContext", target = target, recursive = recursive, type = type };
@@ -44,9 +37,24 @@ namespace GxMcp.Gateway.Routers
                             return new { module = "UI", action = "GetUIContext", target = target, type = type };
                         case "pattern_metadata":
                             return new { module = "Analyze", action = "GetPatternMetadata", target = target, type = type };
+                        case "summary":
+                            return new { module = "Analyze", action = "Summarize", target = target, type = type };
+                        case "explain":
+                            return new { module = "Analyze", action = "ExplainCode", target = target, payload = args?["code"]?.ToString(), type = type };
                         default:
                             return new { module = "Analyze", action = "Analyze", target = target, type = type };
                     }
+
+                case "genexus_sql":
+                    string? sqlAction = args?["action"]?.ToString()?.ToLowerInvariant();
+                    if (sqlAction == "navigation")
+                    {
+                        int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
+                        return new { module = "Analyze", action = "GetSqlForNavigation", target = target, levelNumber = levelNumber, type = type };
+                    }
+                    // default = ddl
+                    bool includeSub = args?["includeSubordinated"]?.Value<bool>() ?? false;
+                    return new { module = "Analyze", action = "GetSQL", target = target, includeSubordinated = includeSub, type = type };
 
                 case "genexus_get_signature":
                     return new { module = "Analyze", action = "GetParameters", target = target, type = type };
@@ -54,10 +62,6 @@ namespace GxMcp.Gateway.Routers
                     return new { module = "Linter", action = "Analyze", target = target, type = type };
                 case "genexus_get_navigation":
                     return new { module = "Analyze", action = "GetNavigation", target = target, type = type };
-
-                case "genexus_get_sql_for_navigation":
-                    int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
-                    return new { module = "Analyze", action = "GetSqlForNavigation", target = target, levelNumber = levelNumber, type = type };
 
                 default:
                     return null;

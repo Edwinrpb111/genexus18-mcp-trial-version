@@ -131,13 +131,16 @@ Still stuck? [Open an issue](https://github.com/lennix1337/Genexus18MCP/issues) 
 The worker exposes these tool families to the MCP router. *(Detailed schemas in [`GEMINI.md`](GEMINI.md).)*
 
 - **Search & Discovery** — `genexus_query`, `genexus_read`, `genexus_inspect`, `genexus_list_objects`, `genexus_properties`
-- **Editing & Architecture** — `genexus_edit`, `genexus_create_object`, `genexus_refactor`, `genexus_forge`, `genexus_add_variable`
-- **Analysis** — `genexus_analyze`, `genexus_inject_context`, `genexus_doc`, `genexus_explain_code`, `genexus_summarize`
+- **Editing & Architecture** — `genexus_edit`, `genexus_create_object`, `genexus_delete_object`, `genexus_refactor`, `genexus_forge`, `genexus_add_variable`
+- **Analysis** — `genexus_analyze` (modes: `linter`, `navigation`, `hierarchy`, `impact`, `data_context`, `ui_context`, `pattern_metadata`, `summary`, `explain`), `genexus_inject_context`, `genexus_doc`, `genexus_search_source`
 - **File System & Assets** — `genexus_asset`, `genexus_export_object`, `genexus_import_object`
-- **History & DB** — `genexus_history`, `genexus_get_sql`, `genexus_structure`
+- **History & DB** — `genexus_history`, `genexus_sql` (`action=ddl` or `action=navigation`), `genexus_structure`
 - **Lifecycle & Build** — `genexus_lifecycle`, `genexus_test`, `genexus_format`
 - **Native Layout SDK** — `genexus_layout` (`get_tree`, `find_controls`, `set_property`, `rename_printblock`, `add_printblock`, `get_preview`, …)
+- **KB pool (v2.3.0+)** — `genexus_kb` (`list`, `open`, `close`, `set_default`) for multi-KB parallel work
 - **Patterns** — Smart XML generation/interpretation (e.g., WorkWithPlus PatternInstance).
+
+> **Multi-KB (v2.3.0+):** every non-meta tool takes an optional `kb` argument (alias or absolute path). The gateway can hold up to `Server.MaxOpenKbs` (default 3) KBs open at once, each in its own Worker process — calls to different KBs run truly in parallel. See [Advanced Configuration](#advanced-configuration) for the `KBs[]` schema.
 
 **Edit modes** (`genexus_edit`): `xml` (full replacement, default), `ops` (typed semantic ops like `set_attribute`, `add_rule`), `patch` (JSON-Patch RFC 6902).
 
@@ -173,17 +176,52 @@ The installer writes a `config.json` for you. To customize networking, timeouts,
     "HttpPort": 5000,
     "BindAddress": "127.0.0.1",
     "SessionIdleTimeoutMinutes": 10,
-    "WorkerIdleTimeoutMinutes": 5
+    "WorkerIdleTimeoutMinutes": 5,
+    "MaxOpenKbs": 3
   },
   "GeneXus": {
     "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
     "WorkerExecutable": "worker\\GxMcp.Worker.exe"
   },
   "Environment": {
-    "KBPath": "C:\\KBs\\YourKB"
+    "DefaultKb": "main",
+    "KBs": [
+      { "alias": "main",   "path": "C:\\KBs\\YourKB" },
+      { "alias": "legacy", "path": "C:\\KBs\\OtherKB" }
+    ]
   }
 }
 ```
+
+> **Backward compatibility:** old configs with a single `Environment.KBPath` keep working — the gateway auto-migrates them to `KBs[]` + `DefaultKb` at load time.
+
+### Working with multiple KBs
+
+Once you declare more than one KB in `Environment.KBs[]`, every tool accepts an optional `kb` argument:
+
+```jsonc
+// LLM example: list procedures in two KBs in parallel
+{ "tool": "genexus_list_objects", "arguments": { "kb": "main",   "type": "Procedure" } }
+{ "tool": "genexus_list_objects", "arguments": { "kb": "legacy", "type": "Transaction" } }
+```
+
+Resolution rules when `kb` is omitted:
+- exactly 1 KB open → uses that KB
+- 0 KBs open + `DefaultKb` set → opens `DefaultKb` lazily
+- 2+ KBs open → server returns `KB_AMBIGUOUS` and you must pass `kb` explicitly
+
+Manage the pool at runtime:
+
+```jsonc
+{ "tool": "genexus_kb", "arguments": { "action": "list" } }
+// → { openKbs: [{alias, path, pid, workingSetMB, idleSeconds}], maxOpenKbs, defaultKb, declaredKbs }
+
+{ "tool": "genexus_kb", "arguments": { "action": "open", "alias": "adhoc", "path": "C:/KBs/ScratchKB" } }
+{ "tool": "genexus_kb", "arguments": { "action": "close", "alias": "legacy" } }
+{ "tool": "genexus_kb", "arguments": { "action": "set_default", "alias": "main" } }   // persists to config.json
+```
+
+When the pool is full and no Worker is idle, the server returns `KB_POOL_FULL` — close one explicitly or raise `Server.MaxOpenKbs`. Each Worker carries the SDK in its own process (~200–400 MB idle, up to 1–2 GB on heavy KBs), so size the pool against available RAM.
 
 ### Architecture
 
@@ -194,7 +232,8 @@ graph LR
     C -->|Native SDK| D[GeneXus KB]
 ```
 
-- **Lazy worker**: the heavy .NET 4.8 worker only spins up on first command and shuts down after `WorkerIdleTimeoutMinutes` of inactivity to unlock build artifacts.
+- **Worker pool (v2.3.0+)**: one .NET 4.8 Worker process per open KB, capped by `MaxOpenKbs` (default 3). Workers are spawned lazily, recycled by `WorkerIdleTimeoutMinutes`, and evicted LRU when the pool is full.
+- **Cross-KB parallelism**: tool calls to different KBs run on different Worker processes and never block each other. Calls to the same KB are still serialized by the GeneXus SDK's STA requirement.
 - **Gateway reuse**: multiple IDE instances share one gateway via lease files at `%LOCALAPPDATA%\GenexusMCP\gateway-leases`.
 - **HTTP mode**: also available at `http://127.0.0.1:5000/mcp` with SSE. Header: `MCP-Protocol-Version: 2025-11-25`.
 
@@ -207,6 +246,22 @@ Want to contribute or run a local dev build?
 1. Clone this repo on Windows.
 2. Run `.\setup.bat` — checks prerequisites, builds the C# components, and auto-registers the local build with detected AI clients.
 3. If GeneXus or your KB aren't auto-detected, follow the prompts.
+
+### Bundled AI skills (`.gemini/skills/`)
+
+This repo ships a set of **agent skills** under `.gemini/skills/` that any MCP-compatible client with skill support (Gemini CLI, Claude Code via plugin, etc.) can load to ground its GeneXus reasoning:
+
+| Skill | What it gives the agent |
+|---|---|
+| `genexus-mastery` | This repository's preferred MCP workflow + multi-KB usage |
+| `genexus18-guidelines` | Local engineering rules layered on top of Nexa |
+| `nexa` | Full GeneXus 18 reference set: every object type, command, type, property — imported from the official [`genexuslabs/genexus-skills`](https://github.com/genexuslabs/genexus-skills) |
+| `frontend/chameleon-controls-library` | 58 Chameleon UI component specs |
+| `frontend/mercury-design-system` | Mercury tokens, bundles, theming |
+| `frontend/design-system-builder` | Authoring custom design systems |
+| `frontend/ui-creator` | Panel/screen generation templates |
+
+Third-party skills are Apache 2.0 (see [`.gemini/skills/NOTICE.md`](.gemini/skills/NOTICE.md)). To refresh against upstream, follow the steps in `NOTICE.md`.
 
 ### Nexus-IDE (VS Code extension)
 

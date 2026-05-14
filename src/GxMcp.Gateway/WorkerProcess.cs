@@ -38,6 +38,24 @@ namespace GxMcp.Gateway
         public event Action<string>? OnRpcResponse;
         public event Action? OnWorkerExited;
 
+        public int? Pid
+        {
+            get
+            {
+                try { return _process?.HasExited == false ? _process.Id : (int?)null; }
+                catch { return null; }
+            }
+        }
+
+        public long? WorkingSetBytes
+        {
+            get
+            {
+                try { return _process?.HasExited == false ? _process.WorkingSet64 : (long?)null; }
+                catch { return null; }
+            }
+        }
+
         public WorkerProcess(Configuration config, KbHandle kb)
         {
             _config = config;

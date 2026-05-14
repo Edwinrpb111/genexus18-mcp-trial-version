@@ -49,6 +49,8 @@ namespace GxMcp.Gateway
             public string CorrelationId { get; init; } = string.Empty;
             public string? OperationId { get; init; }
             public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
+            /// <summary>Worker (KB) the command was routed to; used to abort pending on per-worker crash.</summary>
+            public string? WorkerAlias { get; init; }
         }
 
         private static ConcurrentDictionary<string, PendingWorkerRequest> _pendingRequests = new ConcurrentDictionary<string, PendingWorkerRequest>();
@@ -676,8 +678,27 @@ namespace GxMcp.Gateway
             _workerPool = new WorkerPool(config);
             _workerPool.OnRpcResponse += HandleWorkerResponse;
             _workerPool.OnWorkerExited += (kb) => {
-                Log($"Worker for KB '{kb.Alias}' exited. Pending requests may be released by sweep.");
-                // Per-worker pending mapping not tracked in v1; rely on stale cleanup.
+                string alias = kb.NormalizedAlias;
+                int aborted = 0;
+                foreach (var kvp in _pendingRequests.ToArray())
+                {
+                    if (!string.Equals(kvp.Value.WorkerAlias, alias, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    string id = kvp.Key;
+                    if (_pendingRequests.TryRemove(id, out var pending))
+                    {
+                        _operationTracker.MarkFailedByRequest(id, $"Worker for KB '{kb.Alias}' crashed/exited.");
+                        var errorJson = JsonConvert.SerializeObject(new
+                        {
+                            jsonrpc = "2.0",
+                            id = id,
+                            error = new { code = -32603, message = $"Worker for KB '{kb.Alias}' crashed/exited." }
+                        });
+                        pending.CompletionSource.TrySetResult(errorJson);
+                        aborted++;
+                    }
+                }
+                Log($"Worker for KB '{kb.Alias}' exited. Aborted {aborted} pending request(s) bound to it.");
             };
         }
 
@@ -779,18 +800,19 @@ namespace GxMcp.Gateway
             }
 
             workerCommand["correlationId"] = correlationId;
+            var workerRequest = BuildWorkerRpcRequest(workerCommand, requestId);
+            var worker = await GetActiveWorkerAsync();
             var pending = new PendingWorkerRequest
             {
                 CompletionSource = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
                 ToolName = toolName,
                 CorrelationId = correlationId,
                 OperationId = operationId,
-                CreatedAtUtc = DateTime.UtcNow
+                CreatedAtUtc = DateTime.UtcNow,
+                WorkerAlias = worker.Kb?.NormalizedAlias
             };
             _pendingRequests[requestId] = pending;
 
-            var workerRequest = BuildWorkerRpcRequest(workerCommand, requestId);
-            var worker = await GetActiveWorkerAsync();
             await worker.SendCommandAsync(workerRequest.ToString(Formatting.None));
 
             var completedTask = await Task.WhenAny(pending.CompletionSource.Task, Task.Delay(timeoutMs));
@@ -1040,8 +1062,19 @@ namespace GxMcp.Gateway
                             case "list":
                                 payload = new JObject
                                 {
-                                    ["openKbs"] = JArray.FromObject(_workerPool.ListOpen()
-                                        .Select(k => new { alias = k.Alias, path = k.Path })),
+                                    ["openKbs"] = JArray.FromObject(_workerPool.Snapshot()
+                                        .Select(s => new
+                                        {
+                                            alias = s.Handle.Alias,
+                                            path = s.Handle.Path,
+                                            pid = s.Pid,
+                                            workingSetBytes = s.WorkingSetBytes,
+                                            workingSetMB = s.WorkingSetBytes.HasValue
+                                                ? Math.Round(s.WorkingSetBytes.Value / (1024.0 * 1024.0), 1)
+                                                : (double?)null,
+                                            lastActivityUtc = s.LastActivityUtc,
+                                            idleSeconds = (int)Math.Max(0, (DateTime.UtcNow - s.LastActivityUtc).TotalSeconds)
+                                        })),
                                     ["maxOpenKbs"] = _activeConfig?.Server?.MaxOpenKbs ?? 3,
                                     ["defaultKb"] = _activeConfig?.Environment?.DefaultKb,
                                     ["declaredKbs"] = JArray.FromObject(
@@ -1049,6 +1082,38 @@ namespace GxMcp.Gateway
                                             .Select(k => new { alias = k.Alias, path = k.Path }))
                                 };
                                 break;
+                            case "set_default":
+                            {
+                                string? alias = args?["alias"]?.ToString();
+                                if (string.IsNullOrWhiteSpace(alias))
+                                    throw new ArgumentException("Missing 'alias' for action=set_default.");
+                                if (_activeConfig == null || string.IsNullOrWhiteSpace(Configuration.CurrentConfigPath))
+                                    throw new InvalidOperationException("No active config to persist.");
+                                var declared = _activeConfig.Environment?.KBs?.FirstOrDefault(
+                                    k => string.Equals(k.Alias, alias, StringComparison.OrdinalIgnoreCase));
+                                if (declared == null)
+                                    throw new KbResolutionException("KB_NOT_FOUND",
+                                        $"Alias '{alias}' not in config.Environment.KBs[]. Add it first or use 'open' with a path.");
+                                // Patch the JSON on disk to preserve any fields we don't model.
+                                string configPath = Configuration.CurrentConfigPath!;
+                                JObject root;
+                                try { root = JObject.Parse(System.IO.File.ReadAllText(configPath)); }
+                                catch (Exception ex) { throw new InvalidOperationException($"Failed to read config.json: {ex.Message}"); }
+                                if (root["Environment"] is not JObject envObj)
+                                {
+                                    envObj = new JObject();
+                                    root["Environment"] = envObj;
+                                }
+                                envObj["DefaultKb"] = declared.Alias;
+                                System.IO.File.WriteAllText(configPath, root.ToString(Formatting.Indented));
+                                _activeConfig.Environment!.DefaultKb = declared.Alias;
+                                payload = new JObject
+                                {
+                                    ["defaultKb"] = declared.Alias,
+                                    ["persistedTo"] = configPath
+                                };
+                                break;
+                            }
                             case "open":
                             {
                                 string? alias = args?["alias"]?.ToString();
@@ -1362,16 +1427,7 @@ namespace GxMcp.Gateway
                     }
 
                     object? rawWorkerCmd = null;
-                    if (string.Equals(tName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase))
-                    {
-                        rawWorkerCmd = new
-                        {
-                            module = "KB",
-                            action = "Open",
-                            target = tArgs?["path"]?.ToString()
-                        };
-                    }
-                    else if (string.Equals(tName, "genexus_export_object", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(tName, "genexus_export_object", StringComparison.OrdinalIgnoreCase))
                     {
                         rawWorkerCmd = new
                         {
@@ -1821,8 +1877,7 @@ namespace GxMcp.Gateway
         {
             if (string.IsNullOrWhiteSpace(toolName)) return false;
 
-            if (string.Equals(toolName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

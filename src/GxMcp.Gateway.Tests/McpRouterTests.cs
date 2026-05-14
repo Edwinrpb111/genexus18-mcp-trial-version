@@ -303,18 +303,19 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
-        public void ConvertToolCall_ShouldMapOpenKbTool()
+        public void ConvertToolCall_RemovedOpenKbToolMapsToNull()
         {
+            // genexus_open_kb was removed in v2.3.0; it now lives in RemovedToolsRegistry
+            // pointing at genexus_kb. Direct ConvertToolCall returns null (handled earlier
+            // by the -32601 short-circuit in ProcessMcpRequest).
             var request = JObject.Parse(
                 """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_open_kb","arguments":{"path":"C:\\KBs\\SampleKB"}}}"""
             );
 
             var result = McpRouter.ConvertToolCall(request);
-
-            var json = JObject.FromObject(result!);
-            Assert.Equal("KB", json["module"]?.ToString());
-            Assert.Equal("Open", json["action"]?.ToString());
-            Assert.Equal(@"C:\KBs\SampleKB", json["target"]?.ToString());
+            Assert.Null(result);
+            Assert.True(RemovedToolsRegistry.Map.ContainsKey("genexus_open_kb"));
+            Assert.Equal("genexus_kb", RemovedToolsRegistry.Map["genexus_open_kb"].ReplacedBy);
         }
 
         [Fact]

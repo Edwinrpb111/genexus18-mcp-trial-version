@@ -21,7 +21,12 @@ namespace GxMcp.Gateway
             new Dictionary<string, RemovedToolInfo>(StringComparer.OrdinalIgnoreCase)
             {
                 ["genexus_batch_read"] = new RemovedToolInfo("genexus_read", "use targets[] (array of {name, part})"),
-                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of edit requests, each {name, mode, content|ops|patch, ...})")
+                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of edit requests, each {name, mode, content|ops|patch, ...})"),
+                ["genexus_open_kb"] = new RemovedToolInfo("genexus_kb", "use action=open with path (and optional alias)"),
+                ["genexus_get_sql"] = new RemovedToolInfo("genexus_sql", "use action=ddl with name (and includeSubordinated)"),
+                ["genexus_get_sql_for_navigation"] = new RemovedToolInfo("genexus_sql", "use action=navigation with name and levelNumber"),
+                ["genexus_summarize"] = new RemovedToolInfo("genexus_analyze", "use mode=summary with name"),
+                ["genexus_explain_code"] = new RemovedToolInfo("genexus_analyze", "use mode=explain with name and code")
             };
     }
 }

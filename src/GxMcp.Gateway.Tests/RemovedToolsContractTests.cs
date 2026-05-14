@@ -16,7 +16,11 @@ namespace GxMcp.Gateway.Tests
     {
         private static string FindToolDefinitionsJson()
         {
-            // tests run from src/GxMcp.Gateway.Tests/bin/<Cfg>/<tfm>; walk up to src
+            // Preferred: alongside the test output (propagated via Gateway's <Content> item).
+            string beside = Path.Combine(AppContext.BaseDirectory, "tool_definitions.json");
+            if (File.Exists(beside)) return beside;
+
+            // Fallback: walk up from base dir to repo src (for IDE test runs from src tree).
             string dir = AppContext.BaseDirectory;
             for (int i = 0; i < 8; i++)
             {

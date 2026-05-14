@@ -8,6 +8,11 @@ namespace GxMcp.Gateway.Tests
     {
         private static string FindToolDefinitionsJson()
         {
+            // Preferred: alongside the test output (propagated via Gateway's <Content> item).
+            string beside = Path.Combine(AppContext.BaseDirectory, "tool_definitions.json");
+            if (File.Exists(beside)) return beside;
+
+            // Fallback: walk up from base dir to repo src (for IDE test runs from src tree).
             string dir = AppContext.BaseDirectory;
             for (int i = 0; i < 8; i++)
             {
@@ -29,7 +34,9 @@ namespace GxMcp.Gateway.Tests
             Assert.True(File.Exists(path), $"tool_definitions.json not found at {path}");
             var content = File.ReadAllText(path);
             var approxTokens = content.Length / 4;
-            Assert.True(approxTokens < 3500, $"tool_definitions.json is ~{approxTokens} tokens; budget 3500.");
+            // Budget bumped from 3500 → 4000 in v2.3.0 to accommodate the `kb`
+            // parameter added to 28 tools for multi-KB parallel support.
+            Assert.True(approxTokens < 4000, $"tool_definitions.json is ~{approxTokens} tokens; budget 4000.");
         }
     }
 }

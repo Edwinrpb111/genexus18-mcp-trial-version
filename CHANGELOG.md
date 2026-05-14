@@ -2,10 +2,46 @@
 
 ## v2.3.0 — 2026-05-14
 
-Multi-KB parallel support. One Gateway can now drive up to `Server.MaxOpenKbs`
-(default 3) concurrent KBs, each in its own Worker process. Cross-KB tool
-calls run in parallel — no serialization between KBs. Intra-KB calls remain
-serialized by the SDK's STA constraint, as before.
+Multi-KB parallel support + tool surface consolidation + official skill bundles.
+One Gateway can now drive up to `Server.MaxOpenKbs` (default 3) concurrent KBs,
+each in its own Worker process. Cross-KB tool calls run in parallel — no
+serialization between KBs. Intra-KB calls remain serialized by the SDK's STA
+constraint, as before.
+
+### Consolidations (5 tools removed → registered in RemovedToolsRegistry for LLM auto-redirect)
+- `genexus_open_kb` → `genexus_kb action=open`
+- `genexus_get_sql` → `genexus_sql action=ddl`
+- `genexus_get_sql_for_navigation` → `genexus_sql action=navigation`
+- `genexus_summarize` → `genexus_analyze mode=summary`
+- `genexus_explain_code` → `genexus_analyze mode=explain` (takes `code` arg)
+
+Total tools: 33 → 29. Schema size: ~3141 → ~3714 tokens (multi-KB `kb` param
+adds tokens; consolidations partly offset). Test budget bumped 3500 → 4000.
+
+### Crash isolation (follow-up to initial v2.3.0 design)
+- Pending requests now track their `WorkerAlias`. When a Worker crashes, only
+  the requests bound to that KB are aborted with `-32603` — sibling KBs keep
+  working. Previously stale pending requests waited for the 65-min sweep.
+
+### `genexus_kb` enrichment
+- `action=list` now returns `pid`, `workingSetBytes`, `workingSetMB`, and
+  `idleSeconds` per open KB, so the LLM can self-throttle / pick a candidate
+  to close before opening another.
+- New `action=set_default` — persists `DefaultKb` to `config.json`
+  (preserves any unmodelled fields).
+
+### GitHub release notes
+- `scripts/release.ps1` now extracts the CHANGELOG section for the released
+  version and uses it as the release body (`gh release create --notes-file`).
+  Falls back to `--generate-notes` if the section is missing.
+
+### Bundled skills (imported from genexuslabs/genexus-skills, Apache 2.0)
+- `nexa/` — full reference set: every GeneXus 18 object type, command,
+  formula, type, property (was a stub before).
+- `frontend/{chameleon-controls-library, mercury-design-system,
+  design-system-builder, ui-creator}/` — Chameleon UI specs, Mercury DS
+  tokens/bundles, design-system authoring, panel templates.
+- `.gemini/skills/NOTICE.md` documents attribution + upstream refresh steps.
 
 ### Added
 - **`WorkerPool`** (Gateway) — keyed by KB alias, LRU eviction when pool full,

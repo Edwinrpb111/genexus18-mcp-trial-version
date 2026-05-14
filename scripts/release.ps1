@@ -93,9 +93,50 @@ try {
     git tag -a $tag -m "Release $tag"
     git push origin main --follow-tags
 
+    Write-Host "[release] Extracting CHANGELOG section for $tag..." -ForegroundColor Cyan
+    $changelogPath = Join-Path $root 'CHANGELOG.md'
+    $notesFile = $null
+    if (Test-Path $changelogPath) {
+        $lines = Get-Content $changelogPath
+        # Match the header for this version (## v2.3.0 ... or ## [2.3.0] ...). Tolerant of
+        # leading whitespace and various date suffixes; first line that mentions $newVersion.
+        $startIdx = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s+.*\b$([regex]::Escape($newVersion))\b") { $startIdx = $i; break }
+        }
+        if ($startIdx -ge 0) {
+            # Find next top-level version header (## ...) or end of file.
+            $endIdx = $lines.Count
+            for ($i = $startIdx + 1; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^##\s') { $endIdx = $i; break }
+            }
+            $section = ($lines[$startIdx..($endIdx - 1)] -join "`n").TrimEnd()
+            # Prepend a short callout linking to the full CHANGELOG for context.
+            $body = @"
+$section
+
+---
+**Install / upgrade:** ``npx genexus-mcp@$newVersion init`` or pin in your config.
+**Full changelog:** [CHANGELOG.md](https://github.com/lennix1337/Genexus18MCP/blob/$tag/CHANGELOG.md)
+"@
+            $notesFile = Join-Path $env:TEMP "gxmcp-release-notes-$newVersion.md"
+            Set-Content -Path $notesFile -Value $body -Encoding UTF8
+            Write-Host "   > Notes extracted to $notesFile ($($body.Length) chars)" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "   > No CHANGELOG entry found for $newVersion; falling back to auto-generated notes." -ForegroundColor Yellow
+        }
+    }
+
     Write-Host "[release] Creating GitHub Release with asset..." -ForegroundColor Cyan
-    & gh release create $tag $zipPath --title $tag --generate-notes
+    if ($notesFile) {
+        & gh release create $tag $zipPath --title $tag --notes-file $notesFile
+    }
+    else {
+        & gh release create $tag $zipPath --title $tag --generate-notes
+    }
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed." }
+    if ($notesFile) { Remove-Item $notesFile -Force -ErrorAction SilentlyContinue }
 
     Write-Host "[release] Release created. Workflow 'release.yml' will publish to npm with provenance." -ForegroundColor Green
     Write-Host "   > Watch:  gh run watch" -ForegroundColor Gray

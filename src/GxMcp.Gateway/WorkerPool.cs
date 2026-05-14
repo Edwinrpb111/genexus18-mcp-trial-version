@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 
 namespace GxMcp.Gateway
 {
+    public sealed record KbPoolStatus(KbHandle Handle, int? Pid, long? WorkingSetBytes, DateTime LastActivityUtc);
+
     public sealed class WorkerPoolFullException : Exception
     {
         public IReadOnlyList<KbHandle> OpenKbs { get; }
@@ -56,6 +58,18 @@ namespace GxMcp.Gateway
             }
 
             return null;
+        }
+
+        public IReadOnlyList<KbPoolStatus> Snapshot()
+        {
+            return _entries.Values
+                .Where(e => e.Worker != null)
+                .Select(e => new KbPoolStatus(
+                    e.Handle,
+                    e.Worker!.Pid,
+                    e.Worker!.WorkingSetBytes,
+                    e.LastActivityUtc))
+                .ToArray();
         }
 
         public async Task<WorkerProcess> AcquireAsync(KbHandle handle, CancellationToken ct)
