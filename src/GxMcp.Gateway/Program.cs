@@ -175,6 +175,17 @@ namespace GxMcp.Gateway
             return removed;
         }
 
+        // Logger names whose notifications/message events are safe to surface to
+        // stdio AI clients (Antigravity / Claude Desktop / Cursor surface these in
+        // chat or system messages). Internal operational telemetry — "Operation X
+        // started/finished", "Worker warmup started" — stays out because agents
+        // interpret it as KB state changes and get confused.
+        private static readonly HashSet<string> _stdioLoggerAllowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "indexing",
+            "update-check"
+        };
+
         private static void BroadcastNotification(string method, object payload)
         {
             _ = Task.Run(() => {
@@ -186,7 +197,10 @@ namespace GxMcp.Gateway
                         @params = payload
                     });
 
-                    EmitStdioNotification(json);
+                    if (ShouldForwardNotificationToStdio(method, payload))
+                    {
+                        EmitStdioNotification(json);
+                    }
 
                     foreach (var session in _httpSessions.ActiveSessions)
                     {
@@ -205,6 +219,33 @@ namespace GxMcp.Gateway
         {
             if (!_stdioActive) return;
             _ = TryWriteStdout(json);
+        }
+
+        private static bool ShouldForwardNotificationToStdio(string method, object? payload)
+        {
+            if (method == "notifications/progress") return true;
+            if (method != "notifications/message") return false;
+
+            // notifications/message is the loudest channel — be strict. Only surface
+            // warnings/errors (user-actionable) or explicit allowlisted loggers
+            // (indexing cold-start, update-check). Routine operation start/finish
+            // events stay HTTP-only.
+            string? level = null, logger = null;
+            try
+            {
+                JObject? jp = payload as JObject;
+                if (jp == null && payload is JToken token) jp = token as JObject;
+                if (jp == null && payload != null) jp = JObject.FromObject(payload);
+                if (jp == null) return false;
+                level = jp["level"]?.ToString();
+                logger = jp["logger"]?.ToString();
+            }
+            catch { return false; }
+
+            if (!string.IsNullOrEmpty(logger) && _stdioLoggerAllowlist.Contains(logger)) return true;
+            if (string.Equals(level, "warning", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(level, "error", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
         }
 
         private static void BroadcastToolsListChanged(string reason)
@@ -756,10 +797,11 @@ namespace GxMcp.Gateway
                     }
                     else if (method == "notifications/progress" || method == "notifications/message")
                     {
-                        // Forward MCP-spec notifications from worker to both stdio and HTTP clients.
-                        EmitStdioNotification(json);
-                        var pObj = val["params"];
-                        if (pObj != null)
+                        if (ShouldForwardNotificationToStdio(method, val["params"]))
+                        {
+                            EmitStdioNotification(json);
+                        }
+                        if (val["params"] != null)
                         {
                             foreach (var session in _httpSessions.ActiveSessions)
                             {
@@ -1712,11 +1754,13 @@ namespace GxMcp.Gateway
         {
             if (Interlocked.CompareExchange(ref _indexBootstrapStarted, 1, 0) != 0) return;
 
+            Log("[IndexBootstrap] firing on initialize");
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    if (_workerPool == null) return;
+                    if (_workerPool == null) { Log("[IndexBootstrap] worker pool null"); return; }
 
                     var indexCommand = new JObject
                     {
@@ -1735,8 +1779,11 @@ namespace GxMcp.Gateway
                         trackOperation: false);
 
                     string? status = resp?["result"]?["status"]?.ToString();
+                    Log($"[IndexBootstrap] worker reply status={status ?? "<null>"}");
+
                     if (string.Equals(status, "Started", StringComparison.OrdinalIgnoreCase))
                     {
+                        Log("[IndexBootstrap] emitting cold-start notice");
                         BroadcastNotification("notifications/message", new
                         {
                             level = "info",

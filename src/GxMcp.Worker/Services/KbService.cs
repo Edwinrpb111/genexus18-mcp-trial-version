@@ -108,13 +108,24 @@ namespace GxMcp.Worker.Services
             // Skip when the on-disk cache already populated the in-memory index — avoids
             // a redundant full rebuild on every warm start. Callers wanting a forced
             // refresh use action='reorg' instead, which clears the index first.
+            //
+            // Wait briefly for the KB to open. The Gateway fires BulkIndex from the
+            // initialize hook before the worker has opened the KB, so IsIndexMissing
+            // would read true (cache path unknown) and trigger a redundant rebuild.
             try
             {
+                int waitMs = 0;
+                while (waitMs < 15000 && !_indexCacheService.IsInitialized)
+                {
+                    Thread.Sleep(200);
+                    waitMs += 200;
+                }
                 if (!_indexCacheService.IsIndexMissing)
                 {
                     var loaded = _indexCacheService.GetIndex();
                     if (loaded != null && loaded.Objects.Count > 0)
                     {
+                        Logger.Info($"BulkIndex skipped — cache already populated ({loaded.Objects.Count} objects).");
                         return "{\"status\":\"AlreadyIndexed\",\"objects\":" + loaded.Objects.Count + "}";
                     }
                 }

@@ -47,6 +47,8 @@ namespace GxMcp.Worker.Services
  
          public bool IsScanning => KbService?.IsIndexing ?? false;
 
+         public bool IsInitialized => _initialized;
+
         private void EnsureInitialized()
         {
             if (_initialized) return;
