@@ -6,8 +6,10 @@ using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Collections.Generic;
 using System.Collections.Concurrent;
 using Artech.Architecture.Common.Objects;
+using Artech.Genexus.Common.Parts;
 using GxMcp.Worker.Services.Structure;
 
 namespace GxMcp.Worker.Services
@@ -555,9 +557,9 @@ namespace GxMcp.Worker.Services
                     if (bgObj == null) return;
 
                     var references = bgObj.GetReferences();
+                    bool changed = false;
                     if (references != null)
                     {
-                        bool changed = false;
                         foreach (dynamic reference in references)
                         {
                             try
@@ -590,14 +592,105 @@ namespace GxMcp.Worker.Services
                                 }
                             } catch { }
                         }
-                        if (changed) Task.Run(() => FlushToDisk());
                     }
+
+                    // FR#3 (friction-report 2026-05-14): GetReferences misses call sites in
+                    // Event Start blocks on some KB shapes (the impact analysis returned
+                    // totalAffected=0 with literal callers in the source). Augment with a
+                    // textual scan over Source/Events/Rules: any identifier that already
+                    // exists as a non-Attribute object in the index is treated as a call.
+                    // The hard "must exist in index" filter eliminates false positives from
+                    // keywords / language built-ins.
+                    try
+                    {
+                        bool textualChanged = EnrichCallsFromTextualScan(bgObj, entry, index);
+                        if (textualChanged) changed = true;
+                    }
+                    catch (Exception scanEx) { Logger.Debug("[FR#3] Textual call scan failed: " + scanEx.Message); }
+
+                    if (changed) Task.Run(() => FlushToDisk());
                 } catch (Exception ex) { Logger.Error("Background Indexing Error: " + ex.Message); }
             });
             
             // Fire and forget save to disk
             Task.Run(() => FlushToDisk());
         }
+
+        // FR#3 (friction-report 2026-05-14): textual call-site scan that augments the SDK
+        // reverse-dep index. Walks every ISource part on the object, harvests identifiers
+        // that look like object calls (Name() / Name.Method() / Name(args)), and binds
+        // them as Calls / CalledBy if the identifier matches a known object in the index.
+        private static readonly System.Text.RegularExpressions.Regex _identifierCall =
+            new System.Text.RegularExpressions.Regex(
+                @"\b([A-Z][A-Za-z0-9_]{2,})(?:\s*\.\s*[A-Za-z0-9_]+)?\s*\(",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private bool EnrichCallsFromTextualScan(
+            global::Artech.Architecture.Common.Objects.KBObject obj,
+            SearchIndex.IndexEntry entry,
+            SearchIndex index)
+        {
+            if (obj == null || entry == null || index?.Objects == null) return false;
+
+            var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in obj.Parts.Cast<global::Artech.Architecture.Common.Objects.KBObjectPart>())
+            {
+                string src = null;
+                try { if (part is ISource sp) src = sp.Source; }
+                catch { }
+                if (string.IsNullOrEmpty(src)) continue;
+
+                foreach (System.Text.RegularExpressions.Match m in _identifierCall.Matches(src))
+                {
+                    if (!m.Success) continue;
+                    string name = m.Groups[1].Value;
+                    if (name.Length < 3) continue;
+                    candidates.Add(name);
+                }
+            }
+
+            if (candidates.Count == 0) return false;
+            bool changed = false;
+
+            foreach (var name in candidates)
+            {
+                if (string.Equals(name, entry.Name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Find any matching object in the index across object types we treat as callable.
+                // Attributes/Tables don't qualify as "calls" — those go into Tables already.
+                foreach (var typePrefix in _callableTypes)
+                {
+                    string key = typePrefix + ":" + name;
+                    if (!index.Objects.TryGetValue(key, out var target) || target == null) continue;
+
+                    if (!entry.Calls.Contains(target.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        entry.Calls.Add(target.Name);
+                        changed = true;
+                    }
+                    if (target.CalledBy != null)
+                    {
+                        lock (target.CalledBy)
+                        {
+                            if (!target.CalledBy.Contains(entry.Name, StringComparer.OrdinalIgnoreCase))
+                            {
+                                target.CalledBy.Add(entry.Name);
+                                changed = true;
+                            }
+                        }
+                    }
+                    break; // first matching object type wins
+                }
+            }
+
+            return changed;
+        }
+
+        private static readonly string[] _callableTypes = new[]
+        {
+            "Procedure", "DataProvider", "WebPanel", "Transaction", "Menubar", "WorkPanel",
+            "BusinessProcessDiagram", "SDT", "Domain", "ExternalObject"
+        };
 
         public void RemoveEntry(string type, string name)
         {

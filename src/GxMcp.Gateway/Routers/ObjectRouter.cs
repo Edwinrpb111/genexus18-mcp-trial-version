@@ -145,21 +145,40 @@ namespace GxMcp.Gateway.Routers
                                 verbose = verbose
                             };
                         }
-                        // Legacy text-patch (string payload) — unchanged
-                        // The MCP tool exposes the replacement text as `patch` (per tool_definitions.json);
-                        // fall back to `content` for callers using the legacy alias.
+
+                        // FR#16 (friction-report 2026-05-14): accept the {find, replace} JSON form.
+                        // The schema advertised it but only the legacy (operation, context, content)
+                        // string form was implemented, so callers got
+                        // "'context' (old_string) is required for Replace" even with a valid object.
+                        // Map find→context and replace→payload to reuse the existing patch pipeline.
+                        string opFromObj = null;
+                        string contextFromObj = null;
+                        string payloadFromObj = null;
+                        if (patchTok is JObject patchObj)
+                        {
+                            var find = patchObj["find"]?.ToString();
+                            var replace = patchObj["replace"]?.ToString();
+                            if (find != null || replace != null)
+                            {
+                                contextFromObj = find;
+                                payloadFromObj = replace ?? string.Empty;
+                                opFromObj = "Replace";
+                            }
+                        }
+
+                        // Legacy text-patch (string payload) — unchanged path otherwise.
                         return new {
                             module = "Patch",
                             action = "Apply",
                             target = target,
                             part = part,
-                            operation = args?["operation"]?.ToString() ?? "Replace",
+                            operation = opFromObj ?? args?["operation"]?.ToString() ?? "Replace",
                             // Worker dispatcher reads request["payload"] for the replacement text
-                            // (see CommandDispatcher.cs:154 `payload = request["payload"]`). Using
-                            // `content` here was a silent bug that made the patch always invoke
-                            // `source.Replace(context, "")` — deleting the matched block.
-                            payload = (patchTok is JValue ? patchTok.ToString() : null) ?? args?["content"]?.ToString(),
-                            context = args?["context"]?.ToString(),
+                            // (see CommandDispatcher.cs:154 `payload = request["payload"]`).
+                            payload = payloadFromObj
+                                   ?? (patchTok is JValue ? patchTok.ToString() : null)
+                                   ?? args?["content"]?.ToString(),
+                            context = contextFromObj ?? args?["context"]?.ToString(),
                             expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
                             dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                             verifyRollback = args?["verifyRollback"]?.ToObject<bool?>() ?? false,

@@ -77,7 +77,51 @@ Two-pass performance + friction sweep. No public API breaking changes.
   `ServerGarbageCollection` + `ConcurrentGarbageCollection` on the main
   `PropertyGroup`. Cold-start JIT cost drops significantly in published builds.
 
-### Friction-report 2026-05-14 fixes
+### Friction-report 2026-05-14 fixes (second pass)
+
+- **#2 — `persistedVerified` false-negative mitigated** — `PatchService.VerifyPersistedSource`
+  now retries the post-write read once after a 120 ms pause (the SDK sometimes
+  flushes to disk slightly after `Save()` returns), and on persistent mismatch
+  attaches a compact `Verify diff at char N: expected='…' actual='…'` hint so
+  the agent can decide whether the rollback is warranted instead of looping
+  re-tries.
+- **#3 — Reverse-dep index now catches Event Start call sites** —
+  `IndexCacheService.EnrichCallsFromTextualScan` (new) augments
+  `obj.GetReferences()` with a textual scan over every `ISource` part on the
+  object. Any `Identifier(` token that already exists in the index as a
+  callable object type (Procedure / DataProvider / WebPanel / Transaction /
+  Menubar / WorkPanel / BPD / SDT / Domain / ExternalObject) is added to
+  `Calls` + the target's `CalledBy`. Hard "must exist in index" filter
+  eliminates false positives from keywords.
+- **#4 + #5 — `genexus_properties` accepts variable & control scope** —
+  `PropertyService.FindControl` now resolves `&Name` to the SDK Variable and
+  also takes a bare name as a Variable when the layout-control lookup misses.
+  ControlType / ControlValues / Enabled / Visible / etc. now settable
+  per-variable.
+- **#11 — `genexus_edit mode=ops` schema enum** —
+  `tool_definitions.json` now lists the supported RFC 6902 ops
+  (`add | remove | replace | test`) and surfaces `path` as required.
+- **#14 — Description as title-bar documented** — `genexus_properties`
+  description in the schema explicitly notes the Description property doubles
+  as title-bar text when a WebPanel/Popup is opened via `.Popup()`.
+- **#15 — Linter `GX022`** — non-prefixed Layout elements (`<Button>`,
+  `<Bitmap>`, `<TextBlock>`, `<Attribute>`, `<Grid>`, `<EmbeddedPage>`,
+  `<Tab>`, `<Card>`, `<Group>`, `<Image>`, …) flagged as Warning with
+  "did you mean `<gx{name}>`?". Previously these silently rendered as
+  literal HTML and burned 2-3 build cycles to diagnose.
+- **#16 — Patch `{find, replace}` JSON form now actually works** —
+  `ObjectRouter` maps `patch={find,replace}` to the existing patch pipeline
+  (find → context, replace → payload). The schema advertised this form but
+  only the legacy `(operation, context, content)` triple worked before.
+  Schema updated to also document the `{find, replace}` shape.
+- **#17 — Whitespace-tolerant patch context** —
+  `PatchService.TryWhitespaceNormalizedReplace` (new) added as a last-resort
+  pass before reporting `NoMatch`. Tab-vs-space context differences now
+  resolve: the matcher locates the unique window using collapsed-whitespace
+  comparison and splices using the source's original indentation.
+  `Ambiguous` is returned if the normalized match is non-unique.
+
+### Friction-report 2026-05-14 fixes (first pass)
 
 - **#1 + #13 — Variable `internalId` exposed** (`AnalyzeService.GetVariables`,
   `GetConversionContext`, new `VariableInjector.GetVariableInternalId`). Layout
@@ -127,6 +171,10 @@ Two-pass performance + friction sweep. No public API breaking changes.
   IPC hot path, BenchmarkDotNet baseline project, OperationTracker exported
   as an MCP diagnostic endpoint, and the deeper SDK batched-fetch refactor for
   `AnalyzeService`.
+- Friction-report items deferred for a dedicated session:
+  - **#6** (`genexus_search_source` timeouts) — needs Lucene/ripgrep index.
+  - **#9** (worker-disconnect orphan operationId) — needs durable op-state
+    persistence (SQLite or similar) with TTL.
 
 ## v2.3.0 — 2026-05-14
 

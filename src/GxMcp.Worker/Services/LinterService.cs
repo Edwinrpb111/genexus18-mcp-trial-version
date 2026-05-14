@@ -67,10 +67,11 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                // FR#20 + FR#21 (friction-report 2026-05-14): two cross-part checks that the
-                // existing single-part walkers can't see. Both are pure read-only inspections.
+                // FR#15 + FR#20 + FR#21 (friction-report 2026-05-14): cross-part checks that
+                // the existing single-part walkers can't see. Pure read-only inspections.
                 CheckOutParmEnabled(obj, issues);
                 CheckGxButtonEvents(obj, issues);
+                CheckLayoutNonPrefixedElements(obj, issues);
 
                 // Integration with Navigation Intelligence
                 CheckNavigationPerformance(target, issues);
@@ -335,6 +336,48 @@ namespace GxMcp.Worker.Services
                 }
             }
             catch (Exception ex) { Logger.Debug("CheckGxButtonEvents: " + ex.Message); }
+        }
+
+        // FR#15 (friction-report 2026-05-14): non-prefixed Layout elements like
+        // <Button>/<Bitmap>/<TextBlock> render as literal HTML (no handlers) but build
+        // succeeds without warnings, so the agent burns 2-3 build cycles discovering it.
+        // Warn when an element looks like a GeneXus control but is missing the `gx` prefix.
+        private static readonly HashSet<string> _gxControlElements = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Button", "Bitmap", "TextBlock", "Attribute", "Grid", "FreeStyleGrid",
+            "EmbeddedPage", "Tab", "TabPage", "Card", "Group", "Image"
+        };
+
+        private void CheckLayoutNonPrefixedElements(KBObject obj, JArray issues)
+        {
+            try
+            {
+                if (!(obj is WebPanel || obj is Transaction)) return;
+                var webFormPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is WebFormPart) as WebFormPart;
+                if (webFormPart?.Document?.DocumentElement == null) return;
+
+                // Use SelectNodes with XPath that matches any element whose local-name has no gx prefix.
+                var nodes = webFormPart.Document.DocumentElement.SelectNodes("//*");
+                if (nodes == null) return;
+                foreach (System.Xml.XmlNode node in nodes)
+                {
+                    string ln = node.LocalName;
+                    if (string.IsNullOrEmpty(ln)) continue;
+                    if (ln.StartsWith("gx", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!_gxControlElements.Contains(ln)) continue;
+
+                    issues.Add(CreateIssue(
+                        "GX022",
+                        "Layout element missing gx prefix",
+                        "Warning",
+                        $"<{ln}> in the Layout will render as literal HTML without GeneXus handlers. " +
+                        $"Did you mean <gx{ln}>? Non-prefixed elements are silently accepted by the build but never wired up.",
+                        $"<{ln}/>",
+                        1,
+                        "Layout"));
+                }
+            }
+            catch (Exception ex) { Logger.Debug("CheckLayoutNonPrefixedElements: " + ex.Message); }
         }
 
         private void CheckOutParmEnabled(KBObject obj, JArray issues)

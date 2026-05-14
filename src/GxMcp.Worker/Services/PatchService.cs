@@ -445,9 +445,83 @@ namespace GxMcp.Worker.Services
                 return string.Empty;
             }
 
+            // FR#17 (friction-report 2026-05-14): last-resort whitespace-normalized match.
+            // Handles the tab-vs-space context case where the user's context is semantically
+            // identical to source but used different indentation characters than the file.
+            // We collapse runs of whitespace on both sides, find the unique block window,
+            // then apply the replacement preserving source's original characters.
+            string normalizedSource = CollapseWhitespace(source);
+            string normalizedContext = CollapseWhitespace(context);
+            if (!string.IsNullOrEmpty(normalizedContext))
+            {
+                int normalizedHits = CountOccurrences(normalizedSource, normalizedContext);
+                if (normalizedHits == expectedCount && expectedCount > 0)
+                {
+                    // Walk source line-by-line accumulating windows until a window's collapsed
+                    // form equals the normalized context, then splice in the replacement.
+                    var rebuilt = TryWhitespaceNormalizedReplace(sourceLines, contextLines, newContent);
+                    if (rebuilt != null)
+                    {
+                        Logger.Info("[PATCH] Whitespace-normalized match applied.");
+                        matchCount = expectedCount;
+                        return rebuilt;
+                    }
+                }
+                else if (normalizedHits > 0)
+                {
+                    status = "Ambiguous";
+                    matchCount = normalizedHits;
+                    details = $"Ambiguous patch (whitespace-normalized): {normalizedHits} matches, expected {expectedCount}.";
+                    return string.Empty;
+                }
+            }
+
             status = "NoMatch";
             details = "Context block not found.";
             return string.Empty;
+        }
+
+        private static string CollapseWhitespace(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            return Regex.Replace(text, @"\s+", " ").Trim();
+        }
+
+        private static string TryWhitespaceNormalizedReplace(string[] sourceLines, string[] contextLines, string newContent)
+        {
+            // Slide a window of contextLines.Length over source; compare collapsed text.
+            if (sourceLines == null || contextLines == null || contextLines.Length == 0) return null;
+            if (sourceLines.Length < contextLines.Length) return null;
+
+            string normalizedTarget = CollapseWhitespace(string.Join("\n", contextLines));
+            for (int i = 0; i <= sourceLines.Length - contextLines.Length; i++)
+            {
+                string window = string.Join("\n", sourceLines, i, contextLines.Length);
+                if (CollapseWhitespace(window) == normalizedTarget)
+                {
+                    var resultLines = new List<string>(sourceLines);
+                    string indentation = GetIndentationStatic(sourceLines[i]);
+                    var replacementLines = newContent.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+                    var indented = ApplyIndentationStatic(replacementLines, indentation);
+                    resultLines.RemoveRange(i, contextLines.Length);
+                    resultLines.InsertRange(i, indented);
+                    return string.Join("\n", resultLines);
+                }
+            }
+            return null;
+        }
+
+        private static string GetIndentationStatic(string line)
+        {
+            var match = Regex.Match(line ?? string.Empty, @"^(\s*)");
+            return match.Success ? match.Groups[1].Value : string.Empty;
+        }
+
+        private static List<string> ApplyIndentationStatic(IEnumerable<string> contentLines, string indentation)
+        {
+            var lines = contentLines.ToList();
+            if (string.IsNullOrEmpty(indentation)) return lines;
+            return lines.Select(line => indentation + line).ToList();
         }
 
         private string TryInsertAfter(string[] sourceLines, string[] contextLines, string newContent, int expectedCount, out string status, out string details, out int matchCount)
@@ -850,31 +924,81 @@ namespace GxMcp.Worker.Services
                 // Without this, the ObjectService _readCache or the patch-local _sourceCache can
                 // hold pre-write content and falsely report persistedVerified=true even though the
                 // next user-facing read shows stale source. Drop both caches before the verify read.
+                //
+                // FR#2 (friction-report 2026-05-14): the SDK sometimes flushes to disk slightly
+                // after Save() returns. Verify once immediately; if it disagrees, retry after a
+                // short pause before reporting Error. This collapses the false-negative
+                // "persistedVerified=false but next genexus_read shows the write applied" case
+                // that produced spurious fallback writes / auto-rollbacks.
                 string verifyKey = BuildCacheKey(target, partName, typeFilter);
-                _sourceCache.TryRemove(verifyKey, out _);
-                try
+                string expectedNormalized = NormalizeForPartCompare(partName, expectedSource);
+                int attempts = 2;
+                for (int i = 0; i < attempts; i++)
                 {
-                    var verifyObj = _objectService.FindObject(target, typeFilter);
-                    if (verifyObj != null) _objectService.MarkReadCacheDirty(verifyObj, partName);
-                }
-                catch { /* find failure is fine — verify read will surface a real error */ }
+                    _sourceCache.TryRemove(verifyKey, out _);
+                    try
+                    {
+                        var verifyObj = _objectService.FindObject(target, typeFilter);
+                        if (verifyObj != null) _objectService.MarkReadCacheDirty(verifyObj, partName);
+                    }
+                    catch { }
 
-                string verifyReadResponse = ReadSourceFast(target, partName, typeFilter);
-                string verifyReadError = TryExtractError(verifyReadResponse);
-                if (!string.IsNullOrWhiteSpace(verifyReadError))
-                {
-                    error = verifyReadError;
-                    return false;
-                }
+                    string verifyReadResponse = ReadSourceFast(target, partName, typeFilter);
+                    string verifyReadError = TryExtractError(verifyReadResponse);
+                    if (!string.IsNullOrWhiteSpace(verifyReadError))
+                    {
+                        error = verifyReadError;
+                        return false;
+                    }
 
-                var verifyJson = JObject.Parse(verifyReadResponse);
-                string persistedSource = verifyJson["source"]?.ToString() ?? string.Empty;
-                return NormalizeForPartCompare(partName, persistedSource) == NormalizeForPartCompare(partName, expectedSource);
+                    var verifyJson = JObject.Parse(verifyReadResponse);
+                    string persistedSource = verifyJson["source"]?.ToString() ?? string.Empty;
+                    if (NormalizeForPartCompare(partName, persistedSource) == expectedNormalized)
+                    {
+                        return true;
+                    }
+
+                    if (i < attempts - 1)
+                    {
+                        // SDK persistence can lag the Save() return; brief pause before retry.
+                        System.Threading.Thread.Sleep(120);
+                    }
+                    else
+                    {
+                        // Surface a small diff sample so callers can decide instead of guessing.
+                        error = BuildVerifyDiffHint(expectedSource, persistedSource);
+                    }
+                }
+                return false;
             }
             catch (Exception ex)
             {
                 error = ex.Message;
                 return false;
+            }
+        }
+
+        // FR#2: emit a compact diff hint so the caller sees WHY verify disagreed instead of
+        // a bare false. We deliberately cap the dump to keep responses small.
+        private static string BuildVerifyDiffHint(string expected, string actual)
+        {
+            try
+            {
+                string e = NormalizeSourceForComparison(expected ?? string.Empty);
+                string a = NormalizeSourceForComparison(actual ?? string.Empty);
+                if (e == a) return "Mismatch under part-specific normalization (likely Variables ordering / NUMERIC(N,0) folding).";
+                int firstDiff = 0;
+                int max = Math.Min(e.Length, a.Length);
+                while (firstDiff < max && e[firstDiff] == a[firstDiff]) firstDiff++;
+                int snippetStart = Math.Max(0, firstDiff - 40);
+                int snippetLen = Math.Min(80, Math.Max(e.Length, a.Length) - snippetStart);
+                string expectedSnippet = snippetStart < e.Length ? e.Substring(snippetStart, Math.Min(snippetLen, e.Length - snippetStart)) : "";
+                string actualSnippet   = snippetStart < a.Length ? a.Substring(snippetStart, Math.Min(snippetLen, a.Length - snippetStart)) : "";
+                return $"Verify diff at char {firstDiff}: expected='{expectedSnippet}' actual='{actualSnippet}'";
+            }
+            catch
+            {
+                return "Verification mismatch (diff unavailable).";
             }
         }
 

@@ -94,6 +94,18 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrEmpty(name)) return null;
 
+            // FR#4 + FR#5 (friction-report 2026-05-14): accept three scope forms in `control`:
+            //   1. Layout control name (e.g. "BtnConfirmar") — existing behavior.
+            //   2. Variable reference with & prefix (e.g. "&Alu2RegProf") — new.
+            //   3. Plain variable name when starting with '&' is stripped.
+            // The variable form returns the SDK Variable instance so its properties
+            // (ControlType, ControlValues, Enabled, Visible, …) can be read/set.
+            string trimmed = name.Trim();
+            if (trimmed.StartsWith("&"))
+            {
+                return FindVariable(obj, trimmed.Substring(1));
+            }
+
             // Support qualified paths: "Documento.DocCod" or "Documento/DocCod"
             var segments = name.Split(new[] { '.', '/' }, StringSplitOptions.RemoveEmptyEntries);
             string leaf = segments[segments.Length - 1];
@@ -119,6 +131,35 @@ namespace GxMcp.Worker.Services
                 }
             }
 
+            // FR#4 + FR#5 last-resort: if the user passed a bare name that matches a Variable,
+            // accept it. This is mostly to keep error messages sane when the agent forgets the
+            // `&` prefix; explicit `&Name` is still the recommended form.
+            var fallbackVar = FindVariable(obj, leaf);
+            if (fallbackVar != null) return fallbackVar;
+
+            return null;
+        }
+
+        // FR#4 + FR#5: resolve a Variable from the VariablesPart by name.
+        private dynamic FindVariable(KBObject obj, string varName)
+        {
+            if (string.IsNullOrEmpty(varName)) return null;
+            try
+            {
+                var vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
+                if (vPart == null) return null;
+                dynamic dPart = vPart;
+                foreach (dynamic v in dPart.Variables)
+                {
+                    string n = null;
+                    try { n = (string)v.Name; } catch { }
+                    if (!string.IsNullOrEmpty(n) && string.Equals(n, varName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return v;
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Debug("FindVariable: " + ex.Message); }
             return null;
         }
 
