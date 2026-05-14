@@ -23,9 +23,9 @@ namespace GxMcp.Worker.Services
 
         private SearchIndex _index;
         private string _indexPath;
-        // PERFORMANCE (W-A3): mirror path with .gz extension. New flushes go here gzipped,
-        // legacy plain-JSON files are still readable so existing installs keep working.
-        private string _indexPathGz;
+        // PERFORMANCE (W-A3): mirror path with .gz extension. Derived from _indexPath so
+        // the two never drift; new flushes go here gzipped, legacy plain-JSON still readable.
+        private string _indexPathGz => _indexPath + ".gz";
         private BuildService _buildService;
         private bool _initialized = false;
         private readonly object _lock = new object();
@@ -43,7 +43,6 @@ namespace GxMcp.Worker.Services
         public IndexCacheService()
         {
             _indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
-            _indexPathGz = _indexPath + ".gz";
         }
 
         public void SetBuildService(BuildService bs) { _buildService = bs; }
@@ -94,7 +93,6 @@ namespace GxMcp.Worker.Services
 
                 string hash = GetHash(kbPath);
                 _indexPath = Path.Combine(cacheDir, string.Format("index_{0}.json", hash));
-                _indexPathGz = _indexPath + ".gz";
                 _initialized = true;
                 Logger.Info(string.Format("IndexCache initialized: {0}", _indexPath));
 
@@ -439,8 +437,10 @@ namespace GxMcp.Worker.Services
                 // PERFORMANCE (W-A3): write gzipped via a temp file + atomic move so partial
                 // writes never leave a corrupt snapshot on disk.
                 string tmpPath = _indexPathGz + ".tmp";
+                // CompressionLevel.Fastest: file isn't transmitted, the ~5% ratio improvement
+                // from Optimal isn't worth the extra CPU on every flush.
                 using (var fs = File.Create(tmpPath))
-                using (var gz = new GZipStream(fs, CompressionLevel.Optimal))
+                using (var gz = new GZipStream(fs, CompressionLevel.Fastest))
                 using (var writer = new StreamWriter(gz, new UTF8Encoding(false)))
                 {
                     writer.Write(json);

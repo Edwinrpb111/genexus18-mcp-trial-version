@@ -450,8 +450,8 @@ namespace GxMcp.Worker.Services
             // identical to source but used different indentation characters than the file.
             // We collapse runs of whitespace on both sides, find the unique block window,
             // then apply the replacement preserving source's original characters.
-            string normalizedSource = CollapseWhitespace(source);
-            string normalizedContext = CollapseWhitespace(context);
+            string normalizedSource = NormalizeWhitespace(source);
+            string normalizedContext = NormalizeWhitespace(context);
             if (!string.IsNullOrEmpty(normalizedContext))
             {
                 int normalizedHits = CountOccurrences(normalizedSource, normalizedContext);
@@ -481,47 +481,28 @@ namespace GxMcp.Worker.Services
             return string.Empty;
         }
 
-        private static string CollapseWhitespace(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            return Regex.Replace(text, @"\s+", " ").Trim();
-        }
-
         private static string TryWhitespaceNormalizedReplace(string[] sourceLines, string[] contextLines, string newContent)
         {
             // Slide a window of contextLines.Length over source; compare collapsed text.
             if (sourceLines == null || contextLines == null || contextLines.Length == 0) return null;
             if (sourceLines.Length < contextLines.Length) return null;
 
-            string normalizedTarget = CollapseWhitespace(string.Join("\n", contextLines));
+            string normalizedTarget = NormalizeWhitespace(string.Join("\n", contextLines));
             for (int i = 0; i <= sourceLines.Length - contextLines.Length; i++)
             {
                 string window = string.Join("\n", sourceLines, i, contextLines.Length);
-                if (CollapseWhitespace(window) == normalizedTarget)
+                if (NormalizeWhitespace(window) == normalizedTarget)
                 {
                     var resultLines = new List<string>(sourceLines);
-                    string indentation = GetIndentationStatic(sourceLines[i]);
+                    string indentation = GetIndentation(sourceLines[i]);
                     var replacementLines = newContent.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
-                    var indented = ApplyIndentationStatic(replacementLines, indentation);
+                    var indented = ApplyIndentation(replacementLines, indentation);
                     resultLines.RemoveRange(i, contextLines.Length);
                     resultLines.InsertRange(i, indented);
                     return string.Join("\n", resultLines);
                 }
             }
             return null;
-        }
-
-        private static string GetIndentationStatic(string line)
-        {
-            var match = Regex.Match(line ?? string.Empty, @"^(\s*)");
-            return match.Success ? match.Groups[1].Value : string.Empty;
-        }
-
-        private static List<string> ApplyIndentationStatic(IEnumerable<string> contentLines, string indentation)
-        {
-            var lines = contentLines.ToList();
-            if (string.IsNullOrEmpty(indentation)) return lines;
-            return lines.Select(line => indentation + line).ToList();
         }
 
         private string TryInsertAfter(string[] sourceLines, string[] contextLines, string newContent, int expectedCount, out string status, out string details, out int matchCount)
@@ -657,13 +638,21 @@ namespace GxMcp.Worker.Services
             if (sourceLines == null || contextLines == null) return hits;
             if (contextLines.Length == 0 || sourceLines.Length < contextLines.Length) return hits;
 
+            // Pre-normalize both sides once; the inner comparison drops from a regex+trim per
+            // call to a direct OrdinalIgnoreCase string equals.
+            string[] normalizedSource = new string[sourceLines.Length];
+            for (int i = 0; i < sourceLines.Length; i++) normalizedSource[i] = NormalizeWhitespace(sourceLines[i]);
+            string[] normalizedContext = new string[contextLines.Length];
+            for (int j = 0; j < contextLines.Length; j++) normalizedContext[j] = NormalizeWhitespace(contextLines[j]);
+
             int maxStart = sourceLines.Length - contextLines.Length;
             for (int i = 0; i <= maxStart; i++)
             {
                 int matches = 0;
                 for (int j = 0; j < contextLines.Length; j++)
                 {
-                    if (LinesMatchFuzzy(sourceLines[i + j], contextLines[j])) matches++;
+                    if (string.Equals(normalizedSource[i + j], normalizedContext[j], StringComparison.OrdinalIgnoreCase))
+                        matches++;
                 }
                 double similarity = (double)matches / contextLines.Length;
                 if (similarity < 0.4) continue; // ignore noise
@@ -679,28 +668,27 @@ namespace GxMcp.Worker.Services
             return hits;
         }
 
-        private bool LinesMatchFuzzy(string s1, string s2)
+        private static bool LinesMatchFuzzy(string s1, string s2)
         {
-            // Normalize: trim and collapse multiples spaces
             string n1 = NormalizeWhitespace(s1);
             string n2 = NormalizeWhitespace(s2);
             return string.Equals(n1, n2, StringComparison.OrdinalIgnoreCase);
         }
 
-        private string NormalizeWhitespace(string s)
+        // Trim + collapse runs of whitespace to a single space.
+        private static string NormalizeWhitespace(string s)
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
-            // Collapse all whitespace (including tabs and multiple spaces) into a single space
             return Regex.Replace(s.Trim(), @"\s+", " ");
         }
 
-        private string GetIndentation(string line)
+        private static string GetIndentation(string line)
         {
-            var match = Regex.Match(line, @"^(\s*)");
+            var match = Regex.Match(line ?? string.Empty, @"^(\s*)");
             return match.Success ? match.Groups[1].Value : string.Empty;
         }
 
-        private List<string> ApplyIndentation(IEnumerable<string> contentLines, string indentation)
+        private static List<string> ApplyIndentation(IEnumerable<string> contentLines, string indentation)
         {
             var lines = contentLines.ToList();
             if (string.IsNullOrEmpty(indentation)) return lines;

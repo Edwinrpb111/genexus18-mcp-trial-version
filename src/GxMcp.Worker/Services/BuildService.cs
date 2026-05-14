@@ -210,16 +210,7 @@ namespace GxMcp.Worker.Services
 
                     // Serialize the status without the full warnings list, then inject paginated warnings
                     var jo = JObject.FromObject(status, new JsonSerializer { NullValueHandling = NullValueHandling.Ignore });
-
-                    // FR#19 (friction-report 2026-05-14): during long-poll each `status` call used
-                    // to return the full Output blob (often 200+ lines). On 3 polls per build that
-                    // was ~600 lines of identical noise. Drop Output while Running — TailLines
-                    // already gives the live tail in a much smaller surface.
-                    if (string.Equals(status.Status, "Running", StringComparison.OrdinalIgnoreCase))
-                    {
-                        jo.Remove("Output");
-                        jo.Remove("output");
-                    }
+                    StripOutputWhileRunning(jo, status.Status);
 
                     // Replace the flat warnings array with a paginated wrapper
                     var paginatedWarnings = BatchService.BuildStatusPayload(status.Warnings, page, pageSize);
@@ -230,6 +221,16 @@ namespace GxMcp.Worker.Services
                 }
             }
             return "{\"error\": \"Task ID not found\"}";
+        }
+
+        // FR#19 (friction-report 2026-05-14): during long-poll each `status` call used to return
+        // the full Output blob (often 200+ lines), repeated 3× per build. Drop it while Running
+        // — TailLines already gives the live tail in a much smaller surface.
+        private static void StripOutputWhileRunning(JObject jo, string status)
+        {
+            if (!string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase)) return;
+            jo.Remove("Output");
+            jo.Remove("output");
         }
 
         public string GetResult(string taskId, int page = 1, int pageSize = 50)
@@ -245,13 +246,7 @@ namespace GxMcp.Worker.Services
                         status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);
 
                     var jo = JObject.FromObject(status, new JsonSerializer { NullValueHandling = NullValueHandling.Ignore });
-
-                    // FR#19: same Running-state Output suppression here.
-                    if (string.Equals(status.Status, "Running", StringComparison.OrdinalIgnoreCase))
-                    {
-                        jo.Remove("Output");
-                        jo.Remove("output");
-                    }
+                    StripOutputWhileRunning(jo, status.Status);
 
                     // Replace the flat errors/items array with a paginated wrapper
                     var paginatedResult = BatchService.BuildResultPayload(status.Errors, page, pageSize);
