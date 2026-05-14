@@ -167,6 +167,28 @@ namespace GxMcp.Worker.Helpers
             return v;
         }
 
+        // FR#1 + FR#13 (friction-report 2026-05-14): Layout XML uses AttID="var:N" but tools
+        // never expose the mapping. This helper tries every known SDK surface for the variable's
+        // internal id, falling back to the 1-based enumeration index used by GeneXus runtime.
+        public static int? GetVariableInternalId(global::Artech.Genexus.Common.Variable v, int fallbackIndex)
+        {
+            if (v == null) return null;
+            foreach (var prop in new[] { "Id", "InternalId", "VariableId", "VarId", "Index" })
+            {
+                try
+                {
+                    object raw = v.GetPropertyValue(prop);
+                    if (raw == null) continue;
+                    if (raw is int i && i > 0) return i;
+                    if (raw is short s && s > 0) return s;
+                    if (raw is long l && l > 0 && l <= int.MaxValue) return (int)l;
+                    if (raw is string ss && int.TryParse(ss, out var parsed) && parsed > 0) return parsed;
+                }
+                catch { }
+            }
+            return fallbackIndex;
+        }
+
         public static string GetVariablesAsText(KBObject obj)
         {
             var varPart = obj.Parts.Get<VariablesPart>();

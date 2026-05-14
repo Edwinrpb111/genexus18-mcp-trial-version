@@ -1,5 +1,133 @@
 # Changelog
 
+## v2.3.5 — 2026-05-14
+
+Two-pass performance + friction sweep. No public API breaking changes.
+- **Phase 1 — preventive perf audit:** 21 changes across Worker (.NET 4.8) and
+  Gateway (.NET 8) targeting allocations, lock contention, telemetry, and disk
+  I/O on hot paths.
+- **Phase 2 — friction-report 2026-05-14:** 10 changes closing the actionable
+  agent-facing rough edges from the live debugging session that produced
+  `docs/mcp-friction-report-2026-05-14.md`.
+
+365/365 unit tests passing (211 Gateway + 154 Worker). Build clean (0 errors).
+
+### Worker (.NET 4.8) — performance
+
+- **`Logger` rewritten as async writer** (`Helpers/Logger.cs`) — `BlockingCollection`
+  fed by ~194 call sites, drained by a dedicated background thread that issues
+  one batched `File.AppendAllText` per drain. Previous global lock + sync I/O
+  per call was the biggest hot-path tax in bulk index and search. Stderr fallback
+  preserved so the Gateway capture path is unchanged.
+- **`SearchService.Search` parallelism capped** — `AsParallel().WithDegreeOfParallelism(min(4, ProcessorCount))`
+  prevents PLINQ from spawning one task per core on large KBs (50k+ objects).
+- **`SearchService` instrumented** — `Stopwatch` + `[SEARCH-SLOW]` log when
+  > 50 ms via `try/finally`. Search was the busiest hot path with no telemetry.
+- **`IndexCacheService`** — search-index snapshot now flushed gzipped (`*.json.gz`)
+  via temp + atomic move; flush throttle 10 s → 30 s; reader stays backward
+  compatible with legacy plain JSON; legacy file cleaned up on first flush.
+  `ResolveHierarchy` now cached per object Guid (invalidated on remove/clear).
+- **`IndexCacheService.GetEntryStorageKey`** caches its `Type:Name` result on
+  the `IndexEntry` (new `[JsonIgnore] StorageKey` field) to skip
+  `string.Format` in every `AddOrUpdateEntryInParentIndex` lookup.
+- **`VectorService.ComputeEmbedding`** — separator array hoisted to a
+  `static readonly`; per-token lower-case avoids the full-string `ToLower()`
+  copy in every bulk-index call (~30k/cold-start).
+- **`ObjectService.ReadCacheTtl`** bumped 20 s → 60 s — read-after-read patterns
+  from LLM agents in a single tool sequence now hit cache.
+- **`Program.QueueWriter`** — `Write(string)` and `WriteLine(string)` acquire
+  the lock once per call; old impl locked per character on every IPC write.
+- **`Program.BackgroundQueue`** signalled via `AutoResetEvent` + new
+  `EnqueueBackground` helper; loop wakes on signal instead of `Thread.Sleep(100)`.
+- **`Helpers/CodeParser`** — 13 inline regex calls replaced with pre-compiled
+  static fields (validator was rebuilding interpreted regex per line).
+- **`Services/AnalyzeService`** — `Analyze` and `GetHierarchy` now de-duplicate
+  references before issuing SDK `Objects.Get` calls (safe portion of the audited
+  N+1; same-target edges no longer cost N round-trips). Audited refactor of the
+  full SDK fetch pattern remains deferred until a regression suite exists.
+- **Cold-start instrumentation** — `KbService.OpenKB` and the bulk-index thread
+  now log `[KB-OPEN] elapsedMs=…` / `[BULK-INDEX] elapsedMs=…` so future
+  regressions are visible.
+
+### Gateway (.NET 8) — performance
+
+- **`WorkerPool` per-KB spawn gate** — global `_spawnLock` replaced with a
+  per-`Entry` `SemaphoreSlim`. Two clients opening different KBs no longer
+  serialise behind each other. A narrow `_capacityLock` still protects the
+  capacity-window/eviction.
+- **`IdempotencyCache`** — `KbBucket` shards across 16 independent LRU slots,
+  cutting hot-key contention by ~1/N. `GetOrCompute.WaitAsync` now bounded at
+  30 s with a best-effort fallback (run factory bypassing the cache) so a
+  stuck worker can no longer starve callers until the 65-min TTL.
+- **`WorkerProcess`** — spawn retry uses exponential backoff (100/200/400/800/1000
+  ms) + ≤50 % jitter instead of flat 1 s × 10. First retry fires 10× sooner.
+- **`WorkerProcess.ProcessQueueAsync`** — `JsonConvert.DeserializeObject<JObject>`
+  on the hot IPC path replaced with `JObject.Parse` (direct, no reflection-style
+  dispatch).
+- **`WorkerPool.SelectVictim`** — linear scan replaces `OrderBy`, dropping the
+  full-sequence materialisation for eviction selection.
+- **`ResponseSizeGuard`** — `StreamWriter` buffer 1 KB → 32 KB; new
+  `ByteSize(string)` overload uses `Encoding.UTF8.GetByteCount` for callers that
+  already have the serialised JSON in hand.
+- **`McpRouter`** — `tool_definitions.json` hot-reload via `FileSystemWatcher`
+  with 500 ms debounce. Subsequent `tools/list` calls observe the new payload
+  without restarting the gateway.
+- **Build flags** — `<PublishReadyToRun>true</PublishReadyToRun>`,
+  `TieredCompilation`, `TieredPGO` enabled for Release publish;
+  `ServerGarbageCollection` + `ConcurrentGarbageCollection` on the main
+  `PropertyGroup`. Cold-start JIT cost drops significantly in published builds.
+
+### Friction-report 2026-05-14 fixes
+
+- **#1 + #13 — Variable `internalId` exposed** (`AnalyzeService.GetVariables`,
+  `GetConversionContext`, new `VariableInjector.GetVariableInternalId`). Layout
+  XML uses `AttID="var:N"`; agents can now resolve that mapping from
+  `genexus_inspect`/`get_variables` instead of grepping the generated `.cs`.
+- **#7 — `lifecycle action=cancel target=op:<id>` actually does something.**
+  New Gateway intercept marks the operation `Cancelled` in `OperationTracker`,
+  abandons the matching pending request with a structured error, and returns
+  `{status:Cancelled, abandonedRequestId, message}`. The worker thread may
+  still finish its SDK call but no further response is delivered. Unknown-op
+  case now returns a specific "Unknown build taskId" message + hint instead of
+  bare "Task ID not found".
+- **#8 — `genexus_inspect controls`** — when the SDK web-tag tree walker
+  returns empty (mixed HTML + gx-prefixed layouts), `UIService` now falls back
+  to a direct XPath scan over `<gx*>` elements and surfaces
+  `name/type/controlType/dataBinding/event` per control with `_fallback:true`.
+- **#10 — `wait_seconds` cap 25 s → 90 s** (`McpRouter.MaxLongPollSeconds`).
+  Builds of 50–70 s now converge in a single long-poll instead of 3.
+- **#12 — Build noise filtered from `TailLines`** (`BuildService.HandleLine` +
+  new `_rxModuleCopyNoise`). "Copiando módulo …" / "Restoring NuGet" /
+  "Touching …" / "Wrote …" lines stay in `FullOutput` (terminal payload) but
+  get dropped from the live tail so the agent sees real signal during a build.
+- **#18 — Patch failure near-match diagnostic** (`PatchService.FindNearMatches`).
+  On `NoMatch`, the patch response now includes a `nearMatches: [{line,
+  similarity, snippet}]` array (top-3) + `nearMatchHint`. Agent adjusts the
+  context block in one iteration instead of re-reading the whole file.
+- **#19 — `lifecycle status` no longer returns full `Output` while Running**
+  (`BuildService.GetStatus`/`GetResult`). The 200+ line build log was repeated
+  on every poll; now only `TailLines` rides during Running and `Output` is
+  attached at terminal state.
+- **#20 — Linter `GX021`** — `parm(... out: &X ...)` without a matching
+  `&X.Enabled = 1` in Event Start surfaces an Info issue. Catches the
+  silent-disabled-control trap from the friction report.
+- **#21 — Linter `GX020`** — `<gxButton onClickEvent="X"/>` in a WebForm
+  without `Event Enter` defined surfaces a Warning. gxButton in HTML layouts
+  only fires `Event Enter`; `onClickEvent` is silently ignored otherwise.
+
+### Internal / docs
+
+- New audit document: `docs/perf_audit_2026-05-14.md` (the Phase-1 baseline).
+- Two false positives from the audit closed without code change because the
+  code already addressed them: `IndexCacheService.FlushToDisk` (try/catch + log
+  present) and Gateway `_pendingRequests` sweeper (`RunSessionCleanupLoop`
+  already running on a 1-minute `PeriodicTimer`).
+- Items deliberately deferred (require dedicated regression suite or new
+  project scaffolding): full Newtonsoft → System.Text.Json migration in the
+  IPC hot path, BenchmarkDotNet baseline project, OperationTracker exported
+  as an MCP diagnostic endpoint, and the deeper SDK batched-fetch refactor for
+  `AnalyzeService`.
+
 ## v2.3.0 — 2026-05-14
 
 Multi-KB parallel support + tool surface consolidation + official skill bundles.

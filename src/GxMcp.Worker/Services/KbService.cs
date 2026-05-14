@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.IO;
 using System.Linq;
@@ -78,20 +79,26 @@ namespace GxMcp.Worker.Services
                     try { _kb.Close(); } catch { }
                 }
 
+                // PERFORMANCE (instrumentation): time the KB.Open call so cold-start regressions
+                // are visible in logs. Previously this critical SDK call had no timing data.
+                var sw = Stopwatch.StartNew();
                 try {
                     Logger.Info($"Opening KB: {path}");
                     string oldDir = Directory.GetCurrentDirectory();
                     try {
                         string kbDir = Path.GetDirectoryName(path);
                         Directory.SetCurrentDirectory(kbDir);
-                        
+
                         var options = new KnowledgeBase.OpenOptions(path);
                         _kb = KnowledgeBase.Open(options);
-                        
-                        Logger.Info($"KB opened successfully.");
+
+                        sw.Stop();
+                        Logger.Info($"[KB-OPEN] elapsedMs={sw.ElapsedMilliseconds} path={path}");
                         return "{\"status\":\"Success\"}";
                     } finally { Directory.SetCurrentDirectory(oldDir); _isOpenInProgress = false; }
-                } catch (Exception ex) { 
+                } catch (Exception ex) {
+                    sw.Stop();
+                    Logger.Error($"[KB-OPEN-FAIL] elapsedMs={sw.ElapsedMilliseconds} path={path} error={ex.Message}"); 
                     Logger.Error($"ERROR opening KB: {ex.Message}");
                     _kb = null;
                     _isOpenInProgress = false;
@@ -139,14 +146,16 @@ namespace GxMcp.Worker.Services
 
             // Start indexing in a dedicated STA thread to prevent blocking the command consumer
             var indexThread = new Thread(() => {
+                // PERFORMANCE (instrumentation): measure end-to-end cold-start indexing time.
+                var bulkSw = Stopwatch.StartNew();
                 try {
                     dynamic kb = GetKB();
-                    if (kb == null) { 
-                        _isIndexing = false; 
+                    if (kb == null) {
+                        _isIndexing = false;
                         _currentStatus = "Error: KB not open";
-                        return; 
+                        return;
                     }
-                    
+
                     _currentStatus = "Capturing KB objects snapshot...";
                     Logger.Info(_currentStatus);
 
@@ -198,9 +207,11 @@ namespace GxMcp.Worker.Services
 
                     _currentStatus = "Complete";
                     _isIndexing = false;
-                    Logger.Info("BulkIndex completed successfully.");
+                    bulkSw.Stop();
+                    Logger.Info($"[BULK-INDEX] elapsedMs={bulkSw.ElapsedMilliseconds} processed={_processedCount} total={_totalCount}");
                 } catch (Exception ex) {
-                    Logger.Error("BulkIndex FATAL: " + ex.Message);
+                    bulkSw.Stop();
+                    Logger.Error($"[BULK-INDEX-FAIL] elapsedMs={bulkSw.ElapsedMilliseconds} error={ex.Message}");
                     _isIndexing = false;
                     _currentStatus = "Error: " + ex.Message;
                 }

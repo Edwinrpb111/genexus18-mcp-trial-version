@@ -50,6 +50,19 @@ namespace GxMcp.Worker.Models
             public int Complexity { get; set; }
             public string ParmRule { get; set; }
             public float[] Embedding { get; set; }
+
+            // PERFORMANCE (W-B1): cached storage key. Lookup site in AddOrUpdateEntryInParentIndex
+            // recomputes string.Format("Type:Name") for every entry on every insert; the value
+            // never changes for a given entry, so cache it lazily. [JsonIgnore] keeps the disk
+            // payload unchanged.
+            [JsonIgnore]
+            private string _storageKey;
+            [JsonIgnore]
+            public string StorageKey
+            {
+                get { return _storageKey; }
+                set { _storageKey = value; }
+            }
         }
 
         public string ToJson() => JsonConvert.SerializeObject(this, Formatting.Indented);

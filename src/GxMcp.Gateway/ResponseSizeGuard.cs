@@ -47,10 +47,23 @@ namespace GxMcp.Gateway
             return new JObject { ["tool"] = tool, ["args"] = followArgs };
         }
 
+        // PERFORMANCE (G-B2): existing path streams the JSON through a CountingStream so we
+        // never allocate the full string just to measure its size — that's still the right
+        // call for unknown payloads. Two micro-tweaks below:
+        //  - buffer bumped from 1KB to 32KB so a 220KB payload triggers ~7 internal flushes
+        //    instead of ~220;
+        //  - overload that takes an already-serialised string uses Encoding.UTF8.GetByteCount
+        //    directly, which is the fast path for callers that have the JSON in hand already.
+        internal static long ByteSize(string serializedJson)
+        {
+            if (string.IsNullOrEmpty(serializedJson)) return 0;
+            return Encoding.UTF8.GetByteCount(serializedJson);
+        }
+
         internal static long ByteSize(JToken token)
         {
             var counter = new CountingStream();
-            using (var writer = new StreamWriter(counter, Encoding.UTF8, bufferSize: 1024, leaveOpen: true) { AutoFlush = false })
+            using (var writer = new StreamWriter(counter, Encoding.UTF8, bufferSize: 32 * 1024, leaveOpen: true) { AutoFlush = false })
             using (var jw = new JsonTextWriter(writer) { Formatting = Formatting.None })
             {
                 token.WriteTo(jw);

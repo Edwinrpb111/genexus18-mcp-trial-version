@@ -45,6 +45,13 @@ namespace GxMcp.Gateway
         private static readonly string[] _promptNames = _promptDefinitions.Keys.ToArray();
         private static readonly List<IMcpModuleRouter> _routers;
         private static JArray _toolDefinitions = new JArray();
+        // PERFORMANCE (G-B3): hot-reload tool_definitions.json without restarting the gateway.
+        // The watcher is kept in a static field so it is rooted for the lifetime of the process.
+        // Debounced with a System.Threading.Timer because editors (e.g. VS Code) often fire
+        // multiple Changed events for a single save.
+        private static FileSystemWatcher? _toolDefinitionsWatcher;
+        private static System.Threading.Timer? _toolDefinitionsReloadTimer;
+        private static readonly object _toolDefinitionsReloadLock = new object();
 
         private sealed class PromptArgumentDefinition
         {
@@ -90,6 +97,7 @@ namespace GxMcp.Gateway
             };
 
             LoadToolDefinitions();
+            SetupToolDefinitionsWatcher();
         }
 
         private static void LoadToolDefinitions()
@@ -112,6 +120,49 @@ namespace GxMcp.Gateway
             catch (Exception ex)
             {
                 Program.Log($"[McpRouter] ERROR loading tool definitions: {ex.Message}");
+            }
+        }
+
+        private static void SetupToolDefinitionsWatcher()
+        {
+            try
+            {
+                string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
+                if (string.IsNullOrEmpty(exeDir) || !Directory.Exists(exeDir)) return;
+
+                _toolDefinitionsWatcher = new FileSystemWatcher(exeDir, "tool_definitions.json")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime
+                };
+
+                FileSystemEventHandler onChange = (_, __) =>
+                {
+                    // PERFORMANCE (G-B3): coalesce a burst of events into a single reload 500ms later.
+                    lock (_toolDefinitionsReloadLock)
+                    {
+                        _toolDefinitionsReloadTimer?.Dispose();
+                        _toolDefinitionsReloadTimer = new System.Threading.Timer(_ =>
+                        {
+                            try
+                            {
+                                LoadToolDefinitions();
+                            }
+                            catch (Exception ex)
+                            {
+                                Program.Log($"[McpRouter] tool_definitions reload failed: {ex.Message}");
+                            }
+                        }, null, 500, System.Threading.Timeout.Infinite);
+                    }
+                };
+
+                _toolDefinitionsWatcher.Changed += onChange;
+                _toolDefinitionsWatcher.Created += onChange;
+                _toolDefinitionsWatcher.Renamed += (_, e) => onChange(_, e);
+                _toolDefinitionsWatcher.EnableRaisingEvents = true;
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"[McpRouter] FileSystemWatcher setup failed: {ex.Message}");
             }
         }
 
@@ -905,9 +956,15 @@ namespace GxMcp.Gateway
             return trimmed;
         }
 
+        // FR#10 (friction-report 2026-05-14): builds of 50-70s would force 3 polls at the
+        // old 25s cap, each consuming a turn + the full Output blob. 90s lets a single
+        // long-poll cover most builds in one round-trip.
+        public const int MaxLongPollSeconds = 90;
+
         /// <summary>
         /// Long-polls <paramref name="registry"/> for <paramref name="jobId"/> until it reaches a terminal
-        /// state or <paramref name="waitSeconds"/> elapses (clamped 0–25).  Returns a status envelope.
+        /// state or <paramref name="waitSeconds"/> elapses (clamped 0–<see cref="MaxLongPollSeconds"/>).
+        /// Returns a status envelope.
         /// <list type="bullet">
         ///   <item><c>wait_seconds=0</c> (or omitted) → immediate single poll, no blocking.</item>
         ///   <item>Unknown job → envelope with <c>error="unknown_job_id"</c>.</item>
@@ -919,8 +976,8 @@ namespace GxMcp.Gateway
             string jobId,
             int waitSeconds)
         {
-            // Clamp wait_seconds to [0, 25]
-            waitSeconds = Math.Min(Math.Max(waitSeconds, 0), 25);
+            // Clamp wait_seconds to [0, MaxLongPollSeconds]
+            waitSeconds = Math.Min(Math.Max(waitSeconds, 0), MaxLongPollSeconds);
 
             var deadline = DateTime.UtcNow.AddSeconds(waitSeconds);
             JobEntry? job;

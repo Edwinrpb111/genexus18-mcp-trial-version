@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
@@ -25,6 +26,9 @@ namespace GxMcp.Worker.Services
 
         public string Search(string query, string typeFilter = null, string domainFilter = null, int limit = 50, bool exactMatch = false)
         {
+            // PERFORMANCE (W-M3): instrument the search hot path so regressions surface in logs.
+            // Threshold 50ms keeps noise low while catching any real degradation.
+            var sw = Stopwatch.StartNew();
             try
             {
                 // Fast-path: a literal name lookup that doesn't need the index. Cold-start
@@ -136,7 +140,10 @@ namespace GxMcp.Worker.Services
                     sourceSet = index.Objects.Values;
                 }
 
-                var queryResults = sourceSet.AsParallel();
+                // PERFORMANCE (W-M4): cap PLINQ parallelism so large KBs (50k+ objects) on
+                // 16+ core machines don't spawn one task per core and pressure the GC.
+                int dop = Math.Min(4, Math.Max(1, Environment.ProcessorCount));
+                var queryResults = sourceSet.AsParallel().WithDegreeOfParallelism(dop);
 
                 if (!string.IsNullOrEmpty(criteria.TypeFilter))
                     queryResults = queryResults.Where(e => IsTypeMatch(e.Type, criteria.TypeFilter));
@@ -297,7 +304,7 @@ namespace GxMcp.Worker.Services
                         .Select(r => new Guid(r.Entry.Guid))
                         .ToList();
 
-                    Program.BackgroundQueue.Enqueue(() => {
+                    Program.EnqueueBackground(() => {
                         try {
                             var kb = _indexCacheService.KbService?.GetKB();
                             if (kb == null) return;
@@ -312,6 +319,14 @@ namespace GxMcp.Worker.Services
                 return json;
             }
             catch (Exception ex) { return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
+            finally
+            {
+                sw.Stop();
+                if (sw.ElapsedMilliseconds > 50)
+                {
+                    Logger.Info($"[SEARCH-SLOW] {sw.ElapsedMilliseconds}ms query='{query}' type='{typeFilter}' limit={limit} exact={exactMatch}");
+                }
+            }
         }
 
         // Returns a serialized result if the query looks like a literal object name

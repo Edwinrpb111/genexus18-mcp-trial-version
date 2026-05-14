@@ -8,18 +8,28 @@ namespace GxMcp.Worker.Services
     {
         // Simple TF-IDF inspired local embedding for GeneXus objects
         // This is a zero-dependency semantic bridge.
-        
+
+        // PERFORMANCE (W-A2): hoist separator array to a static field so each call doesn't
+        // allocate a fresh char[]. The output float[128] cannot be pooled because the caller
+        // persists it on IndexEntry.Embedding (serialized to disk and reused for similarity
+        // scoring), so any pooled buffer would have indeterminate lifetime.
+        private static readonly char[] WordSeparators = { ' ', '.', ',', '(', ')', '[', ']', ':', ';' };
+
         public float[] ComputeEmbedding(string text)
         {
             if (string.IsNullOrEmpty(text)) return new float[128];
-            
+
             // We use a fixed-size hashing vector for local comparison (SimHash-like)
             float[] vector = new float[128];
-            var words = text.ToLower().Split(new[] { ' ', '.', ',', '(', ')', '[', ']', ':', ';' }, StringSplitOptions.RemoveEmptyEntries);
-            
-            foreach (var word in words)
+
+            // PERFORMANCE (W-A2): avoid the extra string allocation from text.ToLower() by
+            // splitting first and lowercasing each word via String.GetHashCode after a cheap
+            // per-word ToLowerInvariant. For long inputs this saves a full string copy on
+            // every embedding (~30k calls per bulk index).
+            var words = text.Split(WordSeparators, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawWord in words)
             {
-                int hash = word.GetHashCode();
+                int hash = rawWord.ToLowerInvariant().GetHashCode();
                 for (int i = 0; i < 128; i++)
                 {
                     if (((hash >> (i % 32)) & 1) == 1)
@@ -41,7 +51,7 @@ namespace GxMcp.Worker.Services
             {
                 for (int i = 0; i < 128; i++) vector[i] /= magnitude;
             }
-            
+
             return vector;
         }
 

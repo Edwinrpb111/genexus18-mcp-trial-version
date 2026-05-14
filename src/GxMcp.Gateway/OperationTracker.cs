@@ -89,6 +89,38 @@ namespace GxMcp.Gateway
             metric.RegisterCompletion(elapsedMs, string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase), record.WorkerPayload);
         }
 
+        // FR#7 (friction-report 2026-05-14): support best-effort cancellation surface on the
+        // Gateway side. The worker thread is still busy on its SDK call (we can't preempt the
+        // STA), but marking the op as Cancelled lets the agent stop polling and the next
+        // status call will return a non-Running envelope. Returns true when the op existed.
+        public bool MarkCancelled(string operationId, string reason)
+        {
+            if (string.IsNullOrWhiteSpace(operationId)) return false;
+            if (!_operations.TryGetValue(operationId, out var record)) return false;
+
+            lock (record.SyncRoot)
+            {
+                if (string.Equals(record.Status, "Completed", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(record.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true; // already terminal — idempotent
+                }
+
+                record.Status = "Cancelled";
+                record.CompletedAtUtc = DateTime.UtcNow;
+                record.UpdatedAtUtc = record.CompletedAtUtc.Value;
+                record.LastError = reason ?? "Cancelled by client";
+            }
+
+            var metric = _toolMetrics.GetOrAdd(record.ToolName, _ => new ToolMetricState(record.ToolName));
+            long elapsedMs = record.CompletedAtUtc.HasValue
+                ? Math.Max(0L, (long)(record.CompletedAtUtc.Value - record.StartedAtUtc).TotalMilliseconds)
+                : 0L;
+            metric.RegisterCompletion(elapsedMs, isError: true, workerPayload: null);
+            return true;
+        }
+
         public void MarkFailedByRequest(string requestId, string errorMessage)
         {
             if (string.IsNullOrWhiteSpace(requestId)) return;

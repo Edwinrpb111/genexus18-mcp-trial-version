@@ -44,10 +44,21 @@ namespace GxMcp.Worker.Services
                 result["name"] = obj.Name;
                 result["type"] = obj.TypeDescriptor.Name;
                 
-                // Add dependencies (calls)
+                // PERFORMANCE (W-A4): de-duplicate references before issuing SDK.Get calls.
+                // GetReferences() returns one edge per call-site, so a procedure that calls the
+                // same target 10× would previously cost 10 Get() round-trips. The N stays the
+                // same when each reference is unique, but cuts hard in real KBs where repeated
+                // edges are common. This is the safe portion of the audited N+1 win — touching
+                // the SDK semantics (batched fetch / reverse-resolve via index) needs its own
+                // regression suite, so deliberately left out here.
                 var calls = new JArray();
+                var seenRefKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var reference in obj.GetReferences())
                 {
+                    string refKey = null;
+                    try { refKey = reference.To?.ToString(); } catch { }
+                    if (!string.IsNullOrEmpty(refKey) && !seenRefKeys.Add(refKey)) continue;
+
                     var targetObj = kb.DesignModel.Objects.Get(reference.To);
                     if (targetObj != null) {
                         var cObj = new JObject();
@@ -248,14 +259,20 @@ namespace GxMcp.Worker.Services
                 if (vPart == null) return Models.McpResponse.Error("Variables part not found", name, "Variables", "The object does not expose a Variables part.", obj.Name, obj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
 
                 var variables = new JArray();
+                int idx = 0;
                 foreach (Variable var in vPart.Variables)
                 {
+                    idx++;
                     var item = new JObject();
                     item["name"] = var.Name;
                     item["type"] = var.Type.ToString();
+                    // FR#1 + FR#13: expose the internal var:N id so agents can resolve
+                    // <gxAttribute AttID="var:N"/> in Layout XML without grepping the generated .cs.
+                    int? internalId = VariableInjector.GetVariableInternalId(var, idx);
+                    if (internalId.HasValue) item["internalId"] = internalId.Value;
                     variables.Add(item);
                 }
-                
+
                 var result = new JObject();
                 result["variables"] = variables;
                 result["source"] = VariableInjector.GetVariablesAsText((dynamic)vPart);
@@ -279,26 +296,36 @@ namespace GxMcp.Worker.Services
                 result["name"] = obj.Name;
                 result["type"] = obj.TypeDescriptor.Name;
 
-                // Calls (outgoing)
+                // PERFORMANCE (W-A4): dedup outgoing references — same justification as Analyze.
                 var calls = new JArray();
+                var seenOut = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var reference in obj.GetReferences())
                 {
+                    string refKey = null;
+                    try { refKey = reference.To?.ToString(); } catch { }
+                    if (!string.IsNullOrEmpty(refKey) && !seenOut.Add(refKey)) continue;
+
                     var targetObj = kb.DesignModel.Objects.Get(reference.To);
-                    if (targetObj != null) calls.Add(new JObject { 
-                        ["name"] = targetObj.Name, 
+                    if (targetObj != null) calls.Add(new JObject {
+                        ["name"] = targetObj.Name,
                         ["type"] = targetObj.TypeDescriptor.Name,
                         ["description"] = targetObj.Description
                     });
                 }
                 result["calls"] = calls;
 
-                // CalledBy (incoming)
+                // PERFORMANCE (W-A4): dedup incoming references.
                 var calledBy = new JArray();
+                var seenIn = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var reference in obj.GetReferencesTo())
                 {
+                    string refKey = null;
+                    try { refKey = reference.From?.ToString(); } catch { }
+                    if (!string.IsNullOrEmpty(refKey) && !seenIn.Add(refKey)) continue;
+
                     var sourceObj = kb.DesignModel.Objects.Get(reference.From);
-                    if (sourceObj != null) calledBy.Add(new JObject { 
-                        ["name"] = sourceObj.Name, 
+                    if (sourceObj != null) calledBy.Add(new JObject {
+                        ["name"] = sourceObj.Name,
                         ["type"] = sourceObj.TypeDescriptor.Name,
                         ["description"] = sourceObj.Description
                     });
@@ -403,8 +430,14 @@ namespace GxMcp.Worker.Services
                             dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
                             if (vPart != null) {
                                 var variables = new JArray();
+                                int idxLocal = 0;
                                 foreach (Variable v in vPart.Variables) {
-                                    variables.Add(new JObject { ["name"] = v.Name, ["type"] = v.Type.ToString(), ["length"] = (int)v.Length, ["decimals"] = (int)v.Decimals });
+                                    idxLocal++;
+                                    var entry = new JObject { ["name"] = v.Name, ["type"] = v.Type.ToString(), ["length"] = (int)v.Length, ["decimals"] = (int)v.Decimals };
+                                    // FR#1 + FR#13: also surface internalId here.
+                                    int? id = VariableInjector.GetVariableInternalId(v, idxLocal);
+                                    if (id.HasValue) entry["internalId"] = id.Value;
+                                    variables.Add(entry);
                                 }
                                 lock (result) result["variables"] = variables;
                             }

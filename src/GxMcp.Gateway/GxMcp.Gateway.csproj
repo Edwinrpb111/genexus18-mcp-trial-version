@@ -5,10 +5,22 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>2.3.4</Version>
-    <AssemblyVersion>2.3.4.0</AssemblyVersion>
-    <FileVersion>2.3.4.0</FileVersion>
-    <InformationalVersion>2.3.4</InformationalVersion>
+    <Version>2.3.5</Version>
+    <AssemblyVersion>2.3.5.0</AssemblyVersion>
+    <FileVersion>2.3.5.0</FileVersion>
+    <InformationalVersion>2.3.5</InformationalVersion>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <!-- PERFORMANCE (build flags): enable ReadyToRun for Release publish. This pre-compiles
+       hot methods to native code at publish time, eliminating most JIT cost on cold start.
+       Safe with reflection (GeneXus SDK is in the Worker, not here). Only kicks in for
+       `dotnet publish -c Release`; debug builds are untouched. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
   </PropertyGroup>
 
   <ItemGroup>

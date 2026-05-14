@@ -8,6 +8,24 @@ namespace GxMcp.Worker.Helpers
     {
         private static readonly Regex SectionRegex = new Regex(@"(?i)^\s*(?:Sub|Event)\s+(?:['""]?([\w\.\-]+)['""]?|'([^']+)'|""([^""]+)"")", RegexOptions.Multiline | RegexOptions.Compiled);
 
+        // PERFORMANCE (W-B2): pre-compiled regex for Validate's block-matching loop.
+        // Previously each Regex.IsMatch built a fresh interpreted matcher per line.
+        private const RegexOptions BlockOptions = RegexOptions.IgnoreCase | RegexOptions.Compiled;
+        private static readonly Regex IfStart       = new Regex(@"^\s*If\b",       BlockOptions);
+        private static readonly Regex EndifInline   = new Regex(@"\bEndif\b",      BlockOptions);
+        private static readonly Regex DoWhile       = new Regex(@"^\s*Do\s+while\b", BlockOptions);
+        private static readonly Regex DoCase        = new Regex(@"^\s*Do\s+case\b",  BlockOptions);
+        private static readonly Regex ForEach       = new Regex(@"^\s*For\s+each\b", BlockOptions);
+        private static readonly Regex ForGeneric    = new Regex(@"^\s*For\b",        BlockOptions);
+        private static readonly Regex SubStart      = new Regex(@"^\s*Sub\b",        BlockOptions);
+        private static readonly Regex EventStart    = new Regex(@"^\s*Event\b",      BlockOptions);
+        private static readonly Regex EndifLine     = new Regex(@"^\s*Endif\b",      BlockOptions);
+        private static readonly Regex EnddoLine     = new Regex(@"^\s*Enddo\b",      BlockOptions);
+        private static readonly Regex EndcaseLine   = new Regex(@"^\s*Endcase\b",    BlockOptions);
+        private static readonly Regex EndforLine    = new Regex(@"^\s*Endfor\b",     BlockOptions);
+        private static readonly Regex EndsubLine    = new Regex(@"^\s*Endsub\b",     BlockOptions);
+        private static readonly Regex EndeventLine  = new Regex(@"^\s*Endevent\b",   BlockOptions);
+
         public static List<string> GetSections(string code)
         {
             var sections = new List<string>();
@@ -34,44 +52,44 @@ namespace GxMcp.Worker.Helpers
                 if (string.IsNullOrEmpty(line) || line.StartsWith("//") || line.StartsWith("/*")) continue;
 
                 // Handle single-line If (If ... EndIf)
-                bool isSingleLineIf = Regex.IsMatch(line, @"(?i)^\s*If\b") && Regex.IsMatch(line, @"(?i)\bEndif\b");
+                bool isSingleLineIf = IfStart.IsMatch(line) && EndifInline.IsMatch(line);
                 if (isSingleLineIf) continue;
 
                 // Simple Block Matching
-                if (Regex.IsMatch(line, @"(?i)^\s*If\b") && !line.Contains(";")) stack.Push(("If", i + 1));
-                else if (Regex.IsMatch(line, @"(?i)^\s*Do\s+while\b", RegexOptions.IgnoreCase)) stack.Push(("Do While", i + 1));
-                else if (Regex.IsMatch(line, @"(?i)^\s*Do\s+case\b", RegexOptions.IgnoreCase)) stack.Push(("Do Case", i + 1));
-                else if (Regex.IsMatch(line, @"(?i)^\s*For\s+each\b", RegexOptions.IgnoreCase)) stack.Push(("For Each", i + 1));
-                else if (Regex.IsMatch(line, @"(?i)^\s*For\b", RegexOptions.IgnoreCase)) stack.Push(("For Each", i + 1)); // Handle generic For as For Each for simpler stack
-                else if (Regex.IsMatch(line, @"(?i)^\s*Sub\b", RegexOptions.IgnoreCase)) stack.Push(("Sub", i + 1));
-                else if (Regex.IsMatch(line, @"(?i)^\s*Event\b", RegexOptions.IgnoreCase)) stack.Push(("Event", i + 1));
+                if (IfStart.IsMatch(line) && !line.Contains(";")) stack.Push(("If", i + 1));
+                else if (DoWhile.IsMatch(line)) stack.Push(("Do While", i + 1));
+                else if (DoCase.IsMatch(line)) stack.Push(("Do Case", i + 1));
+                else if (ForEach.IsMatch(line)) stack.Push(("For Each", i + 1));
+                else if (ForGeneric.IsMatch(line)) stack.Push(("For Each", i + 1)); // Handle generic For as For Each for simpler stack
+                else if (SubStart.IsMatch(line)) stack.Push(("Sub", i + 1));
+                else if (EventStart.IsMatch(line)) stack.Push(("Event", i + 1));
 
-                else if (Regex.IsMatch(line, @"(?i)^\s*Endif\b", RegexOptions.IgnoreCase))
+                else if (EndifLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "If") errors.Add($"Line {i + 1}: 'Endif' without matching 'If'");
                     else stack.Pop();
                 }
-                else if (Regex.IsMatch(line, @"(?i)^\s*Enddo\b", RegexOptions.IgnoreCase))
+                else if (EnddoLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "Do While") errors.Add($"Line {i + 1}: 'Enddo' without matching 'Do While'");
                     else stack.Pop();
                 }
-                else if (Regex.IsMatch(line, @"(?i)^\s*Endcase\b", RegexOptions.IgnoreCase))
+                else if (EndcaseLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "Do Case") errors.Add($"Line {i + 1}: 'Endcase' without matching 'Do Case'");
                     else stack.Pop();
                 }
-                else if (Regex.IsMatch(line, @"(?i)^\s*Endfor\b", RegexOptions.IgnoreCase))
+                else if (EndforLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "For Each") errors.Add($"Line {i + 1}: 'Endfor' without matching 'For Each'");
                     else stack.Pop();
                 }
-                else if (Regex.IsMatch(line, @"(?i)^\s*Endsub\b", RegexOptions.IgnoreCase))
+                else if (EndsubLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "Sub") errors.Add($"Line {i + 1}: 'Endsub' without matching 'Sub'");
                     else stack.Pop();
                 }
-                else if (Regex.IsMatch(line, @"(?i)^\s*Endevent\b", RegexOptions.IgnoreCase))
+                else if (EndeventLine.IsMatch(line))
                 {
                     if (stack.Count == 0 || stack.Peek().name != "Event") errors.Add($"Line {i + 1}: 'Endevent' without matching 'Event'");
                     else stack.Pop();

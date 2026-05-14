@@ -17,6 +17,17 @@ namespace GxMcp.Worker
         public static readonly BlockingCollection<string> CommandQueue = new BlockingCollection<string>();
         public static readonly BlockingCollection<string> SdkCommandQueue = new BlockingCollection<string>();
         public static readonly ConcurrentQueue<Action> BackgroundQueue = new ConcurrentQueue<Action>();
+        // PERFORMANCE (W-B3): signal that wakes the background worker immediately on Enqueue,
+        // instead of busy-polling with Thread.Sleep(100). WaitOne(100) keeps a safety timeout
+        // so the loop still re-checks shutdown state if a signal is missed.
+        public static readonly AutoResetEvent BackgroundSignal = new AutoResetEvent(false);
+
+        public static void EnqueueBackground(Action work)
+        {
+            if (work == null) return;
+            BackgroundQueue.Enqueue(work);
+            try { BackgroundSignal.Set(); } catch { }
+        }
         private static readonly BlockingCollection<string> _outputQueue = new BlockingCollection<string>();
         private static readonly BlockingCollection<string> _errorQueue = new BlockingCollection<string>();
         private static CommandDispatcher _dispatcher;
@@ -191,7 +202,9 @@ namespace GxMcp.Worker
                             try { action(); }
                             catch (Exception ex) { Logger.Error("Background Task Error: " + ex.Message); }
                         } else {
-                            Thread.Sleep(100);
+                            // PERFORMANCE (W-B3): wait for signal from EnqueueBackground; 100ms
+                            // fallback re-checks CommandQueue.IsCompleted on shutdown.
+                            BackgroundSignal.WaitOne(100);
                         }
                     }
                 }) { IsBackground = true, Name = "BackgroundWorker" };
@@ -338,6 +351,11 @@ namespace GxMcp.Worker
         }
     }
 
+    // PERFORMANCE (W-A5): the previous implementation took a lock per-character on every
+    // Console.Write call. Every IPC line — JSON-RPC responses that can be tens of KB — paid
+    // that cost. Here Write(string) and WriteLine(string) acquire the lock once per call and
+    // handle the '\n'/'\r' split internally. Write(char) is preserved for completeness but no
+    // longer the hot path.
     public class QueueWriter : TextWriter
     {
         private readonly BlockingCollection<string> _queue;
@@ -348,29 +366,66 @@ namespace GxMcp.Worker
 
         public override void Write(char value)
         {
-            if (value == '\n')
+            if (value == '\r') return;
+            lock (_buffer)
             {
-                lock (_buffer) {
+                if (value == '\n')
+                {
                     _queue.Add(_buffer.ToString());
                     _buffer.Clear();
                 }
-            }
-            else if (value != '\r')
-            {
-                lock (_buffer) { _buffer.Append(value); }
+                else
+                {
+                    _buffer.Append(value);
+                }
             }
         }
 
         public override void Write(string value)
         {
             if (string.IsNullOrEmpty(value)) return;
-            foreach (char c in value) Write(c);
+            lock (_buffer)
+            {
+                AppendInternal(value);
+            }
         }
 
         public override void WriteLine(string value)
         {
-            Write(value);
-            Write('\n');
+            lock (_buffer)
+            {
+                if (!string.IsNullOrEmpty(value)) AppendInternal(value);
+                _queue.Add(_buffer.ToString());
+                _buffer.Clear();
+            }
+        }
+
+        // Caller MUST hold _buffer lock.
+        private void AppendInternal(string value)
+        {
+            int start = 0;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c == '\r') continue;
+                if (c == '\n')
+                {
+                    if (i > start) _buffer.Append(value, start, i - start);
+                    _queue.Add(_buffer.ToString());
+                    _buffer.Clear();
+                    start = i + 1;
+                }
+            }
+            if (start < value.Length)
+            {
+                // Append the trailing partial line (no terminator yet) in one shot,
+                // skipping any stray '\r' characters between start and end.
+                for (int j = start; j < value.Length; j++)
+                {
+                    char c = value[j];
+                    if (c != '\r') _buffer.Append(c);
+                }
+            }
         }
     }
 }

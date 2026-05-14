@@ -67,6 +67,11 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
+                // FR#20 + FR#21 (friction-report 2026-05-14): two cross-part checks that the
+                // existing single-part walkers can't see. Both are pure read-only inspections.
+                CheckOutParmEnabled(obj, issues);
+                CheckGxButtonEvents(obj, issues);
+
                 // Integration with Navigation Intelligence
                 CheckNavigationPerformance(target, issues);
 
@@ -288,6 +293,92 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrWhiteSpace(cleanCode) || !Regex.IsMatch(cleanCode, @"(?i)\bparm\s*\(", RegexOptions.Compiled))
                 issues.Add(CreateIssue("GX006", "Parm rule missing", "Warning", "No parameters defined.", "parm(...)", 1, partName));
+        }
+
+        // FR#20 (friction-report 2026-05-14): `parm(in: ..., out: &X)` makes GeneXus generate
+        // `gx_radio_ctrl(..., enabled=0, readonly=1, ...)` for &X. Inputs render disabled and
+        // users can't interact. Workaround is `&X.Enabled = 1` in Event Start. Warn when an
+        // out: parm has no matching Enabled assignment.
+        private void CheckGxButtonEvents(KBObject obj, JArray issues)
+        {
+            try
+            {
+                if (!(obj is WebPanel || obj is Transaction)) return;
+                var webFormPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is WebFormPart) as WebFormPart;
+                if (webFormPart?.Document?.DocumentElement == null) return;
+
+                var eventsPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p =>
+                    p.TypeDescriptor?.Name?.Equals("Events", StringComparison.OrdinalIgnoreCase) == true);
+                string eventsSrc = (eventsPart as ISource)?.Source ?? string.Empty;
+                bool hasEventEnter = Regex.IsMatch(eventsSrc, @"(?i)\bEvent\s+Enter\b");
+
+                var buttons = webFormPart.Document.DocumentElement.SelectNodes("//*[local-name()='gxButton']");
+                if (buttons == null || buttons.Count == 0) return;
+                foreach (System.Xml.XmlNode btn in buttons)
+                {
+                    string onClick = btn.Attributes?["onClickEvent"]?.Value
+                                  ?? btn.Attributes?["eventGX"]?.Value;
+                    if (string.IsNullOrEmpty(onClick)) continue;
+                    if (!hasEventEnter)
+                    {
+                        string btnName = btn.Attributes?["id"]?.Value ?? btn.Attributes?["ControlName"]?.Value ?? "<unnamed>";
+                        issues.Add(CreateIssue(
+                            "GX020",
+                            "gxButton onClickEvent ignored",
+                            "Warning",
+                            $"gxButton '{btnName}' has onClickEvent={onClick} but only `Event Enter` is bound for gxButton in HTML layouts. " +
+                            "Rename your handler to `Event Enter` or use <gxBitmap eventGX=\"...\"/> for custom events.",
+                            "<gxButton onClickEvent=\"" + onClick + "\"/>",
+                            1,
+                            "Layout"));
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Debug("CheckGxButtonEvents: " + ex.Message); }
+        }
+
+        private void CheckOutParmEnabled(KBObject obj, JArray issues)
+        {
+            try
+            {
+                if (!(obj is WebPanel || obj is Transaction || obj is Procedure)) return;
+                var rulesPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is RulesPart) as RulesPart;
+                string rulesSrc = (rulesPart as ISource)?.Source ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(rulesSrc)) return;
+
+                var parmMatch = Regex.Match(rulesSrc, @"(?is)\bparm\s*\(([^)]*)\)", RegexOptions.Compiled);
+                if (!parmMatch.Success) return;
+                string parmBody = parmMatch.Groups[1].Value;
+
+                var outVars = new List<string>();
+                foreach (Match m in Regex.Matches(parmBody, @"(?i)\bout\s*:\s*&(\w+)"))
+                {
+                    outVars.Add(m.Groups[1].Value);
+                }
+                if (outVars.Count == 0) return;
+
+                var eventsPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p =>
+                    p.TypeDescriptor?.Name?.Equals("Events", StringComparison.OrdinalIgnoreCase) == true);
+                string eventsSrc = (eventsPart as ISource)?.Source ?? string.Empty;
+
+                foreach (var v in outVars)
+                {
+                    var rx = new Regex(@"(?i)&" + Regex.Escape(v) + @"\s*\.\s*Enabled\s*=\s*1");
+                    if (!rx.IsMatch(eventsSrc))
+                    {
+                        issues.Add(CreateIssue(
+                            "GX021",
+                            "out: parm may render disabled",
+                            "Info",
+                            $"&{v} is declared `out:` in parm rule — GeneXus may render its control as disabled. " +
+                            $"If editable, add `&{v}.Enabled = 1` in Event Start.",
+                            $"out: &{v}",
+                            1,
+                            "Rules"));
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Debug("CheckOutParmEnabled: " + ex.Message); }
         }
 
         private void CheckNewWhenDuplicate(string cleanCode, JArray issues, string originalCode, string partName)

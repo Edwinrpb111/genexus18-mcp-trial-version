@@ -1305,6 +1305,50 @@ namespace GxMcp.Gateway
                             toolArgs: args);
                     }
 
+                    // FR#7 (friction-report 2026-05-14): support best-effort cancellation for
+                    // op:<id> targets. Previously this fell through to the worker, which only
+                    // knows about build taskIds, returning "Task ID not found". Now we mark
+                    // the op as Cancelled in the tracker and abandon any matching pending
+                    // request. The worker thread may still finish its SDK call, but the
+                    // client gets a deterministic answer.
+                    if (string.Equals(lifecycleAction, "cancel", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(lifecycleTarget) &&
+                        lifecycleTarget.StartsWith("op:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string operationId = lifecycleTarget.Substring(3);
+                        bool existed = _operationTracker.MarkCancelled(operationId, "Cancelled by client via lifecycle action=cancel.");
+                        // Try to find and abandon the pending request bound to this op.
+                        string? abandonedRequestId = null;
+                        foreach (var kvp in _pendingRequests.ToArray())
+                        {
+                            if (string.Equals(kvp.Value.OperationId, operationId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (_pendingRequests.TryRemove(kvp.Key, out var pending))
+                                {
+                                    abandonedRequestId = kvp.Key;
+                                    pending.CompletionSource.TrySetResult(JsonConvert.SerializeObject(new
+                                    {
+                                        jsonrpc = "2.0",
+                                        id = kvp.Key,
+                                        error = new { code = -32603, message = "Operation cancelled by client." }
+                                    }));
+                                    break;
+                                }
+                            }
+                        }
+
+                        var cancelPayload = new JObject
+                        {
+                            ["status"] = existed ? "Cancelled" : "NotFound",
+                            ["operationId"] = operationId,
+                            ["abandonedRequestId"] = abandonedRequestId,
+                            ["message"] = existed
+                                ? "Operation marked as Cancelled. Worker may still finish its current SDK call but no further response will be delivered."
+                                : "Operation not found in tracker (may have completed and been pruned, or never existed)."
+                        };
+                        return BuildToolTextResponse(idToken, cancelPayload, isError: !existed, toolName: "genexus_lifecycle", toolArgs: args);
+                    }
+
                     if (string.Equals(lifecycleAction, "status", StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(lifecycleTarget, "gateway:metrics", StringComparison.OrdinalIgnoreCase))
                     {
@@ -1324,7 +1368,7 @@ namespace GxMcp.Gateway
                             var probe = JobRegistry.Get(jobId);
                             if (probe != null)
                             {
-                                int waitSeconds = Math.Min(Math.Max(args?["wait_seconds"]?.ToObject<int?>() ?? 0, 0), 25);
+                                int waitSeconds = Math.Min(Math.Max(args?["wait_seconds"]?.ToObject<int?>() ?? 0, 0), McpRouter.MaxLongPollSeconds);
                                 JObject pollResult = await McpRouter.LongPollJob(JobRegistry, jobId, waitSeconds);
                                 bool isError = pollResult["error"] != null;
                                 return BuildToolTextResponse(idToken, pollResult, isError: isError, toolName: "genexus_lifecycle", toolArgs: args);

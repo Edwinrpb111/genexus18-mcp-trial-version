@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.IO.Compression;
+using System.Text;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
 using System.Threading.Tasks;
@@ -12,8 +14,16 @@ namespace GxMcp.Worker.Services
 {
     public class IndexCacheService
     {
+        // PERFORMANCE (W-A3): bump the disk-flush throttle so write bursts during bulk index
+        // don't thrash. The in-memory index is always current; the on-disk copy is for
+        // cold-start only, so a slightly stale snapshot is acceptable.
+        private const int FlushThrottleSeconds = 30;
+
         private SearchIndex _index;
         private string _indexPath;
+        // PERFORMANCE (W-A3): mirror path with .gz extension. New flushes go here gzipped,
+        // legacy plain-JSON files are still readable so existing installs keep working.
+        private string _indexPathGz;
         private BuildService _buildService;
         private bool _initialized = false;
         private readonly object _lock = new object();
@@ -21,9 +31,17 @@ namespace GxMcp.Worker.Services
         private bool _savingInProgress = false;
         private readonly VectorService _vectorService = new VectorService();
 
+        // PERFORMANCE (W-M5): cache resolved hierarchy by object Guid to avoid re-walking
+        // the parent chain on repeated UpdateEntry calls for the same object. Invalidated
+        // on Clear/RemoveEntry. Bulk-index hits each Guid once so the win comes from
+        // incremental re-indexing after saves.
+        private readonly ConcurrentDictionary<Guid, (string ParentName, string ParentPath, string Path, string ModuleName)> _hierarchyCache
+            = new ConcurrentDictionary<Guid, (string, string, string, string)>();
+
         public IndexCacheService()
         {
             _indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
+            _indexPathGz = _indexPath + ".gz";
         }
 
         public void SetBuildService(BuildService bs) { _buildService = bs; }
@@ -36,8 +54,9 @@ namespace GxMcp.Worker.Services
                  try
                  {
                      if (string.IsNullOrEmpty(_indexPath)) return true;
-                     if (!File.Exists(_indexPath)) return true;
-                     
+                     // PERFORMANCE (W-A3): accept either the gzipped (new) or plain (legacy) snapshot.
+                     if (!File.Exists(_indexPathGz) && !File.Exists(_indexPath)) return true;
+
                      var index = GetIndex();
                      return index == null || index.Objects.Count == 0;
                  }
@@ -73,6 +92,7 @@ namespace GxMcp.Worker.Services
 
                 string hash = GetHash(kbPath);
                 _indexPath = Path.Combine(cacheDir, string.Format("index_{0}.json", hash));
+                _indexPathGz = _indexPath + ".gz";
                 _initialized = true;
                 Logger.Info(string.Format("IndexCache initialized: {0}", _indexPath));
 
@@ -114,14 +134,23 @@ namespace GxMcp.Worker.Services
         private string GetEntryStorageKey(SearchIndex.IndexEntry entry)
         {
             if (entry == null) return string.Empty;
+            // PERFORMANCE (W-B1): cache the computed key on the entry to avoid repeated
+            // string.Format in AddOrUpdateEntryInParentIndex's List.Any lookup.
+            if (!string.IsNullOrEmpty(entry.StorageKey)) return entry.StorageKey;
+
+            string key;
             if (string.Equals(entry.Type, "Folder", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(entry.Type, "Module", StringComparison.OrdinalIgnoreCase))
             {
                 string scopedPath = entry.Path ?? entry.Name ?? string.Empty;
-                return string.Format("{0}:{1}", entry.Type ?? string.Empty, scopedPath);
+                key = string.Format("{0}:{1}", entry.Type ?? string.Empty, scopedPath);
             }
-
-            return string.Format("{0}:{1}", entry.Type ?? string.Empty, entry.Name ?? string.Empty);
+            else
+            {
+                key = string.Format("{0}:{1}", entry.Type ?? string.Empty, entry.Name ?? string.Empty);
+            }
+            entry.StorageKey = key;
+            return key;
         }
 
         private void NormalizeLegacyHierarchy(SearchIndex index)
@@ -200,6 +229,12 @@ namespace GxMcp.Worker.Services
 
         private (string ParentName, string ParentPath, string Path, string ModuleName) ResolveHierarchy(global::Artech.Architecture.Common.Objects.KBObject obj)
         {
+            // PERFORMANCE (W-M5): fast-path for objects whose hierarchy has already been resolved.
+            if (obj != null && _hierarchyCache.TryGetValue(obj.Guid, out var cached))
+            {
+                return cached;
+            }
+
             string parentName = string.Empty;
             string moduleName = null;
             var parentSegments = new System.Collections.Generic.List<string>();
@@ -292,7 +327,12 @@ namespace GxMcp.Worker.Services
                 path = string.IsNullOrEmpty(parentPath) ? obj.Name : parentPath + "/" + obj.Name;
             }
 
-            return (parentName, parentPath, path, moduleName);
+            var result = (parentName, parentPath, path, moduleName);
+            if (obj != null)
+            {
+                _hierarchyCache[obj.Guid] = result;
+            }
+            return result;
         }
 
         public SearchIndex GetIndex()
@@ -305,10 +345,22 @@ namespace GxMcp.Worker.Services
                 if (_index != null) return _index;
                 try
                 {
-                    if (File.Exists(_indexPath))
+                    // PERFORMANCE (W-A3): prefer the new gzipped snapshot; fall back to legacy
+                    // plain JSON so existing installs keep working without re-indexing.
+                    string json = null;
+                    if (File.Exists(_indexPathGz))
                     {
-                        Logger.Debug(string.Format("Loading index from disk: {0}", _indexPath));
-                        string json = File.ReadAllText(_indexPath);
+                        Logger.Debug(string.Format("Loading gzipped index from disk: {0}", _indexPathGz));
+                        json = ReadGzippedText(_indexPathGz);
+                    }
+                    else if (File.Exists(_indexPath))
+                    {
+                        Logger.Debug(string.Format("Loading legacy plain index from disk: {0}", _indexPath));
+                        json = File.ReadAllText(_indexPath);
+                    }
+
+                    if (!string.IsNullOrEmpty(json))
+                    {
                         _index = SearchIndex.FromJson(json);
                         NormalizeLegacyHierarchy(_index);
                         BuildParentIndex(_index);
@@ -319,6 +371,16 @@ namespace GxMcp.Worker.Services
 
                 if (_index == null) _index = new SearchIndex();
                 return _index;
+            }
+        }
+
+        private static string ReadGzippedText(string path)
+        {
+            using (var fs = File.OpenRead(path))
+            using (var gz = new GZipStream(fs, CompressionMode.Decompress))
+            using (var reader = new StreamReader(gz, Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
             }
         }
 
@@ -335,8 +397,8 @@ namespace GxMcp.Worker.Services
                 BuildParentIndex(index);
                 _index = index;
             }
-            // Fire and forget save to disk with throttling
-            if (!_savingInProgress && (DateTime.Now - _lastFlushTime).TotalSeconds > 10)
+            // Fire and forget save to disk with throttling (W-A3: 10s → 30s)
+            if (!_savingInProgress && (DateTime.Now - _lastFlushTime).TotalSeconds > FlushThrottleSeconds)
             {
                 Task.Run(() => FlushToDisk());
             }
@@ -360,10 +422,10 @@ namespace GxMcp.Worker.Services
 
             try
             {
-                string dir = Path.GetDirectoryName(_indexPath);
+                string dir = Path.GetDirectoryName(_indexPathGz);
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                
-                var settings = new Newtonsoft.Json.JsonSerializerSettings { 
+
+                var settings = new Newtonsoft.Json.JsonSerializerSettings {
                     NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
                     DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore,
                     Formatting = Newtonsoft.Json.Formatting.None
@@ -371,15 +433,28 @@ namespace GxMcp.Worker.Services
 
                 // Perform heavy serialization OUTSIDE the lock
                 string json = Newtonsoft.Json.JsonConvert.SerializeObject(snapshot, settings);
-                
-                // Perform I/O OUTSIDE the lock
-                File.WriteAllText(_indexPath, json);
-                
-                Logger.Info($"[INDEX-SAVE] Index flushed: {json.Length / 1024} KB saved.");
+
+                // PERFORMANCE (W-A3): write gzipped via a temp file + atomic move so partial
+                // writes never leave a corrupt snapshot on disk.
+                string tmpPath = _indexPathGz + ".tmp";
+                using (var fs = File.Create(tmpPath))
+                using (var gz = new GZipStream(fs, CompressionLevel.Optimal))
+                using (var writer = new StreamWriter(gz, new UTF8Encoding(false)))
+                {
+                    writer.Write(json);
+                }
+                if (File.Exists(_indexPathGz)) File.Delete(_indexPathGz);
+                File.Move(tmpPath, _indexPathGz);
+
+                // Clean up the legacy plain-JSON file once we have a valid gzipped snapshot.
+                try { if (File.Exists(_indexPath)) File.Delete(_indexPath); } catch { }
+
+                long sizeKb = new FileInfo(_indexPathGz).Length / 1024;
+                Logger.Info($"[INDEX-SAVE] Index flushed (gz): {sizeKb} KB on disk, {json.Length / 1024} KB raw.");
             }
             catch (Exception ex) { Logger.Error("Flush Error: " + ex.Message); }
-            finally { 
-                _savingInProgress = false; 
+            finally {
+                _savingInProgress = false;
                 _lastFlushTime = DateTime.Now;
             }
         }
@@ -472,7 +547,7 @@ namespace GxMcp.Worker.Services
 
             // ENRICHMENT: Dependencies (Calls and Tables) - ASYNCHRONOUS BACKGROUND
             Guid objGuid = obj.Guid;
-            Program.BackgroundQueue.Enqueue(() => {
+            Program.EnqueueBackground(() => {
                 try {
                     var kb = _buildService.KbService?.GetKB();
                     if (kb == null) return;
@@ -533,19 +608,33 @@ namespace GxMcp.Worker.Services
                     .Where(pair =>
                         string.Equals(pair.Value.Type, type, StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(pair.Value.Name, name, StringComparison.OrdinalIgnoreCase))
-                    .Select(pair => pair.Key)
                     .ToList();
 
                 var removed = false;
-                foreach (var key in keysToRemove)
+                foreach (var pair in keysToRemove)
                 {
-                    removed |= index.Objects.TryRemove(key, out _);
+                    if (index.Objects.TryRemove(pair.Key, out var removedEntry))
+                    {
+                        removed = true;
+                        // PERFORMANCE (W-M5): invalidate hierarchy cache for removed objects.
+                        if (!string.IsNullOrEmpty(removedEntry?.Guid) && Guid.TryParse(removedEntry.Guid, out var g))
+                        {
+                            _hierarchyCache.TryRemove(g, out _);
+                        }
+                    }
                 }
 
                 if (removed) UpdateIndex(index);
             }
         }
 
-        public void Clear() { lock (_lock) { _index = null; } }
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _index = null;
+                _hierarchyCache.Clear(); // PERFORMANCE (W-M5): drop stale hierarchy on KB unload.
+            }
+        }
     }
 }

@@ -180,6 +180,37 @@ namespace GxMcp.Worker.Services
                         ? $"Context not found. Ensure the context matches a unique block in the source code.{dbg}"
                         : details;
                     string failure = BuildPatchResult(failedStatus, partName, normalizedOperation, expectedCount, matchCount, failedDetails);
+
+                    // FR#18 (friction-report 2026-05-14): attach near-match diagnostics so the
+                    // agent can adjust context in one iteration instead of re-reading the whole
+                    // file. Only runs on NoMatch (Ambiguous already gives the matched indices).
+                    if (string.Equals(failedStatus, "NoMatch", StringComparison.OrdinalIgnoreCase) &&
+                        contextLines != null && contextLines.Length > 0 && contextLines.Length <= 50)
+                    {
+                        var near = FindNearMatches(sourceLines, contextLines, topN: 3);
+                        if (near.Count > 0)
+                        {
+                            try
+                            {
+                                var failureJson = JObject.Parse(failure);
+                                var arr = new JArray();
+                                foreach (var nm in near)
+                                {
+                                    arr.Add(new JObject
+                                    {
+                                        ["line"] = nm.StartLine + 1, // 1-based for humans
+                                        ["similarity"] = Math.Round(nm.Similarity, 2),
+                                        ["snippet"] = nm.Snippet
+                                    });
+                                }
+                                failureJson["nearMatches"] = arr;
+                                failureJson["nearMatchHint"] = "Top similar windows in source. Adjust 'context' to match exact tabs/whitespace of one of these and retry.";
+                                failure = failureJson.ToString();
+                            }
+                            catch { /* keep original failure on serialization issue */ }
+                        }
+                    }
+
                     return AttachTimings(failure, readMs, patchMs, 0, sourceFromCache);
                 }
 
@@ -534,6 +565,44 @@ namespace GxMcp.Worker.Services
             }
 
             return string.Join("\n", resultLines);
+        }
+
+        // FR#18 (friction-report 2026-05-14): produce a small list of "looks-similar" windows
+        // when an exact/fuzzy match fails. Score = ratio of fuzzy-matching lines per window;
+        // we keep the top-N. Only the first line is used as the snippet to keep responses small.
+        private sealed class NearMatch
+        {
+            public int StartLine;
+            public double Similarity;
+            public string Snippet = string.Empty;
+        }
+
+        private List<NearMatch> FindNearMatches(string[] sourceLines, string[] contextLines, int topN)
+        {
+            var hits = new List<NearMatch>();
+            if (sourceLines == null || contextLines == null) return hits;
+            if (contextLines.Length == 0 || sourceLines.Length < contextLines.Length) return hits;
+
+            int maxStart = sourceLines.Length - contextLines.Length;
+            for (int i = 0; i <= maxStart; i++)
+            {
+                int matches = 0;
+                for (int j = 0; j < contextLines.Length; j++)
+                {
+                    if (LinesMatchFuzzy(sourceLines[i + j], contextLines[j])) matches++;
+                }
+                double similarity = (double)matches / contextLines.Length;
+                if (similarity < 0.4) continue; // ignore noise
+
+                string snippet = sourceLines[i].Trim();
+                if (snippet.Length > 120) snippet = snippet.Substring(0, 117) + "...";
+
+                hits.Add(new NearMatch { StartLine = i, Similarity = similarity, Snippet = snippet });
+            }
+
+            hits.Sort((a, b) => b.Similarity.CompareTo(a.Similarity));
+            if (hits.Count > topN) hits = hits.GetRange(0, topN);
+            return hits;
         }
 
         private bool LinesMatchFuzzy(string s1, string s2)

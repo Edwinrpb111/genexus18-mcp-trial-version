@@ -24,7 +24,11 @@ namespace GxMcp.Gateway
         private readonly Configuration _config;
         private readonly ConcurrentDictionary<string, Entry> _entries =
             new ConcurrentDictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
-        private readonly object _spawnLock = new object();
+        // PERFORMANCE (G-A1): previously a single `_spawnLock` serialised every Acquire across
+        // all KBs. Now each KB has its own SpawnGate (per-Entry SemaphoreSlim), so two clients
+        // opening different KBs proceed in parallel. The narrow `_capacityLock` still
+        // protects the capacity/eviction window, which is cheap and infrequent.
+        private readonly object _capacityLock = new object();
 
         public event Action<string>? OnRpcResponse;
         public event Action<KbHandle>? OnWorkerExited;
@@ -36,6 +40,7 @@ namespace GxMcp.Gateway
             public KbHandle Handle = null!;
             public WorkerProcess? Worker;
             public DateTime LastActivityUtc = DateTime.UtcNow;
+            public readonly SemaphoreSlim SpawnGate = new SemaphoreSlim(1, 1);
         }
 
         public IReadOnlyList<KbHandle> ListOpen() =>
@@ -81,26 +86,31 @@ namespace GxMcp.Gateway
                 return entry.Worker;
             }
 
-            // Serialise spawn so two concurrent acquires for the same KB don't race.
-            // (Lock is cross-KB-coarse, but spawn is fast — the worker process IO is async.)
-            await Task.Yield();
-            lock (_spawnLock)
+            // PERFORMANCE (G-A1): per-KB gate. Two concurrent acquires for the SAME KB
+            // serialise here, but concurrent acquires for DIFFERENT KBs are now parallel.
+            await entry.SpawnGate.WaitAsync(ct).ConfigureAwait(false);
+            try
             {
                 if (entry.Worker != null) return entry.Worker;
 
-                int max = _config.Server?.MaxOpenKbs ?? 3;
-                if (_entries.Count > max)
+                // Narrow lock around the capacity-window: cheap, prevents two different
+                // KBs from both deciding "not full" at the same instant.
+                lock (_capacityLock)
                 {
-                    var victim = SelectVictim();
-                    if (victim != null)
-                    {
-                        EvictEntry(victim);
-                    }
-
+                    int max = _config.Server?.MaxOpenKbs ?? 3;
                     if (_entries.Count > max)
                     {
-                        _entries.TryRemove(handle.NormalizedAlias, out _);
-                        throw new WorkerPoolFullException(ListOpen());
+                        var victim = SelectVictim();
+                        if (victim != null)
+                        {
+                            EvictEntry(victim);
+                        }
+
+                        if (_entries.Count > max)
+                        {
+                            _entries.TryRemove(handle.NormalizedAlias, out _);
+                            throw new WorkerPoolFullException(ListOpen());
+                        }
                     }
                 }
 
@@ -116,6 +126,10 @@ namespace GxMcp.Gateway
                 entry.Worker = worker;
                 entry.LastActivityUtc = DateTime.UtcNow;
                 return worker;
+            }
+            finally
+            {
+                entry.SpawnGate.Release();
             }
         }
 
@@ -141,10 +155,22 @@ namespace GxMcp.Gateway
 
         private Entry? SelectVictim()
         {
-            return _entries.Values
-                .Where(e => e.Worker != null)
-                .OrderBy(e => e.LastActivityUtc)
-                .FirstOrDefault();
+            // PERFORMANCE (G-B1): linear scan for the min LastActivityUtc instead of OrderBy
+            // (which materialises the whole sequence into an internal buffer just to take the
+            // first element). At MaxOpenKbs=3 the absolute time is irrelevant, but the
+            // allocation-free path is friendlier to the eviction hot-spot under future growth.
+            Entry? victim = null;
+            DateTime oldest = DateTime.MaxValue;
+            foreach (var e in _entries.Values)
+            {
+                if (e.Worker == null) continue;
+                if (e.LastActivityUtc < oldest)
+                {
+                    oldest = e.LastActivityUtc;
+                    victim = e;
+                }
+            }
+            return victim;
         }
 
         private void EvictEntry(Entry entry)

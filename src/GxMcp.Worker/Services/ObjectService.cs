@@ -26,7 +26,10 @@ namespace GxMcp.Worker.Services
 
         private static readonly ConcurrentDictionary<string, ReadCacheEntry> _readCache =
             new ConcurrentDictionary<string, ReadCacheEntry>(StringComparer.OrdinalIgnoreCase);
-        private static readonly TimeSpan ReadCacheTtl = TimeSpan.FromSeconds(20);
+        // PERFORMANCE (W-M1): 20s was too tight for read-after-read patterns from LLM agents
+        // that consult the same object multiple times in a single tool sequence. Invalidation
+        // is event-driven elsewhere, so doubling the TTL is safe.
+        private static readonly TimeSpan ReadCacheTtl = TimeSpan.FromSeconds(60);
 
         private readonly KbService _kbService;
         private readonly BuildService _buildService;

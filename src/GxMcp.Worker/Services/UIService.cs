@@ -94,8 +94,50 @@ namespace GxMcp.Worker.Services
                 if (part == null || part.Document == null || part.Document.DocumentElement == null) return arr;
 
                 var tree = GxWebFormHelper.GetWebTagTree(obj, part.Document.DocumentElement);
-                if (tree == null || tree.Root == null) return arr;
-                CollectControls(tree, arr);
+                if (tree != null && tree.Root != null)
+                {
+                    CollectControls(tree, arr);
+                }
+
+                // FR#8 (friction-report 2026-05-14): the SDK tree walker can return an empty
+                // tree on layouts that mix raw HTML with gx* prefixed elements. Fall back to a
+                // direct XML scan so the agent always sees the gxButton / gxBitmap / gxAttribute
+                // / gxTextBlock controls present in the form — better than returning [].
+                if (arr.Count == 0)
+                {
+                    try
+                    {
+                        var nodes = part.Document.DocumentElement.SelectNodes("//*[starts-with(local-name(), 'gx')]");
+                        if (nodes != null)
+                        {
+                            foreach (System.Xml.XmlNode node in nodes)
+                            {
+                                string elName = node.LocalName;
+                                string ctrlName = node.Attributes?["ControlName"]?.Value ?? node.Attributes?["id"]?.Value;
+                                string ctrlType = node.Attributes?["ControlType"]?.Value;
+                                string binding = node.Attributes?["Attribute"]?.Value
+                                              ?? node.Attributes?["Variable"]?.Value
+                                              ?? node.Attributes?["AttID"]?.Value;
+                                string evName = node.Attributes?["onClickEvent"]?.Value
+                                             ?? node.Attributes?["eventGX"]?.Value
+                                             ?? node.Attributes?["event"]?.Value;
+
+                                if (string.IsNullOrEmpty(ctrlName) && string.IsNullOrEmpty(binding)) continue;
+
+                                arr.Add(new JObject
+                                {
+                                    ["name"] = ctrlName,
+                                    ["type"] = elName,
+                                    ["controlType"] = ctrlType,
+                                    ["dataBinding"] = binding,
+                                    ["event"] = evName,
+                                    ["_fallback"] = true // signals this came from the XML-scan path
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception scanEx) { Logger.Debug("GetControlsRepertoire fallback scan: " + scanEx.Message); }
+                }
             }
             catch (Exception ex) { Logger.Debug("GetControlsRepertoire: " + ex.Message); }
             return arr;

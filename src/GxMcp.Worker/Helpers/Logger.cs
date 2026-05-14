@@ -1,15 +1,28 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Text;
+using System.Threading;
 
 namespace GxMcp.Worker.Helpers
 {
+    // PERFORMANCE (W-A1): previously every Log() call took a global lock + File.AppendAllText
+    // synchronously. With ~194 call sites across the Worker, that turned every hot path into a
+    // disk-bound critical section. The async writer below decouples the producers from disk I/O:
+    //  - producers push lines into a BlockingCollection (lock-free under contention),
+    //  - a single background writer drains the queue in batches and appends with one open file
+    //    handle per batch.
+    // Console.Error.WriteLine is preserved for each line so the Gateway capture path is unchanged
+    // and so a crash never loses the very latest log line.
     public static class Logger
     {
         private static readonly string LogFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "worker_debug.log");
-        private static readonly object LockObj = new object();
+        private static readonly BlockingCollection<string> _queue = new BlockingCollection<string>();
+        private static readonly Thread _writer;
 
         static Logger()
         {
+            // Preserve the previous log rotation behaviour (rename existing file to .prev.log).
             for (int i = 0; i < 3; i++)
             {
                 try
@@ -22,39 +35,72 @@ namespace GxMcp.Worker.Helpers
                         break;
                     }
                 }
-                catch 
-                { 
+                catch
+                {
                     if (i == 2) break;
-                    System.Threading.Thread.Sleep(100); 
+                    Thread.Sleep(100);
+                }
+            }
+
+            _writer = new Thread(WriterLoop)
+            {
+                IsBackground = true,
+                Name = "LoggerWriter"
+            };
+            _writer.Start();
+
+            // Ensure pending lines flush on process exit (best-effort; daemon thread).
+            try { AppDomain.CurrentDomain.ProcessExit += (_, __) => Shutdown(); } catch { }
+        }
+
+        public static void Info(string message)  => Enqueue("INFO",  message);
+        public static void Warn(string message)  => Enqueue("WARN",  message);
+        public static void Error(string message) => Enqueue("ERROR", message);
+        public static void Debug(string message) => Enqueue("DEBUG", message);
+
+        private static void Enqueue(string level, string message)
+        {
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+            string line = $"[{timestamp}] [{level}] {message}";
+
+            // Surface to stderr synchronously (cheap, non-blocking on the OS level) so the
+            // Gateway captures the line immediately even if the file writer is behind.
+            try { Console.Error.WriteLine($"[Worker Log] {line}"); } catch { }
+
+            if (_queue.IsAddingCompleted) return;
+            try { _queue.Add(line); }
+            catch (InvalidOperationException) { /* writer shutting down — drop silently */ }
+        }
+
+        private static void WriterLoop()
+        {
+            var batch = new StringBuilder(8192);
+            foreach (var first in _queue.GetConsumingEnumerable())
+            {
+                batch.Clear();
+                batch.AppendLine(first);
+
+                // Drain anything else that's already queued so we issue one I/O per batch.
+                while (batch.Length < 64 * 1024 && _queue.TryTake(out var next))
+                {
+                    batch.AppendLine(next);
+                }
+
+                try
+                {
+                    File.AppendAllText(LogFile, batch.ToString());
+                }
+                catch
+                {
+                    // Silent fallback (disk full / locked): lines already went to stderr.
                 }
             }
         }
 
-        public static void Info(string message) => Log("INFO", message);
-        public static void Warn(string message) => Log("WARN", message);
-        public static void Error(string message) => Log("ERROR", message);
-        public static void Debug(string message) => Log("DEBUG", message);
-
-        private static void Log(string level, string message)
+        public static void Shutdown()
         {
-            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            string line = $"[{timestamp}] [{level}] {message}";
-            
-            // Log to Console.Error for Gateway capturing
-            Console.Error.WriteLine($"[Worker Log] {line}");
-
-            try
-            {
-                lock (LockObj)
-                {
-                    File.AppendAllText(LogFile, line + Environment.NewLine);
-                }
-            }
-            catch 
-            { 
-                // Silent fallback to prevent worker crash if disk is full/locked
-                // We already sent the log to Console.Error above
-            }
+            try { _queue.CompleteAdding(); } catch { }
+            try { _writer.Join(TimeSpan.FromSeconds(2)); } catch { }
         }
     }
 }
