@@ -6,7 +6,21 @@ Coordinated perf & stability release closing the tools-disappear-mid-session
 bug and reducing roundtrips/payload across the MCP surface. All 13 changes
 gated behind a single feature flag `MCP_PERF_PROFILE=v1` (default on).
 Env-flip to `legacy` restores pre-v2.2.0 behavior. Total test count grew
-from 135 → 347, all green.
+from 135 → 199, all green.
+
+### Polish (post-smoke-verification)
+- **Piggyback injection layer fix.** `_meta.background_jobs` now injects
+  into the inner `content[0].text` payload (which the LLM actually
+  reads), not the JSON-RPC wrapper. Async build completions surface on
+  the next tool response as designed.
+- **Long-poll status accepts `target` as `job_id` fallback.** The
+  `lifecycle status` tool conventionally takes `target`; LLMs and users
+  pass the job ID there. Registry is probed first; legacy taskId-based
+  status falls through unchanged when the value isn't a registered job.
+- **`type` alias for `typeFilter` in list/query/search.** The
+  `genexus_list_objects` / `genexus_query` / `genexus_search_source`
+  routers now accept both names. Aligns with the rest of the tool
+  surface where `type` is the conventional parameter name.
 
 Spec: `docs/superpowers/specs/2026-05-13-mcp-perf-and-tool-stability-design.md`.
 Plan: `docs/superpowers/plans/2026-05-13-mcp-perf-and-tool-stability-v2.2.0.md`.
