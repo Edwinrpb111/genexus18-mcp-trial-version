@@ -66,6 +66,8 @@ namespace GxMcp.Worker.Services
             {
                 _state.Status = "Reindexing";
                 _state.Progress = 0;
+                _state.EtaMs = null;
+                _state.LastIndexedAt = null;
                 _state.TotalObjects = totalEstimated;
             }
         }
@@ -76,6 +78,16 @@ namespace GxMcp.Worker.Services
             {
                 _state.Progress = progress;
                 _state.EtaMs = etaMs;
+            }
+        }
+
+        public void MarkIndexFailed()
+        {
+            lock (_stateLock)
+            {
+                _state.Status = "Cold";
+                _state.Progress = null;
+                _state.EtaMs = null;
             }
         }
 

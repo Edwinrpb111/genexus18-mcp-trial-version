@@ -233,6 +233,10 @@ namespace GxMcp.Worker.Services
                     Logger.Error($"[BULK-INDEX-FAIL] elapsedMs={bulkSw.ElapsedMilliseconds} error={ex.Message}");
                     _isIndexing = false;
                     _currentStatus = "Error: " + ex.Message;
+                    // v2.3.8 (Task 1.1 review): reset IndexState on failure so callers don't
+                    // see a permanent "Reindexing" status when bulk indexing throws after
+                    // MarkReindexStarted. Wrapped in try/catch for resilience.
+                    try { _indexCacheService?.MarkIndexFailed(); } catch { }
                 }
             }) { 
                 IsBackground = true, 
