@@ -1588,7 +1588,10 @@ namespace GxMcp.Gateway
                                             ? "RebuildAll"
                                             : "Build",
                                         ["target"] = tArgs?["target"]?.ToString(),
-                                        ["client"] = "mcp"
+                                        ["client"] = "mcp",
+                                        // v2.3.8 (Task 5.2) — forward callee-expansion knobs through the async path.
+                                        ["includeCallees"] = tArgs?["includeCallees"]?.ToString(),
+                                        ["buildPlanCap"] = tArgs?["buildPlanCap"]?.ToObject<int?>()
                                     };
 
                                     JObject? ackEnvelope = await SendWorkerCommandAsync(

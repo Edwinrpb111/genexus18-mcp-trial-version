@@ -15,7 +15,13 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_lifecycle":
                     switch (action)
                     {
-                        case "build": return new { module = "Build", action = "Build", target = target };
+                        case "build": return new {
+                            module = "Build",
+                            action = "Build",
+                            target = target,
+                            includeCallees = args?["includeCallees"]?.ToString(),
+                            buildPlanCap = args?["buildPlanCap"]?.ToObject<int?>()
+                        };
                         case "cancel": return new { module = "Build", action = "Cancel", target = target };
                         case "rebuild": return new { module = "Build", action = "RebuildAll", target = target };
                         case "reorg": return new { module = "Build", action = "Reorg", target = target };

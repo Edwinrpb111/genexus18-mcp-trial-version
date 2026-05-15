@@ -39,7 +39,9 @@ namespace GxMcp.Gateway.Tests
             // in v2.3.7 to fit 6 new tools (validate_payload, bulk_edit, apply_template,
             // diff, export_unified, delete_variable). Bumped to 4800 in v2.3.8 (Task 2.2)
             // to fit nameFilter/descriptionFilter/pathPrefix on genexus_list_objects.
-            Assert.True(approxTokens < 4800, $"tool_definitions.json is ~{approxTokens} tokens; budget 4800.");
+            // Bumped to 5000 in v2.3.8 (Task 5.2) for includeCallees/buildPlanCap on
+            // genexus_lifecycle.
+            Assert.True(approxTokens < 5000, $"tool_definitions.json is ~{approxTokens} tokens; budget 5000.");
         }
     }
 }

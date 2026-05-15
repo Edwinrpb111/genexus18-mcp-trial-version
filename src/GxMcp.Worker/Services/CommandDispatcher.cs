@@ -71,7 +71,9 @@ namespace GxMcp.Worker.Services
             _navigationSqlService = new NavigationSqlService(_navigationService);
             _listService = new ListService(_kbService, _indexCacheService);
             _uiService = new UIService(_kbService, _objectService);
-            _analyzeService = new AnalyzeService(_kbService, _objectService, _indexCacheService, _navigationService, _uiService, new CallerGraphService(_indexCacheService, _objectService));
+            var callerGraphService = new CallerGraphService(_indexCacheService, _objectService);
+            _analyzeService = new AnalyzeService(_kbService, _objectService, _indexCacheService, _navigationService, _uiService, callerGraphService);
+            _buildService.SetCallerGraphService(callerGraphService);
             _summarizeService = new SummarizeService(_kbService, _objectService);
             _injectionService = new InjectionService(_kbService, _objectService, _analyzeService);
             _patternAnalysisService = new PatternAnalysisService(_objectService);
@@ -532,7 +534,13 @@ namespace GxMcp.Worker.Services
                             args?["page"]?.ToObject<int?>() ?? 1,
                             args?["pageSize"]?.ToObject<int?>() ?? 50);
                         if (action == "Cancel") return _buildService.Cancel(target);
-                        return _buildService.Build(action, target);
+                        {
+                            // v2.3.8 (Task 5.2): forward includeCallees + buildPlanCap from gateway.
+                            var includeCallees = args?["includeCallees"]?.ToString();
+                            var cap = args?["buildPlanCap"]?.ToObject<int?>() ?? 200;
+                            if (string.IsNullOrWhiteSpace(includeCallees)) includeCallees = "transitive";
+                            return _buildService.Build(action, target, includeCallees, cap);
+                        }
                     case "validation":
                         return _validationService.ValidateCode(target, action, payload);
                     case "test":
