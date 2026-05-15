@@ -247,6 +247,7 @@ namespace GxMcp.Worker.Services
 
                     if (!persistedMatches)
                     {
+                        AttachPersistedSnippet(writePayload, target, partName, typeFilter, finalCode);
                         // Fast path can report success before the physical source part is fully persisted.
                         string fallbackWrite = _writeService.WriteObject(target, partName, finalCode, typeFilter, autoValidate: false, preferFastSourceSave: false, autoInjectVariables: false);
                         JObject fallbackPayload = ParseWriteResult(fallbackWrite);
@@ -272,6 +273,7 @@ namespace GxMcp.Worker.Services
                             {
                                 writePayload["status"] = "Error";
                                 writePayload["error"] = "Patch write verification mismatch after fallback write.";
+                                AttachPersistedSnippet(writePayload, target, partName, typeFilter, finalCode);
 
                                 // Restore original source: without this, a fallback write that reports
                                 // success but fails verification leaves the matched context deleted and
@@ -964,6 +966,47 @@ namespace GxMcp.Worker.Services
                 error = ex.Message;
                 return false;
             }
+        }
+
+        // When verify mismatches, surface a line-based slice of the actual on-disk content
+        // so the agent can confirm the state without a follow-up genexus_read call.
+        private void AttachPersistedSnippet(JObject writePayload, string target, string partName, string typeFilter, string expectedSource)
+        {
+            try
+            {
+                string readResp = ReadSourceFast(target, partName, typeFilter);
+                if (!string.IsNullOrWhiteSpace(TryExtractError(readResp))) return;
+                var json = JObject.Parse(readResp);
+                string persisted = json["source"]?.ToString() ?? string.Empty;
+
+                string[] persistedLines = persisted.Replace("\r\n", "\n").Split('\n');
+                string[] expectedLines = (expectedSource ?? string.Empty).Replace("\r\n", "\n").Split('\n');
+
+                int divergeLine = 0;
+                int max = Math.Min(persistedLines.Length, expectedLines.Length);
+                while (divergeLine < max && persistedLines[divergeLine] == expectedLines[divergeLine]) divergeLine++;
+
+                const int contextLines = 10;
+                int start = Math.Max(0, divergeLine - contextLines);
+                int end = Math.Min(persistedLines.Length, divergeLine + contextLines + 1);
+                int len = Math.Max(0, end - start);
+
+                var sb = new System.Text.StringBuilder();
+                for (int i = 0; i < len; i++)
+                {
+                    if (i > 0) sb.Append('\n');
+                    sb.Append(persistedLines[start + i]);
+                }
+
+                writePayload["persistedSnippet"] = new JObject
+                {
+                    ["startLine"] = start + 1,
+                    ["divergeLine"] = divergeLine + 1,
+                    ["content"] = sb.ToString(),
+                    ["totalLines"] = persistedLines.Length
+                };
+            }
+            catch { /* keep payload valid even if snippet capture fails */ }
         }
 
         // FR#2: emit a compact diff hint so the caller sees WHY verify disagreed instead of

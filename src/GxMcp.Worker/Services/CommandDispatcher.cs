@@ -227,7 +227,11 @@ namespace GxMcp.Worker.Services
                                         criteria.ArgMatches[idx] = prop.Value?.ToString();
                                 }
                             }
-                            return _sourceSearchService.SearchAsJson(criteria);
+                            string sourceSearchResult = _sourceSearchService.SearchAsJson(criteria);
+                            int inlineTopSearchSource = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
+                            return inlineTopSearchSource > 0
+                                ? AppendInlineReadsForSourceSearch(sourceSearchResult, inlineTopSearchSource)
+                                : sourceSearchResult;
                         }
                         break;
                     case "list":
@@ -525,24 +529,35 @@ namespace GxMcp.Worker.Services
                 (name, type) => _objectService.ReadObjectSourceParts(name, null, type));
         }
 
+        private string AppendInlineReadsForSourceSearch(string responseJson, int n) =>
+            AppendInlineReadsCore(responseJson, n,
+                (name, type) => _objectService.ReadObjectSourceParts(name, null, type),
+                arrayKey: "hits", nameField: "objectName", dedupe: true);
+
         /// <summary>
         /// Testable core: merges inline_reads into a response JSON given a reader delegate.
+        /// arrayKey/nameField/dedupe let search_source (hits/objectName, dedup repeats) share
+        /// this with query/list_objects (results/name, no dedup).
         /// </summary>
-        public static string AppendInlineReadsCore(string responseJson, int n, Func<string, string, string> reader)
+        public static string AppendInlineReadsCore(string responseJson, int n, Func<string, string, string> reader,
+            string arrayKey = "results", string nameField = "name", bool dedupe = false)
         {
             if (string.IsNullOrEmpty(responseJson) || n <= 0) return responseJson;
             try
             {
                 var responseObj = JObject.Parse(responseJson);
-                var results = responseObj["results"] as JArray;
-                if (results == null || results.Count == 0) return responseJson;
+                var items = responseObj[arrayKey] as JArray;
+                if (items == null || items.Count == 0) return responseJson;
 
                 var reads = new JArray();
-                foreach (var item in results.Take(n).OfType<JObject>())
+                var seen = dedupe ? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
+                foreach (var item in items.OfType<JObject>())
                 {
-                    string name = item["name"]?.ToString();
+                    if (reads.Count >= n) break;
+                    string name = item[nameField]?.ToString();
                     string type = item["type"]?.ToString();
                     if (string.IsNullOrEmpty(name)) continue;
+                    if (seen != null && !seen.Add(name)) continue;
                     try
                     {
                         string content = reader(name, type);
@@ -556,15 +571,10 @@ namespace GxMcp.Worker.Services
                     catch { /* skip objects that fail to read */ }
                 }
 
-                if (reads.Count > 0)
-                    responseObj["inline_reads"] = reads;
-
+                if (reads.Count > 0) responseObj["inline_reads"] = reads;
                 return responseObj.ToString(Newtonsoft.Json.Formatting.None);
             }
-            catch
-            {
-                return responseJson; // Return original if post-processing fails
-            }
+            catch { return responseJson; }
         }
     }
 }

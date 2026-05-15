@@ -159,10 +159,15 @@ namespace GxMcp.Worker.Services
 
         private static JObject BuildHit(SearchIndex.IndexEntry e, string part, string[] lines, int line, ParsedCall call)
         {
+            const int ctx = 3;
             int idx = line - 1;
             string lineText = idx >= 0 && idx < lines.Length ? lines[idx] : "";
-            string before = idx > 0 ? lines[idx - 1] : "";
-            string after = idx + 1 < lines.Length ? lines[idx + 1] : "";
+
+            var before = new JArray();
+            for (int i = Math.Max(0, idx - ctx); i < idx; i++) before.Add(lines[i]);
+            var after = new JArray();
+            for (int i = idx + 1; i < Math.Min(lines.Length, idx + 1 + ctx); i++) after.Add(lines[i]);
+
             var hit = new JObject
             {
                 ["objectName"] = e.Name,

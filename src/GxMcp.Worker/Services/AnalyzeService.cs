@@ -492,6 +492,39 @@ namespace GxMcp.Worker.Services
                     }));
                 }
 
+                // 5. Callers (incoming references) — surfaces top-N callers so the agent can
+                // skip a follow-up analyze(mode=impact) / query usedby:* call. Opt-in via
+                // include=["callers"] or default (when no include filter is provided).
+                if (includeAll || requested.Contains("callers"))
+                {
+                    tasks.Add(Task.Run(() => {
+                        try {
+                            var kb = _kbService.GetKB();
+                            var callers = new JArray();
+                            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            const int maxCallers = 20;
+                            foreach (var reference in obj.GetReferencesTo())
+                            {
+                                string refKey = null;
+                                try { refKey = reference.From?.ToString(); } catch { }
+                                if (string.IsNullOrEmpty(refKey) || !seen.Add(refKey)) continue;
+
+                                var sourceObj = kb.DesignModel.Objects.Get(reference.From);
+                                if (sourceObj == null) continue;
+                                callers.Add(new JObject {
+                                    ["name"] = sourceObj.Name,
+                                    ["type"] = sourceObj.TypeDescriptor.Name
+                                });
+                                if (callers.Count >= maxCallers) break;
+                            }
+                            lock (result) {
+                                result["callers"] = callers;
+                                result["callersTruncated"] = callers.Count >= maxCallers;
+                            }
+                        } catch {}
+                    }));
+                }
+
                 // Wait for all metadata tasks to complete (with timeout for safety)
                 Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(5));
 

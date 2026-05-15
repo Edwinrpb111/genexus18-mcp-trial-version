@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.3.6 — 2026-05-15
+
+Less-turns pass: cut round-trips between the agent and the MCP by enriching
+return payloads. Same code quality, same correctness guarantees, fewer
+tool calls per task. No public API breaking changes.
+
+### Worker (.NET 4.8) — less-turns
+
+- **`inspect` now surfaces `callers[]`** (`AnalyzeService.GetConversionContext`) —
+  top-20 incoming references resolved via `obj.GetReferencesTo()`, runs in
+  parallel with the existing metadata tasks. Mata o `analyze(mode=impact)` /
+  `query usedby:*` follow-up que o agente fazia depois de quase todo inspect.
+  Opt-in via `include=["callers"]` ou default quando `include` é omitido.
+  Adds `callersTruncated` flag when the 20-cap is hit.
+- **`persistedSnippet` em falhas de edit** (`PatchService.AttachPersistedSnippet`) —
+  quando `persistedVerified=false` (inicial ou pós-fallback), o payload agora
+  inclui `{startLine, divergeLine, content, totalLines}` com ±10 linhas do
+  estado real em disco em volta da primeira divergência vs. o que foi enviado.
+  Antes a mensagem dizia "re-read source"; agora o agente confirma o estado
+  visualmente sem chamar `genexus_read`.
+- **`search_source` context bumped to ±3 lines** (`SourceSearchService.BuildHit`)
+  — `contextBefore` / `contextAfter` agora são arrays (até 3 linhas cada) em
+  vez de strings de 1 linha. Para a maioria dos hits o agente entende o
+  callsite sem precisar de um `genexus_read` subsequente.
+- **`inline_read_top` em `search_source`** (`CommandDispatcher.AppendInlineReadsForSourceSearch`)
+  — espelha o pattern existente de `query` / `list_objects`. Dedup por
+  `objectName` para que `N=3` retorne até 3 *objetos distintos* (não 3 hits
+  no mesmo arquivo). `AppendInlineReadsCore` foi generalizado para aceitar
+  `arrayKey` / `nameField` / `dedupe` opcionais; os call sites antigos
+  mantêm comportamento idêntico via defaults.
+
+### Schema budget
+
+- **`tool_definitions.json` trimmed: 4150 → 3974 tokens** (orçamento 4000).
+  Boilerplate `"Target KB (alias or path). Required when 2+ KBs are open."`
+  (24 ocorrências) → `"Target KB. Required when 2+ open."`; descrição longa do
+  `inline_read_top` em 3 tools → forma compacta. Sem perda de informação útil
+  ao modelo. Pre-existing `ToolSchemaSizeTests` agora verde.
+
+### Tests
+
+365/365 unit tests passing (211 Gateway + 154 Worker). Build clean (0 errors).
+
 ## v2.3.5 — 2026-05-14
 
 Two-pass performance + friction sweep. No public API breaking changes.
