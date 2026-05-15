@@ -108,6 +108,30 @@ namespace GxMcp.Worker.Services
             _indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
         }
 
+        // v2.3.8 (Task 1.3): test-only seam. Bypasses disk load so unit tests for
+        // graph services (CallerGraphService) can drive a deterministic in-memory
+        // index without spinning up a KB. Not intended for production code paths.
+        internal void LoadFromEntries(IEnumerable<SearchIndex.IndexEntry> entries)
+        {
+            lock (_lock)
+            {
+                var idx = new SearchIndex();
+                if (entries != null)
+                {
+                    foreach (var e in entries)
+                    {
+                        if (e == null || string.IsNullOrEmpty(e.Name)) continue;
+                        string type = string.IsNullOrEmpty(e.Type) ? "Object" : e.Type;
+                        string key = type + ":" + e.Name;
+                        idx.Objects[key] = e;
+                    }
+                }
+                idx.LastUpdated = DateTime.UtcNow;
+                _index = idx;
+                _initialized = true;
+            }
+        }
+
         public void SetBuildService(BuildService bs) { _buildService = bs; }
         public KbService KbService => _buildService?.KbService;
 
