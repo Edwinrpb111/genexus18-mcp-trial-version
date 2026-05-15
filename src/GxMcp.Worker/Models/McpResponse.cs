@@ -27,12 +27,20 @@ namespace GxMcp.Worker.Models
 
         public static string Error(string message, string target = null)
         {
+            // v2.3.8 (Task 7.1) — translate SDK PT-BR messages to canonical EN;
+            // keep the original under _meta.sourceMessage so support tooling can
+            // still grep for the literal SDK string.
+            string en = GxMcp.Worker.Helpers.ErrorMessages.Translate(message);
             var err = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = message
+                ["error"] = en
             };
             if (!string.IsNullOrEmpty(target)) err["target"] = target;
+            if (!string.Equals(en, message, StringComparison.Ordinal))
+            {
+                err["_meta"] = new JObject { ["sourceMessage"] = message };
+            }
             return err.ToString();
         }
 
@@ -45,18 +53,30 @@ namespace GxMcp.Worker.Models
             string objectType = null,
             JArray availableParts = null)
         {
+            string enMsg = GxMcp.Worker.Helpers.ErrorMessages.Translate(message);
+            string enDetails = GxMcp.Worker.Helpers.ErrorMessages.Translate(details);
             var err = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = message
+                ["error"] = enMsg
             };
 
             if (!string.IsNullOrEmpty(target)) err["target"] = target;
             if (!string.IsNullOrEmpty(part)) err["part"] = part;
-            if (!string.IsNullOrEmpty(details)) err["details"] = details;
+            if (!string.IsNullOrEmpty(enDetails)) err["details"] = enDetails;
             if (!string.IsNullOrEmpty(objectName)) err["objectName"] = objectName;
             if (!string.IsNullOrEmpty(objectType)) err["objectType"] = objectType;
             if (availableParts != null && availableParts.Count > 0) err["availableParts"] = availableParts;
+
+            bool msgChanged = !string.Equals(enMsg, message, StringComparison.Ordinal);
+            bool detailsChanged = !string.Equals(enDetails, details, StringComparison.Ordinal);
+            if (msgChanged || detailsChanged)
+            {
+                var meta = new JObject();
+                if (msgChanged) meta["sourceMessage"] = message;
+                if (detailsChanged) meta["sourceDetails"] = details;
+                err["_meta"] = meta;
+            }
 
             return err.ToString();
         }
