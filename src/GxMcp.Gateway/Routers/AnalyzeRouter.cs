@@ -31,12 +31,26 @@ namespace GxMcp.Gateway.Routers
                         case "hierarchy":
                             return new { module = "Analyze", action = "GetHierarchy", target = target, type = type };
                         case "impact":
-                            // v2.3.8 (Task 1.4): delegate to ImpactAnalysis with index-readiness envelope.
+                            // v2.3.8 (Task 1.4 + post-self-review): delegate to ImpactAnalysis
+                            // with index-readiness envelope. Flags must be flattened at the top
+                            // level — BuildWorkerRpcRequest clones the entire workerCommand into
+                            // request.params, so a nested @params would land at
+                            // request.params.params.waitForIndex (two levels deep) and the
+                            // worker's `args["waitForIndex"]` lookup would miss it. That's
+                            // exactly why the pre-fix flag was always seen as `true`, forcing
+                            // a 30s wait loop even with waitForIndex=false.
                             bool waitForIndex = args?["waitForIndex"]?.ToObject<bool?>() ?? true;
                             int? waitTimeoutMs = args?["waitTimeoutMs"]?.ToObject<int?>();
-                            var impactParams = new JObject { ["waitForIndex"] = waitForIndex };
-                            if (waitTimeoutMs.HasValue) impactParams["waitTimeoutMs"] = waitTimeoutMs.Value;
-                            return new { module = "Analyze", action = "ImpactAnalysis", target = target, type = type, @params = impactParams };
+                            string? cancelToken = args?["cancelToken"]?.ToString();
+                            return new {
+                                module = "Analyze",
+                                action = "ImpactAnalysis",
+                                target = target,
+                                type = type,
+                                waitForIndex = waitForIndex,
+                                waitTimeoutMs = waitTimeoutMs,
+                                cancelToken = cancelToken
+                            };
                         case "data_context":
                             return new { module = "Analyze", action = "GetDataContext", target = target, type = type };
                         case "ui_context":
