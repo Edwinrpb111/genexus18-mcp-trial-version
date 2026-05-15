@@ -21,6 +21,7 @@ namespace GxMcp.Worker.Services
         private string _gxDir;
         private KbService _kbService;
         private IndexCacheService _indexCacheService;
+        private CallerGraphService _callerGraphService;
         private static readonly ConcurrentDictionary<string, BuildTaskStatus> _tasks = new ConcurrentDictionary<string, BuildTaskStatus>();
 
         private const int TailBufferSize = 30;
@@ -72,6 +73,9 @@ namespace GxMcp.Worker.Services
             public string Error { get; set; }
             public List<string> CallersToAlsoBuild { get; set; }
             public string Hint { get; set; }
+            // v2.3.8 (Task 5.1/5.2): expansion plan applied to the BuildOne
+            // sequence. Surfaced under _meta.buildPlan in status/result.
+            public BuildPlan BuildPlan { get; set; }
 
             [JsonIgnore] internal Process Process { get; set; }
             [JsonIgnore] internal DateTime StartedAt { get; set; }
@@ -95,12 +99,123 @@ namespace GxMcp.Worker.Services
 
         public void SetKbService(KbService kbService) { _kbService = kbService; }
         public void SetIndexCacheService(IndexCacheService ics) { _indexCacheService = ics; }
+        public void SetCallerGraphService(CallerGraphService graph) { _callerGraphService = graph; }
         public KbService KbService => _kbService;
+
+        // v2.3.8 (Task 5.1) — friction report 2026-05-15 #7. Building a
+        // WebPanel that calls N procedures emitted CS0246 because each
+        // generated csproj lacked references to callee DLLs. Fix: expand the
+        // target list via CallerGraphService and order it reverse-topologically
+        // (deepest callees first, originally requested targets last), then
+        // emit BuildOne for each — every csproj sees its dependencies on
+        // disk by the time GeneXus generates it.
+        public class BuildPlan
+        {
+            public List<string> Expanded { get; set; } = new List<string>();
+            public List<string> Skipped { get; set; } = new List<string>();
+            public bool Truncated { get; set; }
+            public int NodeCap { get; set; }
+            public int RequestedNodes { get; set; }
+            public string IncludeCallees { get; set; }
+        }
+
+        public BuildPlan ExpandTargets(IEnumerable<string> targets, string includeCallees = "transitive", int cap = 200)
+        {
+            var plan = new BuildPlan { NodeCap = cap, IncludeCallees = includeCallees ?? "transitive" };
+            var originalList = (targets ?? Enumerable.Empty<string>())
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim())
+                .ToList();
+            var originalSet = new HashSet<string>(originalList, StringComparer.OrdinalIgnoreCase);
+
+            // No graph or "none" → preserve original order, no expansion.
+            if (_callerGraphService == null || string.Equals(plan.IncludeCallees, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                plan.Expanded = originalList;
+                return plan;
+            }
+
+            // Collect callees per requested target. We over-fetch (cap+1) to
+            // detect truncation before mixing in the originally requested set.
+            var calleeOrder = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int requestedTotal = 0;
+
+            foreach (var t in originalList)
+            {
+                if (string.Equals(plan.IncludeCallees, "direct", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var c in _callerGraphService.GetCallees(t))
+                    {
+                        requestedTotal++;
+                        if (originalSet.Contains(c)) continue;
+                        if (seen.Add(c)) calleeOrder.Add(c);
+                    }
+                }
+                else // transitive (default)
+                {
+                    var trans = _callerGraphService.GetCalleesTransitive(t, maxNodes: cap + 1);
+                    requestedTotal += trans.Nodes.Count;
+                    if (trans.Truncated)
+                    {
+                        plan.Truncated = true;
+                        plan.RequestedNodes = requestedTotal;
+                    }
+                    foreach (var c in trans.Nodes)
+                    {
+                        if (originalSet.Contains(c)) continue;
+                        if (seen.Add(c)) calleeOrder.Add(c);
+                    }
+                }
+            }
+
+            if (plan.Truncated)
+            {
+                // Don't emit a partial plan — caller decides (BuildPlanTooLarge response).
+                plan.Expanded = originalList;
+                return plan;
+            }
+
+            // Reverse so the deepest leaves come first (callees before callers).
+            // BFS yields shallowest-first; reversing gives the topological order
+            // we want for sequential BuildOne emission.
+            calleeOrder.Reverse();
+
+            plan.Expanded.AddRange(calleeOrder);
+            plan.Expanded.AddRange(originalList);
+            return plan;
+        }
 
         public string Build(string action, string target)
         {
+            return Build(action, target, includeCallees: "transitive", buildPlanCap: 200);
+        }
+
+        public string Build(string action, string target, string includeCallees, int buildPlanCap)
+        {
             // Parse target: single name OR comma/semicolon-separated list for batch "Build With These Only"
             var targets = ParseTargets(target);
+
+            // v2.3.8 (Task 5.1) — expand via CallerGraphService so callees compile
+            // before callers and every per-object csproj sees its dependency DLLs.
+            // Only applies to Build action with concrete targets; RebuildAll/Reorg/etc. ignore.
+            BuildPlan plan = null;
+            if (action != null && action.Equals("Build", StringComparison.OrdinalIgnoreCase) && targets.Count > 0)
+            {
+                plan = ExpandTargets(targets, includeCallees ?? "transitive", buildPlanCap);
+                if (plan.Truncated)
+                {
+                    return JsonConvert.SerializeObject(new
+                    {
+                        status = "BuildPlanTooLarge",
+                        suggested = "Build All from IDE, or set includeCallees='none' / 'direct' / reduce the target set",
+                        graph = new { requestedNodes = plan.RequestedNodes, cap = plan.NodeCap },
+                        requested = targets,
+                        includeCallees = plan.IncludeCallees
+                    });
+                }
+                targets = plan.Expanded;
+            }
 
             string taskId = Guid.NewGuid().ToString().Substring(0, 8);
             var status = new BuildTaskStatus {
@@ -113,7 +228,8 @@ namespace GxMcp.Worker.Services
                 Status = "Running",
                 Phase = "Starting",
                 StartTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                StartedAt = DateTime.UtcNow
+                StartedAt = DateTime.UtcNow,
+                BuildPlan = plan
             };
 
             // Best-effort caller lookup for hint (only meaningful for single-object builds)
@@ -139,7 +255,15 @@ namespace GxMcp.Worker.Services
                 taskId = taskId,
                 targets = targets.Count > 0 ? targets : null,
                 callersToAlsoBuild = status.CallersToAlsoBuild,
-                hint = status.Hint
+                hint = status.Hint,
+                _meta = plan != null ? new {
+                    buildPlan = new {
+                        requested = ParseTargets(target),
+                        expanded = plan.Expanded,
+                        includeCallees = plan.IncludeCallees,
+                        cap = plan.NodeCap
+                    }
+                } : null
             });
         }
 
