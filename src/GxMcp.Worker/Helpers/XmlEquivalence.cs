@@ -157,5 +157,108 @@ namespace GxMcp.Worker.Helpers
             if (s == null) return string.Empty;
             return s.Length <= 80 ? s : s.Substring(0, 80) + "…";
         }
+
+        // v2.3.8 Task 4.6 — line-based diff used by patch verification to decide whether
+        // a post-save divergence is INSIDE the edited window (real rollback condition)
+        // or OUTSIDE it (SDK normalized an untouched line — e.g. DATETIME(10,5)→(8,5);
+        // treat as a side-effect, not a verification failure). Despite living on
+        // XmlEquivalence, the helper is text-line based — the plan calls it `HunkDiff`
+        // because the larger feature classifies on top of XML/source verification.
+        //
+        // Walks both line arrays, finds the first and last differing lines, and emits
+        // one hunk per maximal contiguous run of differences. Each hunk records the
+        // 1-based starting line in `before`, plus the joined `Before` / `After` text.
+        public sealed class LineHunk
+        {
+            public int Line;        // 1-based line in 'before' where the hunk starts
+            public string Before;   // joined removed lines (may be empty for pure insertions)
+            public string After;    // joined inserted lines (may be empty for pure deletions)
+            public int BeforeLineCount;
+            public int AfterLineCount;
+        }
+
+        public static List<LineHunk> HunkDiff(string before, string after)
+        {
+            var result = new List<LineHunk>();
+            string[] b = SplitLines(before);
+            string[] a = SplitLines(after);
+
+            // Trim shared prefix.
+            int prefix = 0;
+            int minLen = Math.Min(b.Length, a.Length);
+            while (prefix < minLen && string.Equals(b[prefix], a[prefix], StringComparison.Ordinal))
+                prefix++;
+
+            // Trim shared suffix.
+            int suffix = 0;
+            while (suffix < (minLen - prefix)
+                   && string.Equals(b[b.Length - 1 - suffix], a[a.Length - 1 - suffix], StringComparison.Ordinal))
+                suffix++;
+
+            int bEnd = b.Length - suffix;       // exclusive
+            int aEnd = a.Length - suffix;       // exclusive
+
+            if (prefix >= bEnd && prefix >= aEnd) return result; // identical
+
+            // Inside the differing slab, walk pairwise; group runs of differing lines.
+            int i = prefix, j = prefix;
+            while (i < bEnd || j < aEnd)
+            {
+                // Find a run of differences.
+                int hunkStartBefore = i;
+                var beforeRun = new List<string>();
+                var afterRun = new List<string>();
+
+                while (i < bEnd && j < aEnd && !string.Equals(b[i], a[j], StringComparison.Ordinal))
+                {
+                    beforeRun.Add(b[i]);
+                    afterRun.Add(a[j]);
+                    i++; j++;
+                }
+                if (i >= bEnd || j >= aEnd)
+                {
+                    // Tail asymmetry: leftover lines on one side.
+                    while (i < bEnd) { beforeRun.Add(b[i++]); }
+                    while (j < aEnd) { afterRun.Add(a[j++]); }
+                }
+
+                if (beforeRun.Count > 0 || afterRun.Count > 0)
+                {
+                    result.Add(new LineHunk
+                    {
+                        Line = hunkStartBefore + 1, // 1-based
+                        Before = string.Join("\n", beforeRun),
+                        After = string.Join("\n", afterRun),
+                        BeforeLineCount = beforeRun.Count,
+                        AfterLineCount = afterRun.Count
+                    });
+                }
+
+                // Skip any matching middle (rare for simple diffs since we already trimmed
+                // prefix/suffix, but defensive in case of multiple disjoint hunks).
+                while (i < bEnd && j < aEnd && string.Equals(b[i], a[j], StringComparison.Ordinal))
+                { i++; j++; }
+            }
+
+            return result;
+        }
+
+        // True when a hunk overlaps the inclusive 1-based edit window [windowStart, windowEnd].
+        // Pure insertions (BeforeLineCount==0) are treated as touching `Line` only.
+        public static bool HunkOverlapsWindow(LineHunk h, int windowStart, int windowEnd)
+        {
+            if (h == null) return false;
+            if (windowStart <= 0 || windowEnd <= 0 || windowEnd < windowStart) return false;
+            int hStart = h.Line;
+            int hEnd = h.Line + Math.Max(0, h.BeforeLineCount - 1);
+            if (h.BeforeLineCount == 0) hEnd = h.Line; // pure insertion
+            return hEnd >= windowStart && hStart <= windowEnd;
+        }
+
+        private static string[] SplitLines(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return new string[0];
+            return s.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        }
     }
 }

@@ -313,6 +313,28 @@ namespace GxMcp.Worker.Services
 
                             if (!persistedMatches)
                             {
+                                // v2.3.8 Task 4.6 (friction-report #13 / #6): before rolling back,
+                                // classify the divergence. If every hunk between the source we asked
+                                // the SDK to save (`finalCode`) and the actual persisted source lies
+                                // OUTSIDE the lines we actually edited, this is an SDK
+                                // side-effect normalization (e.g. `DATETIME(10,5)` → `DATETIME(8,5)`
+                                // on an untouched line) and not a verification failure. Surface the
+                                // normalizations under `_meta.sideEffectNormalizations` and keep
+                                // status=Success. Only when an in-window hunk diverges do we treat
+                                // it as a real divergence and roll back.
+                                if (TryClassifyOutOfWindowOnly(target, partName, typeFilter, workSource, updatedSource, finalCode, out var sideEffects))
+                                {
+                                    writePayload["status"] = "Success";
+                                    writePayload["persistedVerified"] = true;
+                                    writePayload["persistedVerifyError"] = null;
+                                    var meta = writePayload["_meta"] as JObject ?? new JObject();
+                                    meta["sideEffectNormalizations"] = sideEffects;
+                                    writePayload["_meta"] = meta;
+                                    persistedMatches = true;
+                                    UpdateCachedSource(cacheKey, finalCode);
+                                }
+                                else
+                                {
                                 writePayload["status"] = "Error";
                                 writePayload["error"] = "Patch write verification mismatch after fallback write.";
                                 AttachPersistedSnippet(writePayload, target, partName, typeFilter, finalCode);
@@ -344,6 +366,7 @@ namespace GxMcp.Worker.Services
                                 {
                                     writePayload["autoRollbackStatus"] = "Failed";
                                     writePayload["autoRollbackError"] = rbEx.Message;
+                                }
                                 }
                             }
                         }
@@ -1067,6 +1090,99 @@ namespace GxMcp.Worker.Services
                 };
             }
             catch { /* keep payload valid even if snippet capture fails */ }
+        }
+
+        // v2.3.8 Task 4.6 — patch-window-only rollback verification.
+        //
+        // Inputs:
+        //   workSource    = LF-normalized original on-disk source BEFORE the patch.
+        //   updatedSource = LF-normalized source we computed from the patch (what we wanted).
+        //   finalCode     = CRLF version that was actually handed to WriteService.WriteObject().
+        // Output:
+        //   sideEffects   = JArray of {line, before, after} describing every out-of-window
+        //                   normalization the SDK applied on save. Only set when the method
+        //                   returns true (i.e. all hunks are out-of-window).
+        //
+        // Strategy:
+        //   1. Edit window = union of line ranges of HunkDiff(workSource, updatedSource).
+        //   2. Read persisted source from disk (forced cache miss inside ReadSourceFast).
+        //   3. divergenceHunks = HunkDiff(updatedSource, persistedSource).
+        //   4. If any divergence hunk overlaps the edit window → return false (real divergence).
+        //   5. Else → return true; serialize the out-of-window hunks.
+        internal bool TryClassifyOutOfWindowOnly(
+            string target,
+            string partName,
+            string typeFilter,
+            string workSource,
+            string updatedSource,
+            string finalCode,
+            out JArray sideEffects)
+        {
+            sideEffects = null;
+            try
+            {
+                if (string.IsNullOrEmpty(updatedSource) || string.IsNullOrEmpty(workSource)) return false;
+
+                // 1. Compute edit window (1-based inclusive line range).
+                var editHunks = GxMcp.Worker.Helpers.XmlEquivalence.HunkDiff(workSource, updatedSource);
+                if (editHunks.Count == 0) return false; // nothing changed — nothing to classify
+                int windowStart = int.MaxValue, windowEnd = 0;
+                foreach (var h in editHunks)
+                {
+                    int hStart = h.Line;
+                    int hEnd = h.Line + Math.Max(0, h.BeforeLineCount - 1);
+                    if (h.BeforeLineCount == 0) hEnd = h.Line;
+                    if (hStart < windowStart) windowStart = hStart;
+                    if (hEnd > windowEnd) windowEnd = hEnd;
+                }
+                if (windowEnd < windowStart) return false;
+
+                // 2. Read persisted source.
+                string readResp = ReadSourceFast(target, partName, typeFilter);
+                if (!string.IsNullOrWhiteSpace(TryExtractError(readResp))) return false;
+                var json = JObject.Parse(readResp);
+                string persisted = json["source"]?.ToString();
+                if (persisted == null) return false;
+
+                string persistedLf = persisted.Replace("\r\n", "\n").Replace("\r", "\n");
+                string requestedLf = (finalCode ?? updatedSource).Replace("\r\n", "\n").Replace("\r", "\n");
+
+                // Fast equality check (raw, not part-normalized).
+                if (string.Equals(requestedLf, persistedLf, StringComparison.Ordinal))
+                {
+                    sideEffects = new JArray();
+                    return true;
+                }
+
+                // 3. Classify post-save divergence hunks.
+                var divergeHunks = GxMcp.Worker.Helpers.XmlEquivalence.HunkDiff(requestedLf, persistedLf);
+                if (divergeHunks.Count == 0) { sideEffects = new JArray(); return true; }
+
+                var outOfWindow = new JArray();
+                foreach (var h in divergeHunks)
+                {
+                    if (GxMcp.Worker.Helpers.XmlEquivalence.HunkOverlapsWindow(h, windowStart, windowEnd))
+                    {
+                        // A hunk INSIDE the edited window means what we asked for is not what
+                        // landed on disk. That's a real verification failure → caller rolls back.
+                        return false;
+                    }
+                    outOfWindow.Add(new JObject
+                    {
+                        ["line"] = h.Line,
+                        ["before"] = h.Before,
+                        ["after"] = h.After
+                    });
+                }
+
+                sideEffects = outOfWindow;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("[PATCH] window-classification skipped: " + ex.Message);
+                return false;
+            }
         }
 
         // FR#2: emit a compact diff hint so the caller sees WHY verify disagreed instead of
