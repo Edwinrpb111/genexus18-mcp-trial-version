@@ -144,6 +144,9 @@ namespace GxMcp.Worker.Services
                 // GetIndexStatus only reads static volatile fields – no SDK access
                 if (method == "kb" && action == "GetIndexStatus")
                     return true;
+                // v2.3.8 Task 1.2: GetIndexState reads in-memory IndexCacheService snapshot only – no SDK access
+                if (method == "kb" && action == "GetIndexState")
+                    return true;
 
                 
                 // Any operation interacting with GeneXus SDK (COM objects) MUST run in the STA thread to prevent corruption
@@ -189,6 +192,23 @@ namespace GxMcp.Worker.Services
                         if (action == "BulkIndex") return _kbService.BulkIndex();
                         if (action == "SelfTest") return _selfTestService.RunAllTests();
                         if (action == "GetIndexStatus") return _kbService.GetIndexStatus();
+                        if (action == "GetIndexState")
+                        {
+                            // v2.3.8 Task 1.2: surface unified IndexState from IndexCacheService.
+                            // Gateway uses this to populate the `index` block in whoami.
+                            var st = _indexCacheService.GetState();
+                            var j = new JObject
+                            {
+                                ["status"] = st.Status ?? "Cold",
+                                ["totalObjects"] = st.TotalObjects,
+                                ["lastIndexedAt"] = st.LastIndexedAt.HasValue
+                                    ? (JToken)st.LastIndexedAt.Value.ToUniversalTime().ToString("o")
+                                    : JValue.CreateNull(),
+                                ["progress"] = st.Progress.HasValue ? (JToken)st.Progress.Value : JValue.CreateNull(),
+                                ["etaMs"] = st.EtaMs.HasValue ? (JToken)st.EtaMs.Value : JValue.CreateNull()
+                            };
+                            return j.ToString();
+                        }
                         if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
                         if (action == "ListPatternSnapshots") return _kbValidationService.ListPatternSnapshots(target);
                         if (action == "RestorePatternSnapshot") return _kbValidationService.RestorePatternSnapshot(target, args?["snapshotPath"]?.ToString(), _writeService);

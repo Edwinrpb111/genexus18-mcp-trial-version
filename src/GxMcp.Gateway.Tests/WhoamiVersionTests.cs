@@ -77,5 +77,28 @@ namespace GxMcp.Gateway.Tests
             Assert.NotNull(payload["geneXus"]?["supportedMajor"]);
             Assert.Equal("18", payload["geneXus"]?["supportedMajor"]?.ToString());
         }
+
+        // v2.3.8 Task 1.2: whoami surfaces index readiness so the agent can know
+        // whether it should call `lifecycle action=index` before relying on
+        // `search_source` / `analyze` results.
+        [Fact]
+        public void Whoami_IncludesIndexBlock()
+        {
+            var payload = Program.BuildWhoamiPayload();
+            var index = payload["index"] as Newtonsoft.Json.Linq.JObject;
+            Assert.NotNull(index);
+
+            var status = index!["status"]?.ToString();
+            Assert.Contains(status, new[] { "Cold", "Reindexing", "Ready" });
+
+            var totalObjects = index["totalObjects"];
+            Assert.NotNull(totalObjects);
+            Assert.Equal(Newtonsoft.Json.Linq.JTokenType.Integer, totalObjects!.Type);
+
+            // Optional fields must at least be present as JSON keys (may be null).
+            Assert.True(index.ContainsKey("lastIndexedAt"));
+            Assert.True(index.ContainsKey("progress"));
+            Assert.True(index.ContainsKey("etaMs"));
+        }
     }
 }

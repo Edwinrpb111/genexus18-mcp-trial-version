@@ -337,6 +337,54 @@ namespace GxMcp.Gateway
             }
         }
 
+        // v2.3.8 Task 1.2: gateway-side mirror of the worker's IndexCacheService.GetState().
+        // The worker is the source of truth (CommandDispatcher.GetIndexState), but the gateway
+        // keeps a last-known snapshot so `whoami` returns instantly without round-tripping
+        // and works even when no worker is currently attached (default Cold/0). Updaters
+        // (search/lifecycle paths) call UpdateLastKnownIndexState whenever they receive
+        // fresh index telemetry from the worker.
+        private sealed class IndexStateSnapshot
+        {
+            public string Status = "Cold";
+            public int TotalObjects;
+            public DateTime? LastIndexedAt;
+            public double? Progress;
+            public int? EtaMs;
+        }
+        private static IndexStateSnapshot _lastKnownIndexState = new IndexStateSnapshot();
+        private static readonly object _lastKnownIndexStateLock = new object();
+
+        internal static void UpdateLastKnownIndexState(string status, int totalObjects, DateTime? lastIndexedAt, double? progress, int? etaMs)
+        {
+            lock (_lastKnownIndexStateLock)
+            {
+                _lastKnownIndexState = new IndexStateSnapshot
+                {
+                    Status = string.IsNullOrEmpty(status) ? "Cold" : status,
+                    TotalObjects = totalObjects,
+                    LastIndexedAt = lastIndexedAt,
+                    Progress = progress,
+                    EtaMs = etaMs
+                };
+            }
+        }
+
+        private static JObject BuildIndexBlock()
+        {
+            IndexStateSnapshot snap;
+            lock (_lastKnownIndexStateLock) { snap = _lastKnownIndexState; }
+            return new JObject
+            {
+                ["status"] = snap.Status,
+                ["totalObjects"] = snap.TotalObjects,
+                ["lastIndexedAt"] = snap.LastIndexedAt.HasValue
+                    ? (JToken)snap.LastIndexedAt.Value.ToUniversalTime().ToString("o")
+                    : JValue.CreateNull(),
+                ["progress"] = snap.Progress.HasValue ? (JToken)snap.Progress.Value : JValue.CreateNull(),
+                ["etaMs"] = snap.EtaMs.HasValue ? (JToken)snap.EtaMs.Value : JValue.CreateNull()
+            };
+        }
+
         internal static JObject BuildWhoamiPayload()
         {
             var cfg = _activeConfig;
@@ -382,7 +430,10 @@ namespace GxMcp.Gateway
                 {
                     ["serverVersion"] = McpRouter.ServerVersion,
                     ["protocolVersion"] = McpRouter.SupportedProtocolVersion
-                }
+                },
+                // v2.3.8 Task 1.2: surface index readiness so agents know whether to
+                // call `lifecycle action=index` before relying on search/analyze.
+                ["index"] = BuildIndexBlock()
             };
         }
 
