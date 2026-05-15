@@ -1432,6 +1432,29 @@ namespace GxMcp.Gateway
                     // the op as Cancelled in the tracker and abandon any matching pending
                     // request. The worker thread may still finish its SDK call, but the
                     // client gets a deterministic answer.
+                    // v2.3.8 (Task 7.2) — cancel via job_id: short-circuit the async
+                    // pollers (build/edit) by signaling the registered CTS and flipping the
+                    // job to "cancelled". Worker side keeps running its current SDK call
+                    // (worker-CTS plumbing is a follow-up) but the client gets a deterministic
+                    // Cancelled envelope and the polling loop terminates immediately.
+                    if (string.Equals(lifecycleAction, "cancel", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? cancelJobId = McpRouter.ResolveJobId(args);
+                        if (!string.IsNullOrWhiteSpace(cancelJobId) && JobRegistry.Get(cancelJobId!) != null)
+                        {
+                            bool ok = JobRegistry.Cancel(cancelJobId!, "Cancelled by client via lifecycle action=cancel.");
+                            var jp = new JObject
+                            {
+                                ["status"] = ok ? "Cancelled" : "NotFound",
+                                ["jobId"] = cancelJobId,
+                                ["message"] = ok
+                                    ? "Job marked Cancelled. Async pollers will stop; worker may still finish its current SDK call."
+                                    : "Job not found in registry (may have completed and been pruned)."
+                            };
+                            return BuildToolTextResponse(idToken, jp, isError: !ok, toolName: "genexus_lifecycle", toolArgs: args);
+                        }
+                    }
+
                     if (string.Equals(lifecycleAction, "cancel", StringComparison.OrdinalIgnoreCase) &&
                         !string.IsNullOrWhiteSpace(lifecycleTarget) &&
                         lifecycleTarget.StartsWith("op:", StringComparison.OrdinalIgnoreCase))
@@ -1625,12 +1648,32 @@ namespace GxMcp.Gateway
 
                                     Log($"[AsyncBuild] job={job.Id} taskId={taskId} — polling status until terminal");
 
+                                    // v2.3.8 (Task 7.2) — register a CTS so lifecycle action=cancel
+                                    // with this job_id can short-circuit the polling loop.
+                                    var pollCt = JobRegistry.RegisterCancellation(job.Id);
+
                                     // Step 2: Poll worker Build/Status until status is terminal.
                                     // Terminal states from BuildTaskStatus: Succeeded | Failed | Error | Cancelled.
                                     JObject? finalStatus = null;
                                     var hardCap = DateTime.UtcNow.AddMinutes(30);
                                     while (DateTime.UtcNow < hardCap)
                                     {
+                                        if (pollCt.IsCancellationRequested)
+                                        {
+                                            // Best-effort: tell the worker to kill the MSBuild child if any.
+                                            try
+                                            {
+                                                _ = SendWorkerCommandAsync(
+                                                    new JObject { ["module"] = "Build", ["action"] = "Cancel", ["target"] = taskId },
+                                                    5000, "cancel-fanout",
+                                                    env => env,
+                                                    (_, __) => new JObject(),
+                                                    toolName: tName, toolArgs: tArgs, trackOperation: false);
+                                            }
+                                            catch { /* fire-and-forget */ }
+                                            finalStatus = new JObject { ["status"] = "Cancelled", ["taskId"] = taskId };
+                                            break;
+                                        }
                                         await Task.Delay(2000).ConfigureAwait(false);
 
                                         var statusCmd = new JObject
