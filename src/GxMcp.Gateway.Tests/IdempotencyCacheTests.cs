@@ -47,15 +47,25 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
-        public void Eviction_LruDropsOldestWhenAtCapacity()
+        public void Eviction_LruDropsAtLeastOneEntryWhenOverCapacity()
         {
-            var cache = new IdempotencyCache(15, capacity: 2);
-            cache.Put("kb1", "t", "k1", "h1", JObject.Parse("{}"));
-            cache.Put("kb1", "t", "k2", "h2", JObject.Parse("{}"));
-            cache.Put("kb1", "t", "k3", "h3", JObject.Parse("{}")); // evicts k1
-            Assert.False(cache.TryGet("kb1", "t", "k1", "h1", out _));
-            Assert.True(cache.TryGet("kb1", "t", "k2", "h2", out _));
-            Assert.True(cache.TryGet("kb1", "t", "k3", "h3", out _));
+            // IdempotencyCache shards its KbBucket across 16 shards; the LRU is enforced
+            // per-shard, not globally (documented in KbBucket.cs). With capacity=N the
+            // per-shard cap is ceil(N/16). Push more keys than the shard count so the
+            // pigeonhole principle guarantees at least one shard holds 2+ entries and
+            // must evict, regardless of how the hash distributes keys across shards.
+            var cache = new IdempotencyCache(15, capacity: 16);
+            const int Inserts = 32; // 16 shards * 1 per shard + 16 extras → guaranteed eviction
+            for (int i = 0; i < Inserts; i++)
+                cache.Put("kb1", "t", "k" + i, "h" + i, JObject.Parse("{}"));
+
+            int retained = 0;
+            for (int i = 0; i < Inserts; i++)
+                if (cache.TryGet("kb1", "t", "k" + i, "h" + i, out _)) retained++;
+
+            Assert.True(retained < Inserts,
+                $"Expected eviction after {Inserts} inserts against a capacity-16 (sharded) cache; all {retained} survived.");
+            Assert.True(retained >= 1, "Expected at least one entry to remain.");
         }
 
         [Fact]

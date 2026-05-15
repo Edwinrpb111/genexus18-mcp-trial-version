@@ -75,6 +75,64 @@ was failing on `main` before this branch.
 
 - `ToolSchemaSizeTests` budget bumped 4000 → 4600 tokens to fit the six new tools
   (current `tool_definitions.json` ~4498 tokens).
+- Bumped again 4600 → 4800 for `nameFilter`/`descriptionFilter`/`pathPrefix` on
+  `genexus_list_objects` (Task 2.2), and 4800 → 5000 for `includeCallees` /
+  `buildPlanCap` / `compact` on `genexus_lifecycle` (Tasks 5.2, 6.1).
+  Current size ~4890 tokens.
+
+### Discovery, edit, variable, build, UX (friction-report 2026-05-15 sweep)
+
+Second wave of v2.3.8 — closes the remaining items in the friction report.
+
+- **Index state on `whoami`** (Task 1.2): live Cold/Reindexing/Ready surface;
+  `IndexCold`/`Timeout` envelopes on `search` (Task 2.1) so callers can wait or
+  fall back instead of silently getting empty hits.
+- **Unified call-graph service** (Task 1.3): single `CallerGraphService` replaces
+  duplicate BFS in `AnalyzeService.ImpactAnalysis`; new `waitForIndex` flag on
+  `analyze impact` (Task 1.4).
+- **Discovery filters** (Task 2.2): `list_objects` gains `nameFilter`,
+  `descriptionFilter`, `pathPrefix`.
+- **Edit reliability**: EOL-normalised matching (3.1), byte-level `nearMatchHint`
+  (3.2), multi-line `{find,replace}` patch shape (3.3), `persistedHash` +
+  `persistedSnippet` on every response (3.4), patch-window rollback verification
+  (4.6 — only the diverging window forces rollback, SDK normalisations elsewhere
+  are reported).
+- **Variables**: `VariableTypeResolver` synonym map (4.1); `add_variable` validates
+  `typeName` instead of falling back to NUMERIC (4.2); new
+  `genexus_modify_variable` atomic type change (4.3); symmetric `delete_variable`
+  across WebPanel/Transaction/etc. (4.4); ghost-binding diagnostics + `[var:N]`
+  resolver on rejection (4.5).
+- **Segmented build** (5.1/5.2): `lifecycle build` accepts
+  `includeCallees={none,direct,transitive}` (default `transitive`) and expands
+  the target list reverse-topologically via `CallerGraphService` so callees
+  compile before callers. `_meta.buildPlan` reports
+  `{requested, expanded, includeCallees, cap}`; `BuildPlanTooLarge` envelope when
+  expansion exceeds the cap (default 200).
+- **Output size** (6.1/6.2/6.3): `lifecycle status compact=true` default returns
+  counts + top-10 errors + warning dedup (opt out with `compact=false`); `read`
+  paginates by default at 200 lines / 16 KB (`limit=0` opts out;
+  `suggestedNextOffset`/`Limit` surface the next page);
+  `_meta.background_jobs` dedups per session so completed jobs appear exactly once.
+- **i18n** (7.1): `ErrorMessages.Translate` maps known PT-BR SDK diagnostics to
+  canonical EN; original preserved in `_meta.sourceMessage` /
+  `_meta.sourceDetails`.
+- **Cancel** (7.2): `lifecycle action=cancel` with a `job_id` now signals a
+  registered CTS in `BackgroundJobRegistry`, terminates the async build poller
+  within one tick, and fans out a fire-and-forget `Build/Cancel` to the worker.
+  Worker-side `CancellationToken` plumbing through long-running services
+  (search, analyze) is deferred.
+
+### Breaking notes
+
+- `lifecycle status` default is now `compact=true`. Callers that parsed
+  `Errors[]` / `Warnings[]` / `Output` directly must pass `compact=false`.
+- `lifecycle build` default is `includeCallees=transitive`. Pass
+  `includeCallees=none` for the pre-v2.3.8 single-target behaviour.
+- `genexus_read` paginates by default when an MCP-client read exceeds 200 lines
+  or 16 KB. Pass `limit=0` to opt out.
+- Error messages are translated to EN by default; the original SDK string lives
+  under `_meta.sourceMessage` / `_meta.sourceDetails` whenever the translator
+  rewrote anything.
 
 ## v2.3.7 — 2026-05-15
 
