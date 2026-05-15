@@ -255,6 +255,11 @@ namespace GxMcp.Worker.Services
                 {
                     entry.Path = InferLegacyPath(entry);
                 }
+
+                if (string.IsNullOrWhiteSpace(entry.ParentFolderPath))
+                {
+                    entry.ParentFolderPath = ComposeParentFolderPath(entry.ParentPath);
+                }
             }
         }
 
@@ -284,6 +289,21 @@ namespace GxMcp.Worker.Services
             }
 
             return entry.Parent;
+        }
+
+        // v2.3.8 (Task 2.2): full folder path always prefixed with the synthetic
+        // "Root Module" so callers can pathPrefix-filter by the same string they
+        // see in the GeneXus IDE. Empty hierarchy.ParentPath means object lives
+        // directly under DesignModel -> we surface "Root Module" as the folder.
+        private static string ComposeParentFolderPath(string hierarchyParentPath)
+        {
+            if (string.IsNullOrWhiteSpace(hierarchyParentPath))
+                return "Root Module";
+            // Already prefixed? Be tolerant — never double-prefix.
+            if (hierarchyParentPath.Equals("Root Module", StringComparison.OrdinalIgnoreCase) ||
+                hierarchyParentPath.StartsWith("Root Module/", StringComparison.OrdinalIgnoreCase))
+                return hierarchyParentPath;
+            return "Root Module/" + hierarchyParentPath;
         }
 
         private string InferLegacyPath(SearchIndex.IndexEntry entry)
@@ -570,6 +590,7 @@ namespace GxMcp.Worker.Services
                 Description = obj.Description,
                 Parent = hierarchy.ParentName,
                 ParentPath = hierarchy.ParentPath,
+                ParentFolderPath = ComposeParentFolderPath(hierarchy.ParentPath),
                 Path = hierarchy.Path,
                 Module = hierarchy.ModuleName
             };

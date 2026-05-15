@@ -37,8 +37,9 @@ namespace GxMcp.Gateway.Tests
             // Budget bumped from 3500 → 4000 in v2.3.0 to accommodate the `kb`
             // parameter added to 28 tools for multi-KB parallel support. Bumped to 4600
             // in v2.3.7 to fit 6 new tools (validate_payload, bulk_edit, apply_template,
-            // diff, export_unified, delete_variable).
-            Assert.True(approxTokens < 4600, $"tool_definitions.json is ~{approxTokens} tokens; budget 4600.");
+            // diff, export_unified, delete_variable). Bumped to 4800 in v2.3.8 (Task 2.2)
+            // to fit nameFilter/descriptionFilter/pathPrefix on genexus_list_objects.
+            Assert.True(approxTokens < 4800, $"tool_definitions.json is ~{approxTokens} tokens; budget 4800.");
         }
     }
 }

@@ -19,14 +19,45 @@ namespace GxMcp.Worker.Services
             _indexCacheService = indexCacheService;
         }
 
-        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null, bool verbose = false)
+        // v2.3.8 (Task 2.2): test-only seam — drive ListService with just an
+        // IndexCacheService (no KB). Used by ListDiscoveryTests with the
+        // LoadFromEntries fixture.
+        public ListService(IndexCacheService indexCacheService)
+            : this(null, indexCacheService)
+        {
+        }
+
+        // v2.3.8 (Task 2.2): structured criteria for the new name/description/path
+        // filters. Existing callers keep using ListObjects(...); this overload is
+        // the supported entrypoint for unit tests and future callers that want
+        // typed args. NameFilter matches name only, DescriptionFilter matches
+        // description only, PathPrefix is a case-insensitive StartsWith over
+        // ParentFolderPath (e.g. "Root Module/ClickSign/"). Legacy Filter still
+        // matches both name and description.
+        public string List(ListCriteria c)
+        {
+            if (c == null) c = new ListCriteria();
+            return ListObjects(
+                filter: c.Filter,
+                limit: c.Limit,
+                offset: c.Offset,
+                parentFilter: null,
+                typeFilter: c.TypeFilter,
+                parentPathFilter: null,
+                verbose: c.Verbose,
+                invokerNameFilter: c.NameFilter,
+                invokerDescriptionFilter: c.DescriptionFilter,
+                invokerPathPrefix: c.PathPrefix);
+        }
+
+        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null, bool verbose = false, string invokerNameFilter = null, string invokerDescriptionFilter = null, string invokerPathPrefix = null)
         {
             var sw = Stopwatch.StartNew();
             string source = "none";
             string Finalize(string response)
             {
                 sw.Stop();
-                Logger.Debug($"[ListService] source={source} limit={limit} offset={offset} parentPath='{parentPathFilter ?? ""}' parent='{parentFilter ?? ""}' typeFilter='{typeFilter ?? ""}' filter='{filter ?? ""}' verbose={verbose} elapsedMs={sw.ElapsedMilliseconds}");
+                Logger.Debug($"[ListService] source={source} limit={limit} offset={offset} parentPath='{parentPathFilter ?? ""}' parent='{parentFilter ?? ""}' typeFilter='{typeFilter ?? ""}' filter='{filter ?? ""}' nameFilter='{invokerNameFilter ?? ""}' descriptionFilter='{invokerDescriptionFilter ?? ""}' pathPrefix='{invokerPathPrefix ?? ""}' verbose={verbose} elapsedMs={sw.ElapsedMilliseconds}");
                 return response;
             }
 
@@ -103,11 +134,39 @@ namespace GxMcp.Worker.Services
                         entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
                     }
 
+                    // Legacy filter: matches on EITHER name or description (kept
+                    // for backward compatibility). Prefer the targeted nameFilter
+                    // / descriptionFilter / pathPrefix parameters below.
                     if (!string.IsNullOrEmpty(nameFilter))
                     {
                         entries = entries.Where(e =>
                             (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0 ||
                             (e.Description ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
+
+                    // v2.3.8 (Task 2.2): targeted discovery filters.
+                    // The "nameFilter" parameter on this method historically
+                    // refers to the legacy filter token derived from the user's
+                    // `filter` arg (matches name OR description). The function
+                    // arguments below — invokerNameFilter / invokerDescriptionFilter / invokerPathPrefix —
+                    // come from the new `nameFilter`/`descriptionFilter`/`pathPrefix`
+                    // tool args and match exactly one column each.
+                    if (!string.IsNullOrEmpty(invokerNameFilter))
+                    {
+                        entries = entries.Where(e =>
+                            (e.Name ?? string.Empty).IndexOf(invokerNameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
+
+                    if (!string.IsNullOrEmpty(invokerDescriptionFilter))
+                    {
+                        entries = entries.Where(e =>
+                            (e.Description ?? string.Empty).IndexOf(invokerDescriptionFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
+
+                    if (!string.IsNullOrEmpty(invokerPathPrefix))
+                    {
+                        entries = entries.Where(e =>
+                            (e.ParentFolderPath ?? string.Empty).StartsWith(invokerPathPrefix, StringComparison.OrdinalIgnoreCase));
                     }
 
                     var orderedIndexEntries = entries
@@ -131,6 +190,7 @@ namespace GxMcp.Worker.Services
                             entry.Module ?? string.Empty,
                             entry.Path ?? string.Empty,
                             entry.ParentPath ?? string.Empty,
+                            entry.ParentFolderPath ?? string.Empty,
                             verbose
                         ));
                     }
@@ -184,6 +244,33 @@ namespace GxMcp.Worker.Services
                         (x.Object.Description ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
                 }
 
+                // v2.3.8 (Task 2.2): targeted discovery filters on the runtime-SDK fallback path.
+                if (!string.IsNullOrEmpty(invokerNameFilter))
+                {
+                    filteredObjects = filteredObjects.Where(x =>
+                        (x.Object.Name ?? string.Empty).IndexOf(invokerNameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+
+                if (!string.IsNullOrEmpty(invokerDescriptionFilter))
+                {
+                    filteredObjects = filteredObjects.Where(x =>
+                        (x.Object.Description ?? string.Empty).IndexOf(invokerDescriptionFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                }
+
+                if (!string.IsNullOrEmpty(invokerPathPrefix))
+                {
+                    filteredObjects = filteredObjects.Where(x =>
+                    {
+                        // ParentPath here is hierarchy.ParentPath (without "Root Module").
+                        // Synthesize the same Root-Module-prefixed string used by ParentFolderPath.
+                        var pp = x.Hierarchy.ParentPath ?? string.Empty;
+                        string folderPath = string.IsNullOrEmpty(pp)
+                            ? "Root Module"
+                            : "Root Module/" + pp;
+                        return folderPath.StartsWith(invokerPathPrefix, StringComparison.OrdinalIgnoreCase);
+                    });
+                }
+
                 if (parentPathFilter != null)
                 {
                     filteredObjects = filteredObjects.Where(x => string.Equals(x.Hierarchy.ParentPath, parentPathFilter, StringComparison.OrdinalIgnoreCase));
@@ -206,6 +293,9 @@ namespace GxMcp.Worker.Services
                     .Skip(startRuntime)
                     .Take(pageSizeRuntime))
                 {
+                    var runtimeParentFolderPath = string.IsNullOrEmpty(item.Hierarchy.ParentPath)
+                        ? "Root Module"
+                        : "Root Module/" + item.Hierarchy.ParentPath;
                     array.Add(BuildItem(
                         item.Object.Name,
                         item.TypeName,
@@ -214,6 +304,7 @@ namespace GxMcp.Worker.Services
                         item.Hierarchy.ModuleName,
                         item.Hierarchy.Path,
                         item.Hierarchy.ParentPath,
+                        runtimeParentFolderPath,
                         verbose
                     ));
                 }
@@ -362,7 +453,7 @@ namespace GxMcp.Worker.Services
 
         public static JObject BuildItemForTest(string name, string type, string description, string parent, string module, string path, string parentPath, bool verbose = false)
         {
-            return BuildItemInternal(name, type, description, parent, module, path, parentPath, verbose);
+            return BuildItemInternal(name, type, description, parent, module, path, parentPath, null, verbose);
         }
 
         // Test helper: allows tests to call BuildPagedResponse with mocked data
@@ -373,12 +464,12 @@ namespace GxMcp.Worker.Services
             return svc.BuildPagedResponseInternal(items, total, offset, pageSize);
         }
 
-        private JObject BuildItem(string name, string type, string description, string parent, string module, string path, string parentPath, bool verbose = false)
+        private JObject BuildItem(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose = false)
         {
-            return BuildItemInternal(name, type, description, parent, module, path, parentPath, verbose);
+            return BuildItemInternal(name, type, description, parent, module, path, parentPath, parentFolderPath, verbose);
         }
 
-        private static JObject BuildItemInternal(string name, string type, string description, string parent, string module, string path, string parentPath, bool verbose = false)
+        private static JObject BuildItemInternal(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose = false)
         {
             var item = new JObject();
             item["name"] = name;
@@ -403,6 +494,14 @@ namespace GxMcp.Worker.Services
                 // Minimal shape (4 fields): name, type, path, parent
                 item["path"] = path;
                 item["parent"] = parent;
+            }
+
+            // v2.3.8 (Task 2.2): always expose parentFolderPath when known so the
+            // agent can pathPrefix-filter the next call without round-tripping
+            // through verbose mode.
+            if (!string.IsNullOrEmpty(parentFolderPath))
+            {
+                item["parentFolderPath"] = parentFolderPath;
             }
 
             return item;
@@ -528,5 +627,23 @@ namespace GxMcp.Worker.Services
             public string Path { get; set; }
             public string ModuleName { get; set; }
         }
+    }
+
+    // v2.3.8 (Task 2.2): typed criteria for ListService.List. Mirrors the
+    // tool-schema args of genexus_list_objects.
+    public class ListCriteria
+    {
+        // Substring match on object NAME only.
+        public string NameFilter { get; set; }
+        // Substring match on object DESCRIPTION only.
+        public string DescriptionFilter { get; set; }
+        // Case-insensitive StartsWith over ParentFolderPath, e.g. "Root Module/ClickSign/".
+        public string PathPrefix { get; set; }
+        // Legacy: matches name OR description (kept for backward compatibility).
+        public string Filter { get; set; }
+        public string TypeFilter { get; set; }
+        public int Limit { get; set; } = 200;
+        public int Offset { get; set; } = 0;
+        public bool Verbose { get; set; } = false;
     }
 }

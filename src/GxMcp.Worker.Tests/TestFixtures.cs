@@ -44,6 +44,50 @@ namespace GxMcp.Worker.Tests
             return new CallGraphFixture { Index = svc };
         }
 
+        // v2.3.8 (Task 2.2): folder/discovery fixture for ListDiscoveryTests.
+        // Provides entries that exercise nameFilter / descriptionFilter / pathPrefix
+        // independently:
+        //   - "ComissaoLiberaPareceres": name contains "Libera" but description does NOT contain "pareceres".
+        //   - "PSPContParecer": name lacks "Libera"; description contains "pareceres".
+        //   - 2 entries under "Root Module/ClickSign/X" for pathPrefix coverage.
+        public static CallGraphFixture IndexWithFolders()
+        {
+            var entries = new List<SearchIndex.IndexEntry>
+            {
+                new SearchIndex.IndexEntry {
+                    Name = "ComissaoLiberaPareceres", Type = "Procedure",
+                    Description = "Liberar comissões",
+                    ParentFolderPath = "Root Module/Comissao",
+                    ParentPath = "Comissao",
+                    Path = "Comissao/ComissaoLiberaPareceres"
+                },
+                new SearchIndex.IndexEntry {
+                    Name = "PSPContParecer", Type = "Procedure",
+                    Description = "Conta pareceres do processo seletivo",
+                    ParentFolderPath = "Root Module/PSP",
+                    ParentPath = "PSP",
+                    Path = "PSP/PSPContParecer"
+                },
+                new SearchIndex.IndexEntry {
+                    Name = "ClickSignSendDoc", Type = "Procedure",
+                    Description = "Send doc to ClickSign",
+                    ParentFolderPath = "Root Module/ClickSign/X",
+                    ParentPath = "ClickSign/X",
+                    Path = "ClickSign/X/ClickSignSendDoc"
+                },
+                new SearchIndex.IndexEntry {
+                    Name = "ClickSignCallback", Type = "Procedure",
+                    Description = "Callback handler",
+                    ParentFolderPath = "Root Module/ClickSign/X",
+                    ParentPath = "ClickSign/X",
+                    Path = "ClickSign/X/ClickSignCallback"
+                }
+            };
+            var svc = new IndexCacheService();
+            svc.LoadFromEntries(entries);
+            return new CallGraphFixture { Index = svc };
+        }
+
         // Linear chain N0 -> N1 -> N2 -> ... -> N{depth-1}.
         // Root = "N0". Each entry's Calls points to the next node only.
         public static CallGraphFixture LargeCallChain(int depth)

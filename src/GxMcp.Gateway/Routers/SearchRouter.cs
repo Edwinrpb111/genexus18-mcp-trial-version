@@ -51,6 +51,10 @@ namespace GxMcp.Gateway.Routers
                         typeFilter = args?["typeFilter"]?.ToString() ?? args?["type"]?.ToString(),
                         verbose = args?["verbose"]?.ToObject<bool?>() ?? false,
                         inline_read_top = args?["inline_read_top"]?.ToObject<int?>() ?? 0,
+                        // v2.3.8 (Task 2.2): targeted discovery filters.
+                        nameFilter = args?["nameFilter"]?.ToString(),
+                        descriptionFilter = args?["descriptionFilter"]?.ToString(),
+                        pathPrefix = args?["pathPrefix"]?.ToString(),
                     };
                 default:
                     return null;

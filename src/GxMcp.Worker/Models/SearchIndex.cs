@@ -21,6 +21,10 @@ namespace GxMcp.Worker.Models
             public string Description { get; set; }
             public string Parent { get; set; }
             public string ParentPath { get; set; }
+            // v2.3.8 (Task 2.2): full folder path including "Root Module" prefix,
+            // e.g. "Root Module/ClickSign/X". Distinct from ParentPath which omits
+            // the synthetic Root Module bucket.
+            public string ParentFolderPath { get; set; }
             public string Path { get; set; }
             public string Module { get; set; }
             public List<string> Tags { get; set; } = new List<string>();

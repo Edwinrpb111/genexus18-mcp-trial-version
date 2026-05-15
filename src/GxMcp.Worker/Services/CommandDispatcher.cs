@@ -273,7 +273,10 @@ namespace GxMcp.Worker.Services
                                 args?["parent"]?.ToString(),
                                 args?["typeFilter"]?.ToString(),
                                 args?["parentPath"]?.ToString(),
-                                args?["verbose"]?.ToObject<bool?>() ?? false
+                                args?["verbose"]?.ToObject<bool?>() ?? false,
+                                args?["nameFilter"]?.ToString(),
+                                args?["descriptionFilter"]?.ToString(),
+                                args?["pathPrefix"]?.ToString()
                             );
                             int inlineTopList = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
                             return inlineTopList > 0
