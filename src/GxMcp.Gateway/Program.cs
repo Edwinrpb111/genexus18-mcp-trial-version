@@ -385,6 +385,76 @@ namespace GxMcp.Gateway
             };
         }
 
+        // v2.3.8 Task 1.2: live-fetch index state from worker (source of truth).
+        // Called from BuildWhoamiPayloadAsync; on success refreshes _lastKnownIndexState
+        // so subsequent timeouts/worker outages still see the last good value.
+        // Short timeout (1500ms): whoami is supposed to be near-instant.
+        private static async Task<bool> TryRefreshIndexStateFromWorkerAsync(int timeoutMs = 1500)
+        {
+            if (_workerPool == null) return false;
+            try
+            {
+                var cmd = new JObject
+                {
+                    ["module"] = "kb",
+                    ["action"] = "GetIndexState"
+                };
+                JObject? env = await SendWorkerCommandAsync(
+                    cmd,
+                    timeoutMs,
+                    "Timeout fetching index state for whoami",
+                    e => e,
+                    (_, correlationId) => new JObject { ["__timeout"] = true, ["correlationId"] = correlationId },
+                    toolName: "genexus_whoami",
+                    toolArgs: null,
+                    trackOperation: false);
+
+                if (env == null) return false;
+                if (env["__timeout"] != null) return false;
+                JObject? result = env["result"] as JObject;
+                if (result == null) return false;
+
+                // The worker may wrap the JSON-RPC result as either a JObject or a string payload.
+                JObject state = result;
+                if (result["status"] == null && result["data"] is JValue dv && dv.Type == JTokenType.String)
+                {
+                    try { state = JObject.Parse(dv.ToString()); } catch { return false; }
+                }
+
+                string status = state["status"]?.ToString() ?? "Cold";
+                int totalObjects = state["totalObjects"]?.ToObject<int?>() ?? 0;
+                DateTime? lastIndexedAt = null;
+                var liTok = state["lastIndexedAt"];
+                if (liTok != null && liTok.Type != JTokenType.Null)
+                {
+                    if (DateTime.TryParse(liTok.ToString(), null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
+                    {
+                        lastIndexedAt = parsed;
+                    }
+                }
+                double? progress = state["progress"]?.ToObject<double?>();
+                int? etaMs = state["etaMs"]?.ToObject<int?>();
+
+                UpdateLastKnownIndexState(status, totalObjects, lastIndexedAt, progress, etaMs);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log($"[Whoami] index state fetch failed; using cached snapshot: {ex.Message}");
+                return false;
+            }
+        }
+
+        // v2.3.8 Task 1.2: async variant that performs a live fetch against the worker
+        // before assembling whoami. The sync BuildWhoamiPayload() is kept for tests and
+        // any caller that doesn't want to block on a worker round-trip.
+        internal static async Task<JObject> BuildWhoamiPayloadAsync()
+        {
+            await TryRefreshIndexStateFromWorkerAsync().ConfigureAwait(false);
+            return BuildWhoamiPayload();
+        }
+
         internal static JObject BuildWhoamiPayload()
         {
             var cfg = _activeConfig;
@@ -1477,7 +1547,7 @@ namespace GxMcp.Gateway
                     // Gateway-served tools (no worker involvement)
                     if (string.Equals(tName, "genexus_whoami", StringComparison.OrdinalIgnoreCase))
                     {
-                        JObject whoami = BuildWhoamiPayload();
+                        JObject whoami = await BuildWhoamiPayloadAsync();
                         return new JObject
                         {
                             ["isError"] = false,

@@ -100,5 +100,29 @@ namespace GxMcp.Gateway.Tests
             Assert.True(index.ContainsKey("progress"));
             Assert.True(index.ContainsKey("etaMs"));
         }
+
+        // v2.3.8 Task 1.2: whoami must reflect worker-reported index state when one is
+        // available. Unit tests don't spin up a real WorkerPool, so we exercise the
+        // gateway-side fallback path via UpdateLastKnownIndexState: the live fetch in
+        // BuildWhoamiPayloadAsync gracefully falls back to this cached snapshot when
+        // the worker is unreachable, which is the same code-path that serves stale
+        // reads after a worker outage. End-to-end coverage with a real worker
+        // round-trip is tracked under Task 8.1 (end-to-end smoke test).
+        [Fact]
+        public async System.Threading.Tasks.Task Whoami_IndexBlock_ReflectsWorkerState()
+        {
+            var lastIndexed = new DateTime(2026, 5, 15, 10, 30, 0, DateTimeKind.Utc);
+            Program.UpdateLastKnownIndexState("Ready", 42, lastIndexed, null, null);
+
+            var payload = await Program.BuildWhoamiPayloadAsync();
+            var index = payload["index"] as Newtonsoft.Json.Linq.JObject;
+            Assert.NotNull(index);
+            Assert.Equal("Ready", index!["status"]?.ToString());
+            Assert.Equal(42, index["totalObjects"]?.ToObject<int>());
+            Assert.Equal(lastIndexed.ToString("o"), index["lastIndexedAt"]?.ToString());
+
+            // Reset so we don't pollute other tests that rely on default Cold/0.
+            Program.UpdateLastKnownIndexState("Cold", 0, null, null, null);
+        }
     }
 }
