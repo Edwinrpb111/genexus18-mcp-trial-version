@@ -1250,15 +1250,106 @@ namespace GxMcp.Worker.Services
                     }.ToString();
                 }
 
-                varPart.Variables.Remove(existing);
-                obj.EnsureSave();
-                ScheduleFlush();
-                return "{\"status\": \"Success\"}";
+                // Snapshot the var's internal id BEFORE Remove() — some SDK
+                // builds null out the parent reference once a variable is
+                // detached, which would otherwise lose the id needed to scan
+                // for ghost bindings if the save throws.
+                int? existingId = null;
+                try
+                {
+                    int idx = 1;
+                    foreach (var v in varPart.Variables)
+                    {
+                        if (ReferenceEquals(v, existing))
+                        {
+                            existingId = GxMcp.Worker.Helpers.VariableInjector.GetVariableInternalId(v, idx);
+                            break;
+                        }
+                        idx++;
+                    }
+                }
+                catch { /* best-effort */ }
+
+                try
+                {
+                    varPart.Variables.Remove(existing);
+                    obj.EnsureSave();
+                    ScheduleFlush();
+                    return "{\"status\": \"Success\"}";
+                }
+                catch (Exception saveEx)
+                {
+                    var boundResp = TryBuildBoundToControlsError(saveEx, obj, varName, existingId);
+                    if (boundResp != null) return boundResp;
+                    throw;
+                }
             }
             catch (Exception ex)
             {
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
+        }
+
+        // Task 4.5 — When the SDK rejects a delete/modify because the variable
+        // is still bound to a control, surface a structured envelope instead of
+        // a raw error string. We use a heuristic message match because the
+        // concrete SDK exception type that signals this varies across GeneXus
+        // builds and isn't documented; the regex catches both EN and PT-BR
+        // phrasings observed in friction reports.
+        private static readonly System.Text.RegularExpressions.Regex _boundToControlsRegex =
+            new System.Text.RegularExpressions.Regex(
+                @"(\[var:\d+\])|(control reference)|(referência de controle)|(bound to control)|(is being used)|(está sendo (usada|utilizada))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        internal string TryBuildBoundToControlsError(Exception ex, global::Artech.Architecture.Common.Objects.KBObject obj, string varName, int? variableId)
+        {
+            if (ex == null) return null;
+            string flat = FlattenExceptionMessages(ex);
+            if (string.IsNullOrEmpty(flat) || !_boundToControlsRegex.IsMatch(flat)) return null;
+
+            string resolved = GxMcp.Worker.Helpers.WebFormSchemaHints.ResolveVarBindings(flat, obj);
+
+            var bindings = new JArray();
+            try
+            {
+                if (variableId.HasValue && variableId.Value > 0)
+                {
+                    string xml = GxMcp.Worker.Helpers.WebFormXmlHelper.ReadEditableXml(obj);
+                    var hits = GxMcp.Worker.Helpers.WebFormSchemaHints.FindVarBindings(xml, variableId.Value);
+                    foreach (var b in hits)
+                    {
+                        bindings.Add(new JObject
+                        {
+                            ["element"] = b.Element,
+                            ["attribute"] = b.Attribute,
+                            ["controlId"] = b.ControlId,
+                            ["controlName"] = b.ControlName,
+                        });
+                    }
+                }
+            }
+            catch { /* best-effort — bindings list is advisory */ }
+
+            return new JObject
+            {
+                ["status"] = "Error",
+                ["code"] = "BoundToControls",
+                ["message"] = $"Variable '&{varName}' is bound to one or more controls; remove the bindings before deleting/modifying.",
+                ["details"] = resolved,
+                ["bindings"] = bindings,
+            }.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static string FlattenExceptionMessages(Exception ex)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (var cur = ex; cur != null; cur = cur.InnerException)
+            {
+                if (sb.Length > 0) sb.Append(" | ");
+                sb.Append(cur.Message);
+            }
+            return sb.ToString();
         }
 
         public string AddVariable(string target, string varName, string typeName = null)
@@ -1467,6 +1558,24 @@ namespace GxMcp.Worker.Services
                 string preservedDescription = null;
                 try { preservedDescription = existing.Description; } catch { /* SDK may not expose */ }
 
+                // Task 4.5 — capture internal id before Remove() so a
+                // BoundToControls rejection can still scan the layout XML.
+                int? existingVarId = null;
+                try
+                {
+                    int idx = 1;
+                    foreach (var v in varPart.Variables)
+                    {
+                        if (ReferenceEquals(v, existing))
+                        {
+                            existingVarId = GxMcp.Worker.Helpers.VariableInjector.GetVariableInternalId(v, idx);
+                            break;
+                        }
+                        idx++;
+                    }
+                }
+                catch { /* best-effort */ }
+
                 // Atomic delete + add: keep the VariablesPart change in memory until
                 // obj.Save() either succeeds or we restore the original variable.
                 global::Artech.Genexus.Common.Variable originalSnapshot = existing;
@@ -1539,6 +1648,12 @@ namespace GxMcp.Worker.Services
                         }
                     }
                     catch { /* swallow — rollback is best-effort */ }
+                    // Task 4.5 — prefer a structured BoundToControls envelope
+                    // when the SDK rejection message looks like a ghost-binding
+                    // failure; falls back to the legacy raw error envelope
+                    // when the message doesn't match the heuristic.
+                    var boundResp = TryBuildBoundToControlsError(ex, obj, varName, existingVarId);
+                    if (boundResp != null) return boundResp;
                     return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
                 }
             }

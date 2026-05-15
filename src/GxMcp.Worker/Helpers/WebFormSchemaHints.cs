@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Artech.Architecture.Common.Objects;
 
 namespace GxMcp.Worker.Helpers
 {
@@ -79,6 +81,148 @@ namespace GxMcp.Worker.Helpers
             public string Element;
             public string Attribute;
             public string Reason;
+        }
+
+        // ── Task 4.5 (v2.3.8) — Ghost-binding diagnostics + [var:N] resolver ─────
+        //
+        // GeneXus layout XML references variables by an internal numeric id
+        // (e.g. AttID="var:64"). When the SDK rejects a delete/modify because a
+        // control still binds to the variable, the surfaced message embeds the
+        // raw [var:N] token. ResolveVarBindings substitutes those tokens with
+        // the symbolic "&Name" form so callers don't have to perform a manual
+        // lookup. Unknown ids are tagged "[var:N (unresolved)]" rather than
+        // silently dropped, keeping the diagnostic actionable.
+
+        private static readonly Regex _varBindingRegex = new Regex(
+            @"\[var:(\d+)\]",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Substitutes <c>[var:N]</c> tokens in <paramref name="message"/> with
+        /// the matching variable's symbolic name (<c>&amp;Name</c>) using
+        /// <see cref="VariableInjector.GetVariableInternalId"/> against the
+        /// object's VariablesPart. Returns <paramref name="message"/> unchanged
+        /// when null/empty; ids that don't resolve become <c>[var:N (unresolved)]</c>.
+        /// </summary>
+        public static string ResolveVarBindings(string message, KBObject obj)
+        {
+            if (string.IsNullOrEmpty(message)) return message;
+            return ResolveVarBindings(message, BuildLookup(obj));
+        }
+
+        /// <summary>
+        /// Testable overload: takes a delegate mapping internal id → variable
+        /// name (or null when unknown). The tests assembly does not reference
+        /// <c>Artech.Genexus.Common</c>, so the KBObject overload cannot be
+        /// exercised in unit tests without an SDK install.
+        /// </summary>
+        public static string ResolveVarBindings(string message, Func<int, string> lookup)
+        {
+            if (string.IsNullOrEmpty(message)) return message;
+            if (lookup == null) lookup = _ => null;
+            return _varBindingRegex.Replace(message, m =>
+            {
+                if (!int.TryParse(m.Groups[1].Value, out var id)) return m.Value;
+                var name = lookup(id);
+                return !string.IsNullOrEmpty(name)
+                    ? "&" + name
+                    : $"[var:{id} (unresolved)]";
+            });
+        }
+
+        /// <summary>
+        /// Returns the symbolic variable name for the given internal id, or
+        /// null when no variable on the object matches.
+        /// </summary>
+        public static string LookupVarNameById(KBObject obj, int id)
+        {
+            return BuildLookup(obj)(id);
+        }
+
+        // Walks VariablesPart once, caching id → name so a regex with multiple
+        // [var:N] tokens doesn't re-iterate the part. Returns a delegate that
+        // always answers null when the part is missing.
+        private static Func<int, string> BuildLookup(KBObject obj)
+        {
+            if (obj == null) return _ => null;
+            global::Artech.Genexus.Common.Parts.VariablesPart part;
+            try { part = Structure.PartAccessor.GetVariablesPart(obj); }
+            catch { return _ => null; }
+            if (part == null) return _ => null;
+
+            var map = new Dictionary<int, string>();
+            int index = 1;
+            foreach (var v in part.Variables)
+            {
+                int? id = VariableInjector.GetVariableInternalId(v, index);
+                if (id.HasValue && !map.ContainsKey(id.Value))
+                    map[id.Value] = v.Name;
+                index++;
+            }
+            return key => map.TryGetValue(key, out var name) ? name : null;
+        }
+
+        /// <summary>
+        /// Scans <paramref name="webFormXml"/> for attribute values referencing
+        /// <c>var:<paramref name="variableId"/></c> (typically AttID), returning
+        /// one entry per matching element with its element name and the nearest
+        /// <c>id</c>/<c>name</c> attribute. Used to build the <c>bindings</c>
+        /// array on <c>BoundToControls</c> errors. Returns an empty list on
+        /// parse failure or no matches.
+        /// </summary>
+        public static List<VarBinding> FindVarBindings(string webFormXml, int variableId)
+        {
+            var hits = new List<VarBinding>();
+            if (string.IsNullOrWhiteSpace(webFormXml) || variableId <= 0) return hits;
+            XDocument doc;
+            try { doc = XDocument.Parse(webFormXml); }
+            catch { return hits; }
+
+            string needle = "var:" + variableId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var el in doc.Descendants())
+            {
+                foreach (var a in el.Attributes())
+                {
+                    var val = a.Value;
+                    if (string.IsNullOrEmpty(val)) continue;
+                    if (!TokenMatch(val, needle)) continue;
+                    string controlId = el.Attribute("id")?.Value;
+                    string controlName = el.Attribute("name")?.Value ?? el.Attribute("Name")?.Value;
+                    hits.Add(new VarBinding
+                    {
+                        Element = el.Name.LocalName,
+                        Attribute = a.Name.LocalName,
+                        ControlId = controlId,
+                        ControlName = controlName,
+                    });
+                    break; // one entry per element — avoid duplicates from sibling attrs
+                }
+            }
+            return hits;
+        }
+
+        // True iff needle appears as a whole token (start/end of string or
+        // delimited by non-digit chars). Prevents matching var:6 inside var:64.
+        private static bool TokenMatch(string value, string needle)
+        {
+            int idx = 0;
+            while ((idx = value.IndexOf(needle, idx, StringComparison.Ordinal)) >= 0)
+            {
+                int end = idx + needle.Length;
+                bool leftOk = idx == 0 || !char.IsLetterOrDigit(value[idx - 1]);
+                bool rightOk = end >= value.Length || !char.IsDigit(value[end]);
+                if (leftOk && rightOk) return true;
+                idx = end;
+            }
+            return false;
+        }
+
+        public sealed class VarBinding
+        {
+            public string Element;
+            public string Attribute;
+            public string ControlId;
+            public string ControlName;
         }
     }
 }
