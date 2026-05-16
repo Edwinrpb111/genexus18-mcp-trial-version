@@ -49,6 +49,7 @@ namespace GxMcp.Worker.Models
             // Table/Transaction specific
             public string RootTable { get; set; }
             
+            public bool IsEnriched { get; set; }
             public string SourceSnippet { get; set; }
             public string FullSource { get; set; }
             public int Complexity { get; set; }
