@@ -29,6 +29,12 @@
   `operationId`. Build phases, impact-analysis BFS, and KB index report incremental progress
   so the LLM can read status without polling `genexus_lifecycle action=status`. The gateway
   already forwards `notifications/progress` to both stdio and HTTP transports.
+- **Fast index**: `BulkIndex` is now split into a lite pass (metadata only, ~30-45s on a
+  38k-object KB) followed by background enrichment. `genexus_list_objects`, `genexus_read`,
+  and `genexus_inspect` are usable immediately after the lite pass. `genexus_analyze
+  mode=impact` enriches only the target's reachable graph on demand, returning in seconds
+  even before full enrichment finishes. The legacy monolithic path is preserved behind
+  the `Indexing.UseLitePass=false` flag in App.config for rollback safety.
 
 ## v2.3.8 — 2026-05-15
 
