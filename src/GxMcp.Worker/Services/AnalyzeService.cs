@@ -119,25 +119,33 @@ namespace GxMcp.Worker.Services
             try
             {
                 // 1) Index-readiness envelope.
+                // v2.4.0 (SP6.T7): with the fast-index split the gate no longer needs to
+                // wait for full enrichment ("Ready"). We block only while the lite pass
+                // hasn't finished yet (Cold / Reindexing). Once we reach LiteReady,
+                // Enriching, or Ready the object catalogue is populated and we can resolve
+                // the target; we enrich it on-demand below so its call-graph is complete.
                 var state = _indexCacheService?.GetState();
-                if (state != null && state.Status != "Ready")
+                bool litePassPending = state != null && (state.Status == "Cold" || state.Status == "Reindexing");
+                if (litePassPending)
                 {
                     if (!waitForIndex)
                     {
                         var env = new JObject { ["status"] = state.Status };
                         if (state.EtaMs.HasValue) env["etaMs"] = state.EtaMs.Value;
                         if (state.Progress.HasValue) env["progress"] = state.Progress.Value;
+                        env["hint"] = "Pass waitForIndex=true to block until the lite index pass completes.";
                         return env.ToString();
                     }
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     while (sw.ElapsedMilliseconds < waitTimeoutMs)
                     {
                         var s = _indexCacheService.GetState();
-                        if (s != null && s.Status == "Ready") break;
-                        System.Threading.Thread.Sleep(200);
+                        if (s == null || (s.Status != "Cold" && s.Status != "Reindexing")) break;
+                        System.Threading.Thread.Sleep(250);
+                        ct.ThrowIfCancellationRequested();
                     }
                     var finalState = _indexCacheService.GetState();
-                    if (finalState == null || finalState.Status != "Ready")
+                    if (finalState == null || finalState.Status == "Cold" || finalState.Status == "Reindexing")
                     {
                         return new JObject
                         {
@@ -199,6 +207,16 @@ namespace GxMcp.Worker.Services
                 }
 
                 targetName = targetNode.Name; // canonical name
+
+                // 2b) On-demand enrichment (SP6.T7): if the lite pass is done but the
+                // target entry hasn't been enriched yet (SourceSnippet/Calls/CalledBy not
+                // populated), promote it immediately so the BFS has accurate edges.
+                if (!targetNode.IsEnriched)
+                {
+                    var enrichQueue = _indexCacheService?.GetEnrichmentQueue();
+                    if (enrichQueue != null)
+                        enrichQueue.PromoteAsync(targetNode, ct).GetAwaiter().GetResult();
+                }
 
                 // 3) Delegate the BFS to the unified graph service.
                 var graph = _graph ?? new CallerGraphService(_indexCacheService);
