@@ -219,7 +219,7 @@ namespace GxMcp.Worker.Services
                                 // as a progress bar. progressToken is a stable identifier for the
                                 // background operation so clients can correlate repeated updates.
                                 Program.SendNotification("notifications/progress", new {
-                                    progressToken = "genexus-mcp-bulk-index",
+                                    progressToken = GxMcp.Worker.Helpers.ProgressContext.CurrentToken ?? "genexus-mcp-bulk-index",
                                     progress = _processedCount,
                                     total = _totalCount,
                                     message = _currentStatus
