@@ -61,7 +61,7 @@ Gateway AXI-like enrichments are additive (under `_meta` — underscore-prefixed
 
 Optional shaping for `genexus_query` and `genexus_list_objects`:
 - `fields`: array or CSV projection.
-- `axiCompact=true`: compact default projection.
+- `axiCompact`: defaults to `true`; pass `axiCompact: false` to receive the full payload.
 
 ## High-Value Query Patterns
 
