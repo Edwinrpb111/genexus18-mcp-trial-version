@@ -12,6 +12,13 @@
   and `genexus_read`. Long-form help is now served on demand at
   `genexus://kb/tool-help/{name}` via the MCP resources protocol.
 
+### Added
+
+- **Observability**: worker spawn time and SDK init time are now measured per KB and exposed via
+  `genexus://kb/health` (`spawnMs` samples + p50/p95, `sdkInitMs.lastMs`). New
+  `src/GxMcp.Benchmarks` project provides a BenchmarkDotNet baseline for envelope projection,
+  tool-definition loading, and spawn-tracker hot paths.
+
 ## v2.3.8 — 2026-05-15
 
 Two waves into a single release. Wave 1 (morning) shipped the six new tools and
