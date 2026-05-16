@@ -24,6 +24,29 @@ namespace GxMcp.Worker.Services
         private CallerGraphService _callerGraphService;
         private static readonly ConcurrentDictionary<string, BuildTaskStatus> _tasks = new ConcurrentDictionary<string, BuildTaskStatus>();
 
+        private static readonly System.Collections.Generic.Dictionary<string, int> _phaseProgressMap =
+            new System.Collections.Generic.Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                { "Starting",   5  },
+                { "OpeningKB",  10 },
+                { "Specifying", 15 },
+                { "Generating", 35 },
+                { "Compiling",  50 },
+                { "Finishing",  85 },
+                { "Linking",    85 },
+                { "Done",       100 },
+                { "Completed",  100 }
+            };
+
+        private static void EmitPhaseProgress(string phase, int total = 100)
+        {
+            int p;
+            if (_phaseProgressMap.TryGetValue(phase, out p))
+            {
+                GxMcp.Worker.Helpers.ProgressEmitter.Emit(p, total, "Build phase: " + phase);
+            }
+        }
+
         private const int TailBufferSize = 30;
 
         // Regex parsers for MSBuild/GeneXus output
@@ -407,6 +430,7 @@ namespace GxMcp.Worker.Services
                     p.Kill();
                     status.Status = "Cancelled";
                     status.Phase = "Done";
+                    EmitPhaseProgress(status.Phase);
                     status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                     return JsonConvert.SerializeObject(new { status = "Cancelled", taskId = taskId });
                 }
@@ -524,6 +548,7 @@ namespace GxMcp.Worker.Services
 
                     process.Start();
                     status.Phase = "OpeningKB";
+                    EmitPhaseProgress(status.Phase);
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
                     process.WaitForExit();
@@ -533,6 +558,7 @@ namespace GxMcp.Worker.Services
                     status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);
                     status.Output = status.FullOutput.ToString();
                     status.Phase = "Done";
+                    EmitPhaseProgress(status.Phase);
 
                     if (process.ExitCode == 0 && status.ErrorCount == 0)
                         status.Status = "Succeeded";
@@ -576,11 +602,11 @@ namespace GxMcp.Worker.Services
                     if (status.TailLines.Count > TailBufferSize) status.TailLines.RemoveAt(0);
                 }
 
-                if (_rxOpenKb.IsMatch(line))      { status.Phase = "OpeningKB"; return; }
-                var m = _rxSpecifying.Match(line); if (m.Success) { status.Phase = "Specifying"; status.CurrentObject = m.Groups["obj"].Value.Trim(); return; }
-                m = _rxGenerating.Match(line);     if (m.Success) { status.Phase = "Generating"; status.CurrentObject = m.Groups["obj"].Value.Trim(); return; }
-                if (_rxCompiling.IsMatch(line))   { status.Phase = "Compiling"; return; }
-                if (_rxBuildDone.IsMatch(line))   { status.Phase = "Finishing"; }
+                if (_rxOpenKb.IsMatch(line))      { status.Phase = "OpeningKB"; EmitPhaseProgress(status.Phase); return; }
+                var m = _rxSpecifying.Match(line); if (m.Success) { status.Phase = "Specifying"; EmitPhaseProgress(status.Phase); status.CurrentObject = m.Groups["obj"].Value.Trim(); return; }
+                m = _rxGenerating.Match(line);     if (m.Success) { status.Phase = "Generating"; EmitPhaseProgress(status.Phase); status.CurrentObject = m.Groups["obj"].Value.Trim(); return; }
+                if (_rxCompiling.IsMatch(line))   { status.Phase = "Compiling"; EmitPhaseProgress(status.Phase); return; }
+                if (_rxBuildDone.IsMatch(line))   { status.Phase = "Finishing"; EmitPhaseProgress(status.Phase); }
                 if (_rxBuildOneEnd.IsMatch(line) && status.TargetsTotal.HasValue)
                 {
                     status.TargetsDone = (status.TargetsDone ?? 0) + 1;
@@ -603,6 +629,7 @@ namespace GxMcp.Worker.Services
         {
             status.Status = "Error";
             status.Phase = "Done";
+            EmitPhaseProgress(status.Phase);
             status.Error = error;
             status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);

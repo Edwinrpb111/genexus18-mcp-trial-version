@@ -67,5 +67,33 @@ namespace GxMcp.Worker.Tests
             }
             Assert.Null(ProgressContext.CurrentToken);
         }
+
+        [Fact]
+        public void Emit_FromMultiplePhases_ProducesMonotonicProgress()
+        {
+            var captured = new StringWriter();
+            var originalOut = System.Console.Out;
+            System.Console.SetOut(captured);
+
+            try
+            {
+                using (GxMcp.Worker.Helpers.ProgressContext.Use("op-build"))
+                {
+                    GxMcp.Worker.Helpers.ProgressEmitter.Emit(5, 100, "Build phase: Starting");
+                    GxMcp.Worker.Helpers.ProgressEmitter.Emit(50, 100, "Build phase: Compiling");
+                    GxMcp.Worker.Helpers.ProgressEmitter.Emit(100, 100, "Build phase: Completed");
+                }
+            }
+            finally
+            {
+                System.Console.SetOut(originalOut);
+            }
+
+            var lines = captured.ToString().Split(new[] { '\r', '\n' }, System.StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal(3, lines.Length);
+            Assert.Contains("\"progress\":5", lines[0]);
+            Assert.Contains("\"progress\":50", lines[1]);
+            Assert.Contains("\"progress\":100", lines[2]);
+        }
     }
 }
