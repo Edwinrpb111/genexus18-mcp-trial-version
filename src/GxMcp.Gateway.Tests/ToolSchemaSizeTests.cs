@@ -41,7 +41,10 @@ namespace GxMcp.Gateway.Tests
             // to fit nameFilter/descriptionFilter/pathPrefix on genexus_list_objects.
             // Bumped to 5000 in v2.3.8 (Task 5.2) for includeCallees/buildPlanCap on
             // genexus_lifecycle.
-            Assert.True(approxTokens < 5000, $"tool_definitions.json is ~{approxTokens} tokens; budget 5000.");
+            // Bumped from 5000 → 5200 in SP1.T2 (2026-05-15-mcp-perf-1) to make room for the
+            // axiCompact schema declaration on genexus_query / genexus_list_objects. SP2
+            // (tool description trim) will reclaim space and lower this back to 4900.
+            Assert.True(approxTokens < 5200, $"tool_definitions.json is ~{approxTokens} tokens; budget 5200.");
         }
     }
 }
