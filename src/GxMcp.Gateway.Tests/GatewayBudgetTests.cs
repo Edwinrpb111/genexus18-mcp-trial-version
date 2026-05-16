@@ -376,7 +376,6 @@ namespace GxMcp.Gateway.Tests
                     })
             };
 
-            // No axiCompact arg at all — expected to default to compact.
             var args = new JObject();
 
             var method = typeof(Program).GetMethod(
@@ -439,7 +438,6 @@ namespace GxMcp.Gateway.Tests
                     })
             };
 
-            // Explicit fields="name,description" must win over the compact default.
             var args = new JObject { ["fields"] = "name,description" };
 
             var method = typeof(Program).GetMethod(
