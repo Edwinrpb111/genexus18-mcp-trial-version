@@ -7,6 +7,10 @@
 - **BREAKING (envelope)**: `axiCompact` now defaults to `true` for `genexus_query` and
   `genexus_list_objects`. Callers that relied on full payloads must now pass
   `axiCompact: false` explicitly. The flag is declared in `inputSchema` for discoverability.
+- **Token reduction**: `tool_definitions.json` shrunk from ~5200 to ~4956 tokens by trimming
+  the descriptions of `genexus_query`, `genexus_lifecycle`, `genexus_edit`, `genexus_analyze`,
+  and `genexus_read`. Long-form help is now served on demand at
+  `genexus://kb/tool-help/{name}` via the MCP resources protocol.
 
 ## v2.3.8 — 2026-05-15
 
