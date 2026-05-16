@@ -677,5 +677,23 @@ namespace GxMcp.Gateway.Tests
 
             Assert.False(GatewayProcessLease.IsLeaseActive(lease));
         }
+
+        [Fact]
+        public void ToolHelpCatalog_HasEntriesForTrimmedTools()
+        {
+            string[] expected = { "genexus_query", "genexus_lifecycle", "genexus_edit", "genexus_analyze", "genexus_read" };
+            foreach (var name in expected)
+            {
+                var help = ToolHelpCatalog.Get(name);
+                Assert.False(string.IsNullOrWhiteSpace(help), $"No help text for {name}");
+                Assert.True(help!.Length >= 200, $"Help for {name} should be more detailed than the trimmed description");
+            }
+        }
+
+        [Fact]
+        public void ToolHelpCatalog_ReturnsNullForUnknownTool()
+        {
+            Assert.Null(ToolHelpCatalog.Get("genexus_unknown_tool"));
+        }
     }
 }
