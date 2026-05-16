@@ -131,8 +131,7 @@ namespace GxMcp.Worker.Services
                     {
                         // Check if it's a Business Component
                         try {
-                            dynamic trn = target;
-                            if (trn.BusinessComponent) {
+                            if (target is global::Artech.Genexus.Common.Objects.Transaction trnObj && trnObj.IsBusinessComponent) {
                                 displayType = "BusinessComponent";
                                 content = StructureParser.SerializeToText(target);
                             }

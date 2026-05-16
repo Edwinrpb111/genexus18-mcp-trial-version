@@ -60,13 +60,7 @@ namespace GxMcp.Worker.Services
                     bool committed = false;
                     try
                     {
-                        try {
-                            container.SetPropertyValue(propName, value);
-                        } catch (Exception setEx) {
-                            var pInfo = container.GetType().GetProperty(propName);
-                            if (pInfo != null && pInfo.CanWrite) pInfo.SetValue(container, value);
-                            else throw new Exception($"Property '{propName}' not found or not writable on {controlName ?? obj.Name}. Underlying error: {setEx.Message}");
-                        }
+                        ApplyPropertyValue(container, propName, value, controlName, obj);
 
                         try { if (container != obj) container.Dirty = true; } catch { }
                         obj.EnsureSave();
@@ -87,6 +81,166 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        // Properties on Transaction (and other KBObjects) have heterogeneous underlying CLR types:
+        // bool, int, enum, or string. SetPropertyValue(string, object) does not coerce, so passing
+        // the raw "True"/"1" string fails with InvalidCastException on non-string properties
+        // (e.g. idISBUSINESSCOMPONENT, idISBCEJB). Coerce by inspecting the existing value's type
+        // or the property Definition before delegating, then fall back to the string-overload setter
+        // (SetPropertyValueString) which the SDK provides for textual input.
+        private static void ApplyPropertyValue(dynamic container, string propName, string rawValue, string controlName, KBObject obj)
+        {
+            Exception lastError = null;
+
+            // 1) Try a coerced typed value via SetPropertyValue(string, object).
+            object coerced;
+            if (TryCoercePropertyValue(container, propName, rawValue, out coerced))
+            {
+                try { container.SetPropertyValue(propName, coerced); return; }
+                catch (Exception ex) { lastError = ex; }
+            }
+
+            // 2) Try the SDK's string-overload setter, which converts strings internally.
+            try
+            {
+                var t = (Type)container.GetType();
+                var mi = t.GetMethod("SetPropertyValueString",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                    null, new[] { typeof(string), typeof(string) }, null);
+                if (mi != null)
+                {
+                    mi.Invoke((object)container, new object[] { propName, rawValue });
+                    return;
+                }
+            }
+            catch (Exception ex) { lastError = ex; }
+
+            // 3) Last resort: untyped passthrough (original behavior).
+            try { container.SetPropertyValue(propName, rawValue); return; }
+            catch (Exception ex) { lastError = ex; }
+
+            // 4) Last-last resort: reflection on a public CLR property of the same name.
+            try
+            {
+                var pInfo = ((Type)container.GetType()).GetProperty(propName);
+                if (pInfo != null && pInfo.CanWrite)
+                {
+                    object refValue = TryConvertToType(rawValue, pInfo.PropertyType, out var conv) ? conv : (object)rawValue;
+                    pInfo.SetValue((object)container, refValue);
+                    return;
+                }
+            }
+            catch (Exception ex) { lastError = ex; }
+
+            throw new Exception($"Property '{propName}' not found or not writable on {controlName ?? obj.Name}. Underlying error: {lastError?.Message}");
+        }
+
+        private static bool TryCoercePropertyValue(dynamic container, string propName, string rawValue, out object coerced)
+        {
+            coerced = rawValue;
+            Type targetType = null;
+
+            // Prefer the Definition.Type from the existing property entry; fall back to the
+            // runtime type of the current Value.
+            try
+            {
+                dynamic existing = null;
+                try { existing = container.Properties?[propName]; } catch { }
+                if (existing == null)
+                {
+                    try
+                    {
+                        foreach (dynamic p in container.Properties)
+                        {
+                            string n = null;
+                            try { n = (string)p.Name; } catch { }
+                            if (string.Equals(n, propName, StringComparison.OrdinalIgnoreCase)) { existing = p; break; }
+                        }
+                    }
+                    catch { }
+                }
+                if (existing != null)
+                {
+                    try
+                    {
+                        var defType = existing.Definition?.Type;
+                        if (defType is Type t1) targetType = t1;
+                    }
+                    catch { }
+                    if (targetType == null)
+                    {
+                        try
+                        {
+                            object curVal = existing.Value;
+                            if (curVal != null) targetType = curVal.GetType();
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            if (targetType == null || targetType == typeof(string)) return false;
+
+            return TryConvertToType(rawValue, targetType, out coerced);
+        }
+
+        private static bool TryConvertToType(string raw, Type targetType, out object converted)
+        {
+            converted = raw;
+            if (targetType == null) return false;
+
+            try
+            {
+                if (targetType == typeof(string)) { converted = raw ?? string.Empty; return true; }
+                if (targetType == typeof(bool) || targetType == typeof(bool?))
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { converted = false; return true; }
+                    string t = raw.Trim();
+                    if (t.Equals("true", StringComparison.OrdinalIgnoreCase) || t == "1" ||
+                        t.Equals("yes", StringComparison.OrdinalIgnoreCase) || t.Equals("y", StringComparison.OrdinalIgnoreCase))
+                    { converted = true; return true; }
+                    if (t.Equals("false", StringComparison.OrdinalIgnoreCase) || t == "0" ||
+                        t.Equals("no", StringComparison.OrdinalIgnoreCase) || t.Equals("n", StringComparison.OrdinalIgnoreCase))
+                    { converted = false; return true; }
+                    return false;
+                }
+                if (targetType.IsEnum)
+                {
+                    converted = Enum.Parse(targetType, raw, ignoreCase: true);
+                    return true;
+                }
+                Type underlying = Nullable.GetUnderlyingType(targetType);
+                if (underlying != null && underlying.IsEnum)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { converted = null; return true; }
+                    converted = Enum.Parse(underlying, raw, ignoreCase: true);
+                    return true;
+                }
+                if (targetType == typeof(int) || targetType == typeof(int?))
+                {
+                    if (int.TryParse(raw, out int iv)) { converted = iv; return true; }
+                    return false;
+                }
+                if (targetType == typeof(long) || targetType == typeof(long?))
+                {
+                    if (long.TryParse(raw, out long lv)) { converted = lv; return true; }
+                    return false;
+                }
+                if (targetType == typeof(Guid) || targetType == typeof(Guid?))
+                {
+                    if (Guid.TryParse(raw, out Guid gv)) { converted = gv; return true; }
+                    return false;
+                }
+                converted = Convert.ChangeType(raw, underlying ?? targetType);
+                return true;
+            }
+            catch
+            {
+                converted = raw;
+                return false;
             }
         }
 

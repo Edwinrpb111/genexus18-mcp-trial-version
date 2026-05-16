@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.4.1 — Unreleased
+
+### Fixed
+
+- **`genexus_properties` set could not toggle Business Component (and other typed bool/enum properties)**:
+  `PropertyService.SetProperty` passed the raw string value straight to the SDK's
+  `SetPropertyValue(string, object)` overload. For properties whose underlying CLR type is `bool`
+  or an enum (e.g. `idISBUSINESSCOMPONENT`, `idISBCEJB`), the SDK threw
+  `InvalidCastException: Conversão especificada não é válida` regardless of the value form
+  (`"True"`, `"true"`, `"1"`). The setter now coerces the string to the property's declared type
+  (probed via `Definition.Type` / current value), falls back to `SetPropertyValueString` for
+  textual properties, and only then to the untyped overload.
+- **Structure DSL silently dropped newly-added Transaction attributes**: writing a Transaction's
+  `Structure` part with new attributes returned `status:Success persistedVerified:false` and the
+  attributes never landed. Four bugs stacked on this path:
+  1. `DslParserUtils.ParseLinesIntoNodes` only stripped the `*` key marker when it ended the
+     trimmed line, so DSL like `TrnId* : Numeric(4)` left the asterisk on `node.Name`. The
+     lookup in `existingItems` then missed and forced the create-new branch.
+  2. `TransactionDslParser.SyncTransactionNodes` looked up `TransactionAttribute` via
+     `sdkLevel.GetType().Assembly`, but the runtime proxy's assembly doesn't expose that
+     type — `attrType` came back null and the create-new branch was a no-op.
+  3. The same path created the wrapper via `Activator.CreateInstance` + `Attributes.Add`,
+     which doesn't run the SDK's bookkeeping; the next `EnsureSave` discarded the addition.
+     Replaced with `sdkLevel.AddAttribute(globalAttr)` (the typed SDK method already used by
+     `ObjectService.InitializeTransactionWithDefaultKey`).
+  4. `AttributeTypeApplier.ApplyPrimitive` called `Type.GetProperty("Type"/"Length"/"Decimals")`
+     directly; the SDK Attribute hierarchy shadows those properties, throwing
+     `AmbiguousMatchException`. Now resolves the most-derived declaration explicitly.
+- **`InjectionService` masked `IsBusinessComponent`**: line 135 read `trn.BusinessComponent`
+  (no `Is` prefix) via `dynamic`, throwing `RuntimeBinderException` swallowed by an empty catch.
+  BC structures never injected into context. Typed cast against `Transaction.IsBusinessComponent`.
+
+### Added
+
+- **Inspect surfaces Business Component flag**: `genexus_inspect` now returns
+  `transactionMetadata.isBusinessComponent` for Transaction objects, so agents can verify BC
+  state without paging through the ~150-entry property bag from `genexus_properties get`.
+
 ## v2.4.0 — Unreleased
 
 ### Fixed

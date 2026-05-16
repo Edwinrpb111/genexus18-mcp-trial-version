@@ -44,10 +44,11 @@ namespace GxMcp.Worker.Helpers
                     node.IsCollection = true;
                 }
 
-                if (trimmed.EndsWith("*")) {
-                    node.IsKey = true;
-                    trimmed = trimmed.Substring(0, trimmed.Length - 1).Trim();
-                }
+                // Key marker `*` belongs to the attribute Name and may appear
+                //   1) at end of bare name:   "TrnId*"
+                //   2) before the colon:      "TrnId* : Numeric(4)"
+                //   3) at end of full line:   "TrnId" + "*" trailing the whole line (legacy form)
+                // Strip it after the colon split so it doesn't bleed into the name field.
 
                 int colonIndex = trimmed.IndexOf(':');
                 if (colonIndex > 0) {
@@ -61,6 +62,11 @@ namespace GxMcp.Worker.Helpers
                         node.IsCompound = false;
                         node.TypeStr = "Unknown";
                     }
+                }
+
+                if (!string.IsNullOrEmpty(node.Name) && node.Name.EndsWith("*")) {
+                    node.IsKey = true;
+                    node.Name = node.Name.Substring(0, node.Name.Length - 1).Trim();
                 }
 
                 while (stack.Count > 0 && stack.Peek().Indent >= indent) stack.Pop();

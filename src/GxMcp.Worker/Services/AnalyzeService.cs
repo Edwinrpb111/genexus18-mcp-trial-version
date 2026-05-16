@@ -747,6 +747,18 @@ namespace GxMcp.Worker.Services
                 // 6. Metadata (Sync)
                 if (includeAll || requested.Contains("metadata")) result["wwpMetadata"] = GetWWPMetadata(obj);
 
+                // 6.0 Transaction-specific metadata — surfaces IsBusinessComponent so the agent
+                // can verify BC state without paging through the full property bag.
+                if ((includeAll || requested.Contains("metadata")) && obj is global::Artech.Genexus.Common.Objects.Transaction trnMeta)
+                {
+                    try
+                    {
+                        var trnMd = new JObject { ["isBusinessComponent"] = trnMeta.IsBusinessComponent };
+                        result["transactionMetadata"] = trnMd;
+                    }
+                    catch (Exception ex) { Logger.Debug("[Inspect] Transaction metadata extraction failed: " + ex.Message); }
+                }
+
                 // 6.1 Available parts (Sync) — discovery aid
                 if (includeAll || requested.Contains("parts"))
                 {

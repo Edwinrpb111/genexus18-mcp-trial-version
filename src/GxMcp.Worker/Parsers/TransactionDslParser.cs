@@ -148,55 +148,54 @@ namespace GxMcp.Worker.Parsers
                     }
                     else
                     {
-                        Type attrType = sdkLevel.GetType().Assembly.GetType("Artech.Genexus.Common.Objects.TransactionAttribute");
-                        if (attrType != null) {
-                            try {
-                                var globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(model, pNode.Name);
-                                bool createdGlobal = false;
-                                if (globalAttr == null)
+                        try {
+                            // Resolve (or create) the global Attribute first — the SDK's typed
+                            // sdkLevel.AddAttribute(globalAttr) is the only path that links the new
+                            // TransactionAttribute into the structure with the bookkeeping that
+                            // EnsureSave honors. The previous Activator+Attributes.Add path silently
+                            // dropped new items because the SDK's TransactionAttribute proxy needs
+                            // to be created by the level itself.
+                            var globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(model, pNode.Name);
+                            bool createdGlobal = false;
+                            if (globalAttr == null)
+                            {
+                                try
                                 {
-                                    // Create a new global Attribute so we have somewhere to put the type.
-                                    // Mirror ObjectService.InitializeTransactionWithDefaultKey pattern.
-                                    try
+                                    var attrGuid = KBObjectDescriptor.Get<Artech.Genexus.Common.Objects.Attribute>().Id;
+                                    var newAttr = KBObject.Create(model, attrGuid);
+                                    newAttr.Name = pNode.Name;
+                                    globalAttr = newAttr as Artech.Genexus.Common.Objects.Attribute;
+                                    if (globalAttr != null)
                                     {
-                                        var attrGuid = KBObjectDescriptor.Get<Artech.Genexus.Common.Objects.Attribute>().Id;
-                                        var newAttr = KBObject.Create(model, attrGuid);
-                                        newAttr.Name = pNode.Name;
-                                        globalAttr = newAttr as Artech.Genexus.Common.Objects.Attribute;
-                                        if (globalAttr != null)
-                                        {
-                                            // Apply DSL type BEFORE saving so the persisted Attribute has the right shape from the start.
-                                            ApplyTypeFromDsl(globalAttr, pNode.TypeStr, model);
-                                            newAttr.Save();
-                                            createdGlobal = true;
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        // If creation failed, fall back to old behavior (TransactionAttribute with no global).
-                                        globalAttr = null;
-                                        createdGlobal = false;
-                                        System.Diagnostics.Debug.WriteLine("TransactionDslParser: global Attribute create failed: " + ex.Message);
+                                        ApplyTypeFromDsl(globalAttr, pNode.TypeStr, model);
+                                        newAttr.Save();
+                                        createdGlobal = true;
                                     }
                                 }
-
-                                dynamic trnAttr;
-                                if (globalAttr != null)
-                                    trnAttr = Activator.CreateInstance(attrType, new object[] { sdkLevel.Structure, globalAttr });
-                                else
-                                    trnAttr = Activator.CreateInstance(attrType, new object[] { sdkLevel });
-
-                                trnAttr.Name = pNode.Name;
-                                trnAttr.IsKey = pNode.IsKey;
-                                sdkLevel.Attributes.Add(trnAttr);
-
-                                // If the global already existed (not created above), still apply the DSL type
-                                // so changing TokenUser : Numeric(4) → TokenUser : UserLogin actually mutates the global.
-                                if (!createdGlobal && globalAttr != null && !string.IsNullOrEmpty(pNode.TypeStr))
+                                catch (Exception ex)
                                 {
-                                    ApplyTypeFromDsl(globalAttr, pNode.TypeStr, model);
+                                    Logger.Warn("[TransactionDslParser] global Attribute create failed for '" + pNode.Name + "': " + ex.Message);
+                                    globalAttr = null;
                                 }
-                            } catch { }
+                            }
+
+                            if (globalAttr == null)
+                            {
+                                Logger.Error("[TransactionDslParser] cannot add attribute '" + pNode.Name + "' — no global Attribute available; skipping.");
+                                continue;
+                            }
+
+                            dynamic trnAttr = sdkLevel.AddAttribute(globalAttr);
+                            try { trnAttr.IsKey = pNode.IsKey; } catch { }
+
+                            // If the global already existed, still apply the DSL type so changes
+                            // like TokenUser : Numeric(4) → TokenUser : UserLogin propagate.
+                            if (!createdGlobal && !string.IsNullOrEmpty(pNode.TypeStr))
+                            {
+                                ApplyTypeFromDsl(globalAttr, pNode.TypeStr, model);
+                            }
+                        } catch (Exception addEx) {
+                            Logger.Error("[TransactionDslParser] Failed to add attribute '" + pNode.Name + "': " + (addEx.InnerException?.Message ?? addEx.Message));
                         }
                     }
                 }
@@ -214,7 +213,19 @@ namespace GxMcp.Worker.Parsers
             object globalAttr = trnAttrOrAttribute;
             try
             {
-                var attrProp = trnAttrOrAttribute.GetType().GetProperty("Attribute");
+                // Walk the hierarchy to avoid AmbiguousMatchException when the SDK shadows
+                // an inherited `Attribute` property on the derived TransactionAttribute.
+                System.Reflection.PropertyInfo attrProp = null;
+                Type tt = trnAttrOrAttribute.GetType();
+                try { attrProp = tt.GetProperty("Attribute"); }
+                catch (System.Reflection.AmbiguousMatchException)
+                {
+                    for (Type cur = tt; cur != null && attrProp == null; cur = cur.BaseType)
+                    {
+                        attrProp = cur.GetProperty("Attribute",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly);
+                    }
+                }
                 if (attrProp != null)
                 {
                     var maybeAttr = attrProp.GetValue(trnAttrOrAttribute, null);

@@ -126,9 +126,13 @@ namespace GxMcp.Worker.Helpers
             if (!CanonicalToEdb.TryGetValue(canonicalType, out edbName)) return false;
 
             Type t = attr.GetType();
-            PropertyInfo typeProp = t.GetProperty("Type");
-            PropertyInfo lenProp  = t.GetProperty("Length");
-            PropertyInfo decProp  = t.GetProperty("Decimals");
+            // The Artech SDK Attribute hierarchy declares 'Type' on a base class and shadows it
+            // (with `new`) on derived ones, so the parameter-less Type.GetProperty(name) overload
+            // throws AmbiguousMatchException. Resolve walking the type hierarchy from most-derived
+            // upward and taking the first declaration on each level.
+            PropertyInfo typeProp = GetPropertyResolvingAmbiguity(t, "Type");
+            PropertyInfo lenProp  = GetPropertyResolvingAmbiguity(t, "Length");
+            PropertyInfo decProp  = GetPropertyResolvingAmbiguity(t, "Decimals");
             if (typeProp == null) return false;
 
             object enumValue;
@@ -166,6 +170,21 @@ namespace GxMcp.Worker.Helpers
             }
 
             return true;
+        }
+
+        private static PropertyInfo GetPropertyResolvingAmbiguity(Type type, string name)
+        {
+            if (type == null || string.IsNullOrEmpty(name)) return null;
+            try { return type.GetProperty(name); }
+            catch (System.Reflection.AmbiguousMatchException) { }
+
+            for (Type cur = type; cur != null; cur = cur.BaseType)
+            {
+                PropertyInfo p = cur.GetProperty(name,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (p != null) return p;
+            }
+            return null;
         }
 
         /// <summary>
