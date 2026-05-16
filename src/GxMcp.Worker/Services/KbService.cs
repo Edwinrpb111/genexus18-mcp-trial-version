@@ -109,12 +109,187 @@ namespace GxMcp.Worker.Services
 
         public string BulkIndex() => BulkIndex(force: false);
 
+        // SP6.T6 — public entry point. When Indexing.UseLitePass is true (default) we run
+        // the new fast lite + lazy-enrichment pipeline; otherwise we fall back to the
+        // preserved monolithic path (BulkIndexLegacy) for one release.
+        public string BulkIndex(bool force)
+        {
+            if (!Configuration.UseLitePass)
+            {
+                return BulkIndexLegacy(force);
+            }
+
+            Logger.Info($"BulkIndex(force={force}) requested — fast index path (lite + lazy enrichment).");
+            if (_isIndexing) return "{\"status\":\"Already in progress\"}";
+
+            // Wait briefly for the KB to open — same warm-up window as the legacy path.
+            try
+            {
+                int waitMs = 0;
+                while (waitMs < 15000 && !_indexCacheService.IsInitialized)
+                {
+                    Thread.Sleep(200);
+                    waitMs += 200;
+                }
+                if (force)
+                {
+                    Logger.Info("BulkIndex(fast): force=true — clearing in-memory + on-disk snapshot.");
+                    try
+                    {
+                        _indexCacheService.Clear();
+                        _indexCacheService.DeleteOnDiskSnapshot();
+                        _indexCacheService.MarkReindexStarted(0);
+                    }
+                    catch (Exception ex) { Logger.Warn("BulkIndex(fast) force-clear failed: " + ex.Message); }
+                }
+                else if (!_indexCacheService.IsIndexMissing)
+                {
+                    var loaded = _indexCacheService.GetIndex();
+                    if (loaded != null && loaded.Objects.Count > 0)
+                    {
+                        try { _indexCacheService.MarkIndexComplete(loaded.Objects.Count); } catch { }
+                        Logger.Info($"BulkIndex(fast) skipped — cache already populated ({loaded.Objects.Count} objects).");
+                        return "{\"status\":\"AlreadyIndexed\",\"objects\":" + loaded.Objects.Count + ",\"path\":\"fast\"}";
+                    }
+                }
+            }
+            catch { /* fall through and rebuild */ }
+
+            _isIndexing = true;
+            _processedCount = 0;
+            _totalCount = 0;
+            _currentStatus = "Lite-index pass starting...";
+
+            var bulkSw = Stopwatch.StartNew();
+
+            var liteThread = new Thread(() =>
+            {
+                try
+                {
+                    var liteSw = Stopwatch.StartNew();
+                    dynamic kb = GetKB();
+                    if (kb == null)
+                    {
+                        _isIndexing = false;
+                        _currentStatus = "Error: KB not open";
+                        return;
+                    }
+
+                    _currentStatus = "Lite-index pass: walking KB objects...";
+                    Logger.Info(_currentStatus);
+
+                    var objectList = (System.Collections.IEnumerable)kb.DesignModel.Objects;
+                    var liteEntries = new List<SearchIndex.IndexEntry>();
+
+                    foreach (global::Artech.Architecture.Common.Objects.KBObject obj in objectList)
+                    {
+                        _totalCount++;
+                        string typeName = null;
+                        try { typeName = obj.TypeDescriptor?.Name; } catch { }
+                        if (string.IsNullOrEmpty(typeName)) typeName = obj.GetType().Name;
+
+                        string description = null;
+                        try { description = obj.Description; } catch { }
+
+                        liteEntries.Add(new SearchIndex.IndexEntry
+                        {
+                            Guid = obj.Guid.ToString(),
+                            Name = obj.Name,
+                            Type = typeName,
+                            Description = description,
+                            IsEnriched = false
+                        });
+
+                        if (_totalCount % 500 == 0) Thread.Sleep(1);
+
+                        if (_totalCount % 1000 == 0)
+                        {
+                            try
+                            {
+                                GxMcp.Worker.Helpers.ProgressEmitter.Emit(
+                                    _totalCount,
+                                    Math.Max(_totalCount, 50000),
+                                    "Lite-index pass: " + _totalCount + " objects captured");
+                            }
+                            catch { }
+                        }
+                    }
+
+                    _indexCacheService.ReplaceAll(liteEntries);
+                    _indexCacheService.MarkLitePassComplete(_totalCount);
+                    liteSw.Stop();
+                    _currentStatus = $"Lite pass complete: {_totalCount} objects. Enriching in background...";
+                    Logger.Info($"[BULK-INDEX-LITE] elapsedMs={liteSw.ElapsedMilliseconds} objects={_totalCount}");
+
+                    var enrichThread = new Thread(() =>
+                    {
+                        try
+                        {
+                            _indexCacheService.MarkEnrichmentStarted();
+                            var enricher = new IndexEntryEnricher(e =>
+                            {
+                                try
+                                {
+                                    if (string.IsNullOrEmpty(e?.Guid)) return;
+                                    if (!Guid.TryParse(e.Guid, out var g)) return;
+                                    var fullObj = kb.DesignModel.Objects.Get(g);
+                                    if (fullObj == null) return;
+                                    _indexCacheService.UpdateEntry(fullObj);
+                                }
+                                catch (Exception ex) { Logger.Warn("Enrich " + (e != null ? e.Name : "?") + " failed: " + ex.Message); }
+                            });
+
+                            var queue = new EnrichmentQueue(enricher);
+                            foreach (var entry in liteEntries) queue.Enqueue(entry);
+                            _indexCacheService.SetEnrichmentQueue(queue);
+
+                            queue.DrainAsync().GetAwaiter().GetResult();
+                            _processedCount = _totalCount;
+                            _indexCacheService.MarkIndexComplete(_totalCount);
+                            bulkSw.Stop();
+                            _currentStatus = "Complete";
+                            Logger.Info($"[BULK-INDEX-FULL] elapsedMs={bulkSw.ElapsedMilliseconds} processed={_totalCount}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error("[BULK-INDEX-ENRICH-FAIL] error=" + ex.Message);
+                            try { _indexCacheService.MarkIndexFailed(); } catch { }
+                            _currentStatus = "Error: " + ex.Message;
+                        }
+                        finally { _isIndexing = false; }
+                    }) {
+                        IsBackground = true,
+                        Priority = ThreadPriority.BelowNormal,
+                        Name = "GxMcp-Enrich"
+                    };
+                    enrichThread.SetApartmentState(ApartmentState.STA);
+                    enrichThread.Start();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("[BULK-INDEX-LITE-FAIL] error=" + ex.Message);
+                    try { _indexCacheService.MarkIndexFailed(); } catch { }
+                    _currentStatus = "Error: " + ex.Message;
+                    _isIndexing = false;
+                }
+            }) {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+                Name = "GxMcp-Lite"
+            };
+            liteThread.SetApartmentState(ApartmentState.STA);
+            liteThread.Start();
+
+            return "{\"status\":\"LiteStarted\",\"hint\":\"list_objects is usable after a few seconds; analyze impact uses on-demand enrichment.\"}";
+        }
+
         // v2.3.8 (post-self-review) — force flag closes the "stale snapshot" gap.
         // Without force, the warm-start cache shortcuts to AlreadyIndexed even when
         // entries are missing edges (Calls/CalledBy) or new objects exist in the KB.
         // With force=true the in-memory + on-disk caches are cleared and the SDK
-        // walk re-runs from scratch. Surfaced as `lifecycle action=index force=true`.
-        public string BulkIndex(bool force)
+        // walk re-runs from scratch. SP6.T6 — preserved verbatim as the legacy path
+        // behind Indexing.UseLitePass=false for one release before removal.
+        private string BulkIndexLegacy(bool force)
         {
             Logger.Info($"BulkIndex(force={force}) requested.");
             if (_isIndexing) return "{\"status\":\"Already in progress\"}";
