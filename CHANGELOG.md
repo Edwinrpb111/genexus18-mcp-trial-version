@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.4.0 — Unreleased
+
+### Changed
+
+- **BREAKING (envelope)**: `axiCompact` now defaults to `true` for `genexus_query` and
+  `genexus_list_objects`. Callers that relied on full payloads must now pass
+  `axiCompact: false` explicitly. The flag is declared in `inputSchema` for discoverability.
+
 ## v2.3.8 — 2026-05-15
 
 Two waves into a single release. Wave 1 (morning) shipped the six new tools and
