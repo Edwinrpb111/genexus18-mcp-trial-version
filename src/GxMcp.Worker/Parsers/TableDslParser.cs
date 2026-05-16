@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Collections.Generic;
 using System.Linq;
+using Artech.Architecture.Common.Descriptors;
 using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common.Objects;
 
@@ -63,10 +64,10 @@ namespace GxMcp.Worker.Parsers
                 var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                                 .Where(l => !string.IsNullOrWhiteSpace(l))
                                 .ToList();
-                
+
                 var parsedNodes = Helpers.DslParserUtils.ParseLinesIntoNodes(lines);
                 dynamic dStructure = ((dynamic)tbl).TableStructure;
-                
+
                 // 1. Remove attributes not in DSL
                 var toRemove = new List<dynamic>();
                 foreach (dynamic attr in dStructure.Attributes)
@@ -85,22 +86,125 @@ namespace GxMcp.Worker.Parsers
                     if (existingItems.TryGetValue(pNode.Name, out var existing))
                     {
                         existing.IsKey = pNode.IsKey;
+                        ApplyTypeFromDsl(existing, pNode.TypeStr, tbl.Model);
                     }
                     else
                     {
                         Type attrType = dStructure.GetType().Assembly.GetType("Artech.Genexus.Common.Objects.TableAttribute");
                         if (attrType != null)
                         {
-                            try {
-                                dynamic tblAttr = Activator.CreateInstance(attrType, new object[] { dStructure });
+                            try
+                            {
+                                var globalAttr = Artech.Genexus.Common.Objects.Attribute.Get(tbl.Model, pNode.Name);
+                                bool createdGlobal = false;
+                                if (globalAttr == null)
+                                {
+                                    // Create a new global Attribute so we have somewhere to put the type.
+                                    try
+                                    {
+                                        var attrGuid = KBObjectDescriptor.Get<Artech.Genexus.Common.Objects.Attribute>().Id;
+                                        var newAttr = KBObject.Create(tbl.Model, attrGuid);
+                                        newAttr.Name = pNode.Name;
+                                        globalAttr = newAttr as Artech.Genexus.Common.Objects.Attribute;
+                                        if (globalAttr != null)
+                                        {
+                                            // Apply DSL type BEFORE saving so the persisted Attribute has the right shape from the start.
+                                            ApplyTypeFromDsl(globalAttr, pNode.TypeStr, tbl.Model);
+                                            newAttr.Save();
+                                            createdGlobal = true;
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        // If creation failed, fall back to old behavior (TableAttribute with no global).
+                                        globalAttr = null;
+                                        createdGlobal = false;
+                                        System.Diagnostics.Debug.WriteLine("TableDslParser: global Attribute create failed: " + ex.Message);
+                                    }
+                                }
+
+                                // TableAttribute may have a (structure, globalAttribute) ctor — try that first; fall back to single-arg.
+                                dynamic tblAttr;
+                                if (globalAttr != null)
+                                {
+                                    var ctor2 = attrType.GetConstructor(new Type[] { (Type)dStructure.GetType(), typeof(Artech.Genexus.Common.Objects.Attribute) });
+                                    if (ctor2 != null)
+                                    {
+                                        tblAttr = ctor2.Invoke(new object[] { dStructure, globalAttr });
+                                    }
+                                    else
+                                    {
+                                        tblAttr = Activator.CreateInstance(attrType, new object[] { dStructure });
+                                        // Try to set the Attribute reference via reflection if the property exists.
+                                        try
+                                        {
+                                            var attrProp = attrType.GetProperty("Attribute");
+                                            if (attrProp != null && attrProp.CanWrite) attrProp.SetValue(tblAttr, globalAttr, null);
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                else
+                                {
+                                    tblAttr = Activator.CreateInstance(attrType, new object[] { dStructure });
+                                }
+
                                 tblAttr.Name = pNode.Name;
                                 tblAttr.IsKey = pNode.IsKey;
                                 dStructure.Attributes.Add(tblAttr);
+
+                                // If the global already existed (not created above), still apply the DSL type
+                                // so changing e.g. ColName : Numeric(4) → ColName : VarChar(100) actually mutates the global.
+                                if (!createdGlobal && globalAttr != null && !string.IsNullOrEmpty(pNode.TypeStr))
+                                {
+                                    ApplyTypeFromDsl(globalAttr, pNode.TypeStr, tbl.Model);
+                                }
                             } catch { }
                         }
                     }
                 }
             }
+        }
+
+        private static void ApplyTypeFromDsl(dynamic tblAttrOrAttribute, string typeStr, KBModel model)
+        {
+            if (tblAttrOrAttribute == null || string.IsNullOrWhiteSpace(typeStr)) return;
+            var spec = GxMcp.Worker.Helpers.AttributeTypeApplier.Parse(typeStr);
+            if (!spec.Recognized) return;
+
+            // Resolve to the underlying global Attribute. For TableAttribute the property is .Attribute;
+            // for a raw Artech.Genexus.Common.Objects.Attribute it is itself.
+            object globalAttr = tblAttrOrAttribute;
+            try
+            {
+                var attrProp = tblAttrOrAttribute.GetType().GetProperty("Attribute");
+                if (attrProp != null)
+                {
+                    var maybeAttr = attrProp.GetValue(tblAttrOrAttribute, null);
+                    if (maybeAttr != null) globalAttr = maybeAttr;
+                }
+            }
+            catch { }
+
+            if (spec.CanonicalType == "DomainReference" && !string.IsNullOrEmpty(spec.DomainName))
+            {
+                try
+                {
+                    Artech.Genexus.Common.Objects.Domain domain = null;
+                    foreach (var obj in model.Objects.GetByName(null, null, spec.DomainName))
+                    {
+                        if (obj is Artech.Genexus.Common.Objects.Domain d) { domain = d; break; }
+                    }
+                    if (domain != null)
+                    {
+                        GxMcp.Worker.Helpers.AttributeTypeApplier.ApplyDomain(globalAttr, domain);
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            GxMcp.Worker.Helpers.AttributeTypeApplier.ApplyPrimitive(globalAttr, spec.CanonicalType, spec.Length, spec.Decimals);
         }
     }
 }
