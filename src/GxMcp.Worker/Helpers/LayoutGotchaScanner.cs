@@ -31,30 +31,32 @@ namespace GxMcp.Worker.Helpers
         /// <summary>
         /// Scans a layout XML and returns the list of detected gotchas. Empty list if
         /// none / on parse failure. KB-aware overload — uses the live model to resolve
-        /// var:N bindings and check for attribute shadowing.
+        /// var:N bindings for descriptive messages.
         /// </summary>
         public static List<Gotcha> Scan(string layoutXml, KBObject obj)
         {
-            return ScanInternal(
-                layoutXml,
-                attId => ResolveVarName(obj, attId),
-                name => AttributeExists(obj, name));
+            return ScanInternal(layoutXml, attId => ResolveVarName(obj, attId));
         }
 
         /// <summary>
-        /// Testable overload: accepts delegates for var:N → variable name and for
-        /// transaction-attribute existence. The tests assembly does not reference
-        /// Artech.Genexus.Common, so the KBObject overload can't run in unit tests.
+        /// Testable overload: accepts a delegate for var:N → variable name. The tests
+        /// assembly does not reference Artech.Genexus.Common, so the KBObject overload
+        /// can't run in unit tests.
         /// </summary>
-        public static List<Gotcha> Scan(string layoutXml, Func<string, string> varNameResolver, Func<string, bool> attributeExists)
+        public static List<Gotcha> Scan(string layoutXml, Func<string, string> varNameResolver)
         {
-            return ScanInternal(
-                layoutXml,
-                varNameResolver ?? (_ => null),
-                attributeExists ?? (_ => false));
+            return ScanInternal(layoutXml, varNameResolver ?? (_ => null));
         }
 
-        private static List<Gotcha> ScanInternal(string layoutXml, Func<string, string> varNameResolver, Func<string, bool> attributeExists)
+        // Kept for backwards compatibility with callers that passed an attribute-existence
+        // predicate (FR#2 originally hypothesized that shadowing was the cause). The predicate
+        // is now ignored — see the comment on GotchaGxAttributeHtmlFormDiscreteReadOnly.
+        public static List<Gotcha> Scan(string layoutXml, Func<string, string> varNameResolver, Func<string, bool> attributeExistsIgnored)
+        {
+            return ScanInternal(layoutXml, varNameResolver ?? (_ => null));
+        }
+
+        private static List<Gotcha> ScanInternal(string layoutXml, Func<string, string> varNameResolver)
         {
             var hits = new List<Gotcha>();
             if (string.IsNullOrWhiteSpace(layoutXml)) return hits;
@@ -66,9 +68,9 @@ namespace GxMcp.Worker.Helpers
             bool isHtmlForm = doc.Descendants("Form")
                 .Any(f => string.Equals((string)f.Attribute("type"), "html", StringComparison.OrdinalIgnoreCase));
 
-            // Per-name attribute existence cache so multiple controls binding the same variable
-            // only hit the KB index once.
-            var attrExistsCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            // Reserved — kept as a no-op placeholder so existing helpers that referenced an
+            // attribute-existence cache (in the v2.5.1 shadow-hypothesis design) still compile
+            // without runtime cost. The current detection does not require KB attribute lookup.
 
             foreach (var el in doc.Descendants())
             {
@@ -106,49 +108,44 @@ namespace GxMcp.Worker.Helpers
                     }
                 }
 
-                // FR#2 — gxAttribute with ControlType="Radio Button" or "Combo Box" bound to
-                // a local variable whose name matches an existing transaction attribute renders
-                // disabled in the HTML output (display:none + ReadonlyAttribute span), even with
-                // ReadOnly="False". The text-input default ControlType is unaffected.
-                if (elName.Equals("gxAttribute", StringComparison.OrdinalIgnoreCase))
+                // FR#2 (revised 2026-05-19) — gxAttribute with ControlType="Radio Button" or
+                // "Combo Box" in <Form type="html"> renders disabled in the HTML output (the
+                // <input> gets disabled="" class="gx-disabled" data-gx-readonly=""), regardless
+                // of the variable name or ReadOnly="False" / Enabled="True" attributes. Default
+                // text-input ControlType is unaffected. Confirmed empirically: renaming
+                // &Alu2RegProf → &RespRegProf (no attribute shadow) did NOT fix the disabled
+                // render. The hypothesis that variable-name shadowing was the cause was WRONG —
+                // the html-form generator simply never emits an editable radio/combo input.
+                if (isHtmlForm && elName.Equals("gxAttribute", StringComparison.OrdinalIgnoreCase))
                 {
                     string ctrlType = (string)el.Attribute("ControlType");
                     if (!string.IsNullOrWhiteSpace(ctrlType)
                         && (ctrlType.Equals("Radio Button", StringComparison.OrdinalIgnoreCase)
                             || ctrlType.Equals("Combo Box", StringComparison.OrdinalIgnoreCase)))
                     {
+                        // Resolve var:N for the message (best-effort — the scanner still emits
+                        // even if the binding can't be named).
                         string attId = (string)el.Attribute("AttID");
-                        if (!string.IsNullOrWhiteSpace(attId) && attId.StartsWith("var:", StringComparison.OrdinalIgnoreCase))
+                        string varName = !string.IsNullOrWhiteSpace(attId) && attId.StartsWith("var:", StringComparison.OrdinalIgnoreCase)
+                            ? varNameResolver(attId)
+                            : null;
+                        string bindingDesc = !string.IsNullOrEmpty(varName) ? "&" + varName : (attId ?? "(unbound)");
+
+                        hits.Add(new Gotcha
                         {
-                            // Resolve var:N → variable name on the host object; check if a same-name
-                            // transaction attribute exists in the KB.
-                            string varName = varNameResolver(attId);
-                            if (!string.IsNullOrEmpty(varName))
-                            {
-                                bool shadowsAttr;
-                                if (!attrExistsCache.TryGetValue(varName, out shadowsAttr))
-                                {
-                                    shadowsAttr = attributeExists(varName);
-                                    attrExistsCache[varName] = shadowsAttr;
-                                }
-                                if (shadowsAttr)
-                                {
-                                    hits.Add(new Gotcha
-                                    {
-                                        Code = "GotchaGxAttributeShadowReadOnly",
-                                        Severity = "Warning",
-                                        Element = elName,
-                                        ControlId = (string)el.Attribute("id") ?? attId,
-                                        Message = $"gxAttribute ControlType=\"{ctrlType}\" bound to &{varName} renders " +
-                                                  "disabled in HTML output because the local variable name shadows the " +
-                                                  $"transaction attribute '{varName}'. ReadOnly=\"False\" is honored for " +
-                                                  "text inputs but ignored for Radio Button / Combo Box bindings.",
-                                        Workaround = $"Rename the local variable so it does not shadow the attribute (e.g. " +
-                                                     $"&Resp{varName} or &Sel{varName}), update events/parm rules, rebuild."
-                                    });
-                                }
-                            }
-                        }
+                            Code = "GotchaGxAttributeHtmlFormDiscreteReadOnly",
+                            Severity = "Warning",
+                            Element = elName,
+                            ControlId = (string)el.Attribute("id") ?? attId,
+                            Message = $"gxAttribute ControlType=\"{ctrlType}\" bound to {bindingDesc} will render " +
+                                      "disabled in the HTML output (the <input> gets disabled=\"\" + class=\"gx-disabled\"). " +
+                                      "The html-form generator does not produce editable radio/combo widgets — " +
+                                      "ReadOnly=\"False\" / Enabled=\"True\" are ignored here.",
+                            Workaround = "Move the control to a <Form type=\"layout\"> and use the WWP table " +
+                                         "pattern, OR render the radio/combo via a User Control, OR replace with " +
+                                         "raw HTML <input type=\"radio\"> inside a gxTextBlock Format=\"HTML\" + JS " +
+                                         "wiring back to a hidden gxAttribute (default ControlType, which IS editable)."
+                        });
                     }
                 }
             }
@@ -177,20 +174,5 @@ namespace GxMcp.Worker.Helpers
             return WebFormSchemaHints.LookupVarNameById(obj, id);
         }
 
-        // True iff the KB has a transaction Attribute with this name. Uses the model index
-        // (Objects.GetByName) so it's O(log N) per lookup, not O(KB).
-        private static bool AttributeExists(KBObject obj, string name)
-        {
-            if (obj?.Model == null || string.IsNullOrEmpty(name)) return false;
-            try
-            {
-                foreach (var result in obj.Model.Objects.GetByName(null, null, name))
-                {
-                    if (result is global::Artech.Genexus.Common.Objects.Attribute) return true;
-                }
-            }
-            catch { /* model access error */ }
-            return false;
-        }
     }
 }

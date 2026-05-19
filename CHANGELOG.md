@@ -49,10 +49,16 @@
     `<Form type="html">` will be ignored by the HTML generator (always wires
     Enter regardless). Workaround suggestion points to `<gxBitmap eventGX="...">`
     or moving to `<Form type="layout">` with `<action onClickEvent="...">`.
-  - `GotchaGxAttributeShadowReadOnly`: `gxAttribute ControlType="Radio Button"
-    | "Combo Box"` bound to a local variable that shadows a transaction
-    attribute renders disabled even with `ReadOnly="False"`. Workaround
-    suggestion: rename the local variable.
+  - `GotchaGxAttributeHtmlFormDiscreteReadOnly`: `gxAttribute ControlType="Radio
+    Button" | "Combo Box"` inside `<Form type="html">` always renders disabled.
+    The html-form generator does not emit editable radio/combo widgets — the
+    original hypothesis that this was caused by variable-name shadowing of a
+    transaction attribute was DISPROVED by a live probe (renaming the bound
+    variable did not change the render). Workaround suggestion: move the
+    control to `<Form type="layout">` with the WWP table pattern, use a User
+    Control, or render raw HTML `<input type="radio">` via `gxTextBlock
+    Format="HTML"` + JS wiring to a hidden gxAttribute (default ControlType is
+    editable in html forms).
 
   Both gotchas are not "MCP bugs" per se — they're GeneXus HTML generator
   behaviors the agent can't change. But surfacing them at inspect time skips

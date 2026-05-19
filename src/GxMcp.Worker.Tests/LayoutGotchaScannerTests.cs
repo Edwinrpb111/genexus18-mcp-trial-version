@@ -56,67 +56,72 @@ namespace GxMcp.Worker.Tests
             Assert.Empty(hits);
         }
 
-        // FR#2 (friction-report 2026-05-19): gxAttribute Radio/Combo bound to a local variable
-        // whose name matches a transaction attribute renders disabled even with ReadOnly="False".
-        // Scanner surfaces a warning when both conditions match.
+        // FR#2 (revised 2026-05-19): gxAttribute ControlType="Radio Button" or "Combo Box" in
+        // <Form type="html"> always renders disabled, regardless of variable name or ReadOnly /
+        // Enabled attributes. Original hypothesis (variable-name shadow) was disproved by live
+        // probe: renaming the bound variable did not change the rendering.
         [Fact]
-        public void Scan_GxAttributeRadioShadowingTrnAttribute_EmitsWarning()
+        public void Scan_GxAttributeRadioInHtmlForm_EmitsWarning()
         {
             var xml = @"<GxMultiForm>
                 <Form id=""1"" type=""html"">
-                    <gxAttribute AttID=""var:8"" ControlType=""Radio Button"" ReadOnly=""False"" />
+                    <gxAttribute AttID=""var:24"" ControlType=""Radio Button"" ReadOnly=""False"" />
                 </Form>
             </GxMultiForm>";
-            // var:8 → &Alu2RegProf, and Alu2RegProf exists as a transaction attribute in the KB.
-            var hits = LayoutGotchaScanner.Scan(
-                xml,
-                attId => attId == "var:8" ? "Alu2RegProf" : null,
-                name => name == "Alu2RegProf");
+            var hits = LayoutGotchaScanner.Scan(xml, attId => attId == "var:24" ? "RespRegProf" : null);
             Assert.Single(hits);
-            Assert.Equal("GotchaGxAttributeShadowReadOnly", hits[0].Code);
-            Assert.Contains("Alu2RegProf", hits[0].Message);
+            Assert.Equal("GotchaGxAttributeHtmlFormDiscreteReadOnly", hits[0].Code);
+            Assert.Contains("RespRegProf", hits[0].Message);
             Assert.Contains("Radio Button", hits[0].Message);
-            Assert.Contains("Resp", hits[0].Workaround);
+            Assert.Contains("Form type=\"layout\"", hits[0].Workaround);
         }
 
         [Fact]
-        public void Scan_GxAttributeRadioNoShadowing_NoWarning()
+        public void Scan_GxAttributeComboInHtmlForm_EmitsWarning()
         {
             var xml = @"<GxMultiForm>
                 <Form id=""1"" type=""html"">
-                    <gxAttribute AttID=""var:99"" ControlType=""Radio Button"" />
+                    <gxAttribute AttID=""var:5"" ControlType=""Combo Box"" />
                 </Form>
             </GxMultiForm>";
-            var hits = LayoutGotchaScanner.Scan(
-                xml,
-                attId => attId == "var:99" ? "MyLocalVar" : null,
-                name => false); // no shadowing
+            var hits = LayoutGotchaScanner.Scan(xml, _ => null);
+            Assert.Single(hits);
+            Assert.Equal("GotchaGxAttributeHtmlFormDiscreteReadOnly", hits[0].Code);
+            Assert.Contains("Combo Box", hits[0].Message);
+        }
+
+        [Fact]
+        public void Scan_GxAttributeRadioInLayoutForm_NoWarning()
+        {
+            // Form type="layout" supports editable Radio / Combo. Only html-form is broken.
+            var xml = @"<GxMultiForm>
+                <Form id=""2"" type=""layout"">
+                    <gxAttribute AttID=""var:24"" ControlType=""Radio Button"" />
+                </Form>
+            </GxMultiForm>";
+            var hits = LayoutGotchaScanner.Scan(xml, _ => null);
             Assert.Empty(hits);
         }
 
         [Fact]
-        public void Scan_GxAttributeTextInputShadowing_NoWarning()
+        public void Scan_GxAttributeTextInputInHtmlForm_NoWarning()
         {
-            // Text input (default ControlType) is unaffected by the shadow issue. Only Radio /
-            // Combo render disabled.
+            // Default ControlType (text input) is unaffected — renders editable in html form.
             var xml = @"<GxMultiForm>
                 <Form id=""1"" type=""html"">
                     <gxAttribute AttID=""var:9"" ReadOnly=""False"" />
                 </Form>
             </GxMultiForm>";
-            var hits = LayoutGotchaScanner.Scan(
-                xml,
-                attId => attId == "var:9" ? "Alu2NumRegProf" : null,
-                name => true); // shadows but text input is fine
+            var hits = LayoutGotchaScanner.Scan(xml, _ => null);
             Assert.Empty(hits);
         }
 
         [Fact]
         public void Scan_EmptyOrInvalidXml_ReturnsEmpty()
         {
-            Assert.Empty(LayoutGotchaScanner.Scan("", _ => null, _ => false));
-            Assert.Empty(LayoutGotchaScanner.Scan(null, _ => null, _ => false));
-            Assert.Empty(LayoutGotchaScanner.Scan("<not closed", _ => null, _ => false));
+            Assert.Empty(LayoutGotchaScanner.Scan("", _ => null));
+            Assert.Empty(LayoutGotchaScanner.Scan((string)null, _ => null));
+            Assert.Empty(LayoutGotchaScanner.Scan("<not closed", _ => null));
         }
     }
 }

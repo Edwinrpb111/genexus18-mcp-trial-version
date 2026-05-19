@@ -27,18 +27,21 @@ HTML gerado: `<input type="button" id="BTT43" data-gx-evt="5" ...>` (5 = Enter).
 - Investigar `Artech.Genexus.Common.Controls.WebButton` ou similar pra encontrar o método de event-bind.
 - Curto prazo: rejeitar `OnClickEvent`/`onClickEvent` em XML de gxButton (não silenciar) e instruir uso de `genexus_properties set control=BtnX propertyName=OnClickEvent value=...` se essa rota funcionar.
 
-### #2 — `gxAttribute ReadOnly="False"` ignorado quando variável local sombra atributo de mesmo nome
+### #2 — `gxAttribute ControlType="Radio Button" | "Combo Box"` em `<Form type="html">` sempre renderiza disabled
 
-**Sintoma:** Variável local `&Alu2RegProf` (CHARACTER 40) no popup, mesmo nome do atributo `Alu2RegProf` da Transaction T0001. Layout: `<gxAttribute AttID="var:8" ControlType="Radio Button" ReadOnly="False" />`. HTML renderizado: `<input type="radio" disabled="" class="gx-disabled" data-gx-readonly="" ...>` (rendered em modo read-only display). O sibling `&Alu2NumRegProf` (também sombreia atributo) — funciona editável. Diferença: `&Alu2NumRegProf` é text input default, `&Alu2RegProf` tem `ControlType="Radio Button"`. Troquei pra `ControlType="Combo Box"` — mesma coisa (disabled + display:none + ReadonlyAttribute span). Tentativas que não resolveram: `ReadOnly="False"`, sem ReadOnly, `Enabled="True"` (aceito mas ignorado), `genexus_properties set var=&Alu2RegProf propertyName=ReadOnly value=False`, set Enabled=True idem.
+**Sintoma:** Layout: `<gxAttribute AttID="var:N" ControlType="Radio Button" ReadOnly="False" />` em um popup com `<Form id="1" type="html">`. HTML renderizado: `<input type="radio" disabled="" class="gx-disabled" data-gx-readonly="" ...>` — sempre disabled. Vale o mesmo pra `ControlType="Combo Box"`. Tentativas que não funcionam:
+- `ReadOnly="False"` no XML
+- Sem ReadOnly
+- `Enabled="True"`
+- `genexus_properties set ... ReadOnly value=False`
+- Trocar pra Combo Box (mesmo comportamento)
 
-Repro: criar webpanel popup, variável local `&Foo` mesmo nome de atributo `Foo` de uma transaction, layout com `<gxAttribute AttID="var:N" ControlType="Radio Button" ControlValues="A:1,B:2" ReadOnly="False" />`. Renderiza disabled.
+**Hipótese original (DISPROVADA):** Achei que era variável sombreando atributo de transação. Testei renomeando `&Alu2RegProf` → `&RespRegProf` (não bate com atributo nenhum) — **continuou disabled**. Logo o nome da variável é irrelevante; o gerador HTML simplesmente nunca emite radio/combo editável dentro de `<Form type="html">`.
 
-**Hipótese:** Quando o nome da variável bate com um atributo de transação, GeneXus auto-aplica o `VarBasedOn` (mesmo que `VarBasedOn=""` nas propriedades) e herda comportamento read-only do contexto de leitura. ControlType discreto (Radio/Combo) intensifica o problema (text/edit não herda).
+**Causa real (confirmada):** É comportamento do gerador HTML do GeneXus. Em html-form, gxAttribute discreto (Radio/Combo) é sempre rendered como display. Em `<Form type="layout">` (table responsive WWP-style) o mesmo controle vira editável via `<action>`/`<gxControl>`. Não é gap do MCP — é design constraint do GeneXus.
 
 **Sugestão:**
-- `WriteService.AddVariableInternal()` quando cria var nova com nome igual a atributo, setar explicitamente `IsStandardVariable=False`, `idIsAutoDefinedVariable=False`, e algum flag tipo `AttEditDontAssign`/`AttEditNameProtected` que separe o lifecycle.
-- Investigar se o gerador HTML respeita `data-gx-readonly` baseado em alguma prop específica do **var binding** e não do attribute config.
-- Documentar workaround: renomear a variável local pra algo que não bata com atributo (`&RespostaRegProf` em vez de `&Alu2RegProf`).
+- Detecção via `LayoutGotchaScanner.GotchaGxAttributeHtmlFormDiscreteReadOnly` no `genexus_inspect.layoutGotchas`. Workaround sugerido: mover pra Form type="layout", usar User Control, ou raw HTML `<input type="radio">` em gxTextBlock Format=HTML + JS wiring de volta pra gxAttribute hidden (default ControlType, que IS editable).
 
 ---
 
@@ -105,14 +108,13 @@ Cada um exige investigação dedicada do SDK Artech/GeneXus — não é refactor
 | Gap | Status | Detalhe |
 |---|---|---|
 | #1 OnClickEvent | **Detected (warning)** | Limitação do GeneXus HTML generator confirmada (não é gap do MCP). Scanner `LayoutGotchaScanner.cs` agora emite `GotchaGxButtonHtmlFormCustomEvent` em `genexus_inspect.layoutGotchas` quando o pattern é detectado, com workaround sugerido. Build+smoke cycle eliminado. |
-| #2 ReadOnly inheritance | **Detected (warning)** | Mesma estratégia — `GotchaGxAttributeShadowReadOnly` emitido quando `gxAttribute ControlType=Radio/Combo` binda a var local que sombra atributo de transação. Workaround: rename. |
+| #2 Radio/Combo disabled em html-form | **Detected (warning)** | `GotchaGxAttributeHtmlFormDiscreteReadOnly` emitido quando `gxAttribute ControlType=Radio Button|Combo Box` em `<Form type="html">`. Hipótese original do shadow estava errada — confirmado live com rename de variável. É limitação do gerador HTML, não do MCP. Workaround: Form type="layout", User Control, ou raw HTML radios via gxTextBlock Format=HTML. |
 | #3 layoutAttId mapping | **Fixed** | `Variable.Id` (C# instance property) é o `var:N` real do layout. Acessado via reflexão em `GetVariableInternalId` — `GetPropertyValue("Id")` retorna null porque consulta o Properties bag, não os props C#. Confirmado live: `TotalHorasCredito.Id=22` ↔ `var:22`, `SaldoHoras.Id=33` ↔ `var:33`, system vars=1-4. Fallbacks (bag, posição) mantidos por resiliência. |
 | #4 SDT em add_variable | **Fixed** | Resolver agora aceita bare names (`SdtFoo`, BC, Domain) e roteia via `ResolveTypeObject`. KB lookup ausente → `UnknownType` com mensagem clara. Tests: `VariableTypeResolverTests`. |
 | #5 name em gxAttribute | **Fixed** | Fallback sintético `gxAttribute@{dataBinding}` em `UIService.cs`. |
 
 Tests: `dotnet test src/GxMcp.Worker.Tests` 342/342 passa. Gateway 252/252 passa.
 
-Bônus do fix #3: o detector `GotchaGxAttributeShadowReadOnly` (gap #2) agora funciona
-corretamente em produção — ele depende de `WebFormSchemaHints.LookupVarNameById` que usa
-`GetVariableInternalId`. Antes, fallback posicional mapeava var errada; agora resolve
-o nome real e a detecção shadow-attribute fica precisa.
+Bônus do fix #3: a resolução `var:N → variável` agora é confiável em todos os helpers
+(WebFormSchemaHints, LayoutGotchaScanner) — antes o fallback posicional confundia nomes
+em objetos WWP+ que injetam system vars cedo.
