@@ -2,67 +2,105 @@
 
 ## v2.5.3 — 2026-05-19
 
-### Added — W3 (mcp-roadmap-ide-parity)
+### Added
 
-- **`genexus_create_popup`** — first-class MCP tool for the common popup-WebPanel
-  pattern (radio/combo/text inputs + Confirmar button). Takes a domain-level
-  `spec` (title, description, inputs[], buttons[], inParms, outParms) and emits
-  an IDE-equivalent WebPanel with:
-  - `Rules` part: `parm(in:&X, ..., out:&A, ...);`
-  - `Variables`: one per declared inParm + one per `input.varName`, via the
-    same W5-validated `genexus_add_variable` path (SDT/BC/Domain bare names
-    accepted, primitive sizes inferred from option values for radio/combo).
-  - `WebForm` part: a `Form type="layout"` body composed of table-responsive
-    rows hosting `<gxAttribute ControlType="Radio Button"/"Combo Box"
-    ControlValues="..."/>` per input — the only form type in which the HTML
-    generator emits editable radio/combo widgets (per the W1/W5 findings; see
-    `LayoutGotchaScanner.GotchaGxAttributeHtmlFormDiscreteReadOnly`). Buttons
-    render as `<action onClickEvent="'EvtName'"/>` inside the layout form.
-  - `Events` part: placeholder `Event Enter` blocks (`// TODO: agent provides
-    Enter event body`) plus a generated `Event Refresh` that toggles group
-    visibility when an input declares a `showWhen` predicate
-    (e.g. `"RespRegProf == 'S'"` → `if &RespRegProf = 'S' then
-    GrpInputN.Visible = True else GrpInputN.Visible = False endif`).
-  - Idempotent: skips creation when the WebPanel already exists; always
-    re-writes the parts.
-  - Theme classes (`Attribute`, `Button`, `Form`, `TextBlock`, …) are emitted
-    by name; the IDE/generator resolves them against the KB's active theme at
-    runtime — no GUIDs required from the caller.
-  - **Self-validates** the generated layout XML through `LayoutGotchaScanner`
-    before persisting; refuses to write with a structured error if any
-    scanner gotcha would render the popup non-functional.
+- **`genexus_create_popup`** — author a popup WebPanel from a domain-level
+  spec in a single tool call. Pass `title`, `description`, an array of
+  `inputs` (radio / combo / text), `buttons`, plus `inParms` / `outParms` —
+  the MCP emits the matching WebPanel with rules, variables, layout, and
+  events parts wired together. Radio and combo inputs are emitted inside
+  `Form type="layout"` so they render editable in the browser. Inputs can
+  declare a `showWhen` predicate (e.g. `"answer == 'Y'"`) to bind their
+  group's visibility to another input's value via a generated `Event
+  Refresh`. Existing webpanels are updated in place; the generated layout
+  is self-validated against the layout-quality scanner before persisting.
 
-  Implementation:
-  - `Helpers/PopupLayoutBuilder.cs` — pure XML/source builder
-    (`ParseSpec`, `BuildLayoutXml`, `BuildRulesSource`, `BuildEventsSource`).
-    No SDK dependency; fully unit-testable.
-  - `Services/PopupTemplateService.cs` — orchestrates Create →
-    AddVariable* → WriteObject(Rules/WebForm/Events) on top of existing
-    `ObjectService` + `WriteService` primitives. Exposes an
-    `IPopupBackend` test seam so the service is unit-testable without a KB.
-  - Wired through `CommandDispatcher` (`Popup`/`Create`), gateway
-    `OperationsRouter` (`genexus_create_popup` → `module=Popup, action=Create`),
-    and `tool_definitions.json`.
-  - 14 new tests in `PopupTemplateServiceTests` cover spec parsing,
-    layout-XML structure, scanner self-validation, Rules/Events generation
-    (showWhen → Refresh translation), and the orchestration steps.
+### Internal
 
-- **Tool schema budget bumped 6000 → 6300** (`ToolSchemaSizeTests`) to
-  accommodate the popup spec sub-schema (~290 tokens for the nested
-  inputs[options], buttons, inParms/outParms shape).
+- `Helpers/PopupLayoutBuilder.cs` is a pure XML/source builder with no SDK
+  dependency, fully unit-testable. `Services/PopupTemplateService.cs`
+  orchestrates `ObjectService.CreateObject` + `WriteService.AddVariable` /
+  `WriteObject` against an `IPopupBackend` seam.
+- Tool schema budget raised 6000 → 6300 tokens for the popup spec
+  sub-schema. Discovery golden fixtures regenerated.
+- Test surface: worker 365 → 379 (14 new in `PopupTemplateServiceTests`).
 
-- **Discovery golden fixture refreshed** (`Fixtures/Contract/Discovery/
-  tools-list.response.json`) to include `genexus_create_popup`. Regenerated
-  via `$env:GXMCP_UPDATE_GOLDEN="1"; dotnet test --filter DiscoverySurface`.
+## v2.5.2 — 2026-05-19
 
-### Roadmap state
+This release brings the MCP closer to feature parity with the GeneXus IDE.
+Three new tools, one major routing fix, four new layout-quality warnings, and
+theme introspection. See `docs/mcp-roadmap-ide-parity.md` for the design
+context.
 
-With W3 landed, the IDE-parity roadmap (docs/mcp-roadmap-ide-parity.md) is at
-**6 of 6 workstreams complete** (W1 SDK-routed layout writes; W2 pattern engine
-programmatic access; W3 common-UI templates; W4 render preview; W5 schema-aware
-validation; W6 theme/class introspection). The acceptance test — a UG popup
-authored end-to-end via MCP that an experienced GeneXus developer would write
-in the IDE — is now reachable in a single tool call.
+### Added
+
+- **`genexus_preview`** — render a WebPanel via headless Chrome (uses
+  `chrome-devtools-axi` CLI). Auto-fills the launcher form, navigates to the
+  target, and captures HTML / accessibility tree / screenshot / console
+  errors. Optional baseline diff against
+  `publish/worker/preview-baselines/<name>.a11y.json`. Config at
+  `publish/worker/preview.config.json` (auto-created on first call).
+  Structured errors for build failure, auth required, launcher missing, CLI
+  missing, unsupported object type.
+
+- **`genexus_apply_pattern`** — apply a GeneXus pattern (e.g. WorkWithPlus)
+  to a parent object, equivalent to the IDE's "Right-click → Apply Pattern"
+  menu. Invokes `Artech.Packages.Patterns.PatternEngine.ApplyPattern`
+  directly (first-time apply or re-apply via `reapply: true`). Returns
+  `{status: "pattern_unavailable"}` when the package or license is missing,
+  rather than throwing.
+
+- **Theme introspection via `genexus_inspect`.** Calling inspect on a
+  `ThemeForWeb` or `ThemeForSmartDevices` object now returns the theme's
+  class catalog: `{name, parent, isPredefined, category, controlTypes}` per
+  class. Default 100-class window (catalogs can exceed 600 classes); pass
+  `include=["classesFull"]` to get the full CSS rule and serialized
+  property bag per class. Lets callers write `Class="AttributeBlue"` by
+  name instead of resolving theme GUIDs by hand.
+
+### Fixed
+
+- **`gxButton OnClickEvent` for custom events.** Raw-XML writes that emitted
+  `OnClickEvent="'MyEvent'"` were silently ignored by the HTML generator,
+  which only reads the per-element XML attribute the SDK assigns (`Event`
+  for `gxButton`, `eventGX` for `gxAttribute` / `gxImage`). The MCP now
+  routes descriptor-named properties through the SDK's
+  `PropertiesObject.SetPropertyValue` so the canonical XML attribute is
+  emitted. Applies on every layout save; idempotent.
+
+### Added — layout-quality warnings (`genexus_inspect.layoutGotchas`)
+
+Four new static checks for patterns that compile clean but render wrong:
+
+- `GotchaGxAttributeMissingDataField` — `<gxAttribute>` with neither
+  `AttID` nor `DataField`. The SDK keeps a phantom control that binds to
+  nothing.
+- `GotchaUnknownControlType` — `gxAttribute ControlType="…"` value not in
+  the SDK whitelist (catches typos like `RadioButton` without the space).
+  Generator silently falls back to `Edit`.
+- `GotchaWebComponentMissingObjectCall` — `<gxEmbeddedPage>` /
+  `<gxWebComponent>` without `ObjectCall`. Renders an empty `<div>` at
+  runtime.
+- `GotchaCellOutsideTable` — `<cell>` or `<row>` not nested under a
+  `<table>`. Generator wraps or drops silently.
+- `GotchaDuplicateControlName` — two elements share an `id`; SDK
+  auto-renames via `GetUniqueName` on save, so caller references to the
+  original id break silently.
+
+### Internal
+
+- New `WebFormPreSaveValidator` wraps the SDK's
+  `WebFormHelper.Validate(part, OutputMessages)` validator. Standalone for
+  now; a follow-up release will surface validation errors directly in the
+  edit response with a force-write escape hatch.
+- `ContractGoldenHarness` gained a `GXMCP_UPDATE_GOLDEN=1` environment
+  switch to regenerate discovery fixtures after intentional tool schema
+  changes — saves a round-trip when adding tools.
+- Discovery golden fixtures regenerated for the new tools.
+- Tool schema budget: 5300 → 6000 tokens (raised again to 6300 in v2.5.3
+  for `genexus_create_popup`).
+- Test surface: worker 365 → 379 (+1 skipped live integration test for
+  WorkWithPlus license), gateway 250 → 252.
 
 ## v2.5.1 — 2026-05-19
 
