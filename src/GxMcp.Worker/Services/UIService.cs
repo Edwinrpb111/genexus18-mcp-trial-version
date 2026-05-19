@@ -124,9 +124,18 @@ namespace GxMcp.Worker.Services
 
                                 if (string.IsNullOrEmpty(ctrlName) && string.IsNullOrEmpty(binding)) continue;
 
+                                // FR#5 (friction-report 2026-05-19): gxAttribute/gxButton often omit id/ControlName
+                                // in WebForm-html layouts; fall back to a synthetic identifier so the agent has
+                                // something to pass to genexus_layout set_property.
+                                string nameForOutput = ctrlName;
+                                if (string.IsNullOrEmpty(nameForOutput) && !string.IsNullOrEmpty(binding))
+                                {
+                                    nameForOutput = $"{elName}@{binding}";
+                                }
+
                                 var entryFb = new JObject
                                 {
-                                    ["name"] = ctrlName,
+                                    ["name"] = nameForOutput,
                                     ["type"] = elName,
                                     ["controlType"] = ctrlType,
                                     ["dataBinding"] = binding,

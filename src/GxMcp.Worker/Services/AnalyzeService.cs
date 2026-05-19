@@ -612,6 +612,37 @@ namespace GxMcp.Worker.Services
                                 }
                                 lock (result) result["variables"] = variables;
                             }
+
+                            // FR#3 (friction-report 2026-05-19): scan WebFormPart layout for all
+                            // AttID="var:N" / "att:N" references so the agent knows which slots are
+                            // taken when authoring new <gxAttribute /> bindings. The actual N→variable
+                            // mapping requires runtime resolution we cannot reproduce here, but
+                            // exposing the in-use list eliminates trial-and-error guessing.
+                            try
+                            {
+                                var wfPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("WebFormPart"));
+                                if (wfPart != null)
+                                {
+                                    var xmlDocProp = wfPart.GetType().GetProperty("Document");
+                                    var xmlDoc = xmlDocProp?.GetValue(wfPart) as System.Xml.XmlDocument;
+                                    if (xmlDoc?.DocumentElement != null)
+                                    {
+                                        var idsInUse = new JArray();
+                                        var seen = new HashSet<string>();
+                                        var re = new System.Text.RegularExpressions.Regex(
+                                            "AttID=\"((?:var|att):\\d+)\"",
+                                            System.Text.RegularExpressions.RegexOptions.Compiled);
+                                        foreach (System.Text.RegularExpressions.Match m in re.Matches(xmlDoc.OuterXml))
+                                        {
+                                            string id = m.Groups[1].Value;
+                                            if (seen.Add(id)) idsInUse.Add(id);
+                                        }
+                                        if (idsInUse.Count > 0)
+                                            lock (result) result["layoutAttIdsInUse"] = idsInUse;
+                                    }
+                                }
+                            }
+                            catch { /* best-effort */ }
                         } catch {}
                     }));
                 }

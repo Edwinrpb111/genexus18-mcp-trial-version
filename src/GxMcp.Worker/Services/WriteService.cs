@@ -1549,7 +1549,7 @@ namespace GxMcp.Worker.Services
                     }
                     if (resolution.CanonicalType == "DomainReference" && !string.IsNullOrEmpty(resolution.DomainName))
                     {
-                        // Pass the raw domain name to the existing ResolveTypeObject path.
+                        // Pass the raw name to the existing ResolveTypeObject path (SDT / BC / Domain).
                         resolvedTypeForSdk = resolution.DomainName;
                     }
                     else
@@ -1599,6 +1599,21 @@ namespace GxMcp.Worker.Services
                             {
                                 VariableInjector.BindVariableToBC(newVar, targetObj);
                             }
+                        }
+                        else if (resolution != null && resolution.CanonicalType == "DomainReference"
+                                 && !string.IsNullOrEmpty(typeName) && !typeName.StartsWith("&"))
+                        {
+                            // FR#4 (friction-report 2026-05-19): resolver accepted the bare name as a
+                            // potential SDT/BC/Domain reference but SDK couldn't find it in the KB.
+                            // Surface a clear UnknownType so the agent knows to check the spelling.
+                            // Skip when input had explicit "&" prefix (legacy domain ref behavior).
+                            return new JObject
+                            {
+                                ["status"] = "Error",
+                                ["code"] = "UnknownType",
+                                ["message"] = $"Type '{typeName}' not found in KB. Expected primitive (Character/Numeric/etc), SDT name (e.g. SdtFoo), BC, or Domain.",
+                                ["typeName"] = typeName
+                            }.ToString(Newtonsoft.Json.Formatting.None);
                         }
                     }
                     varPart.Variables.Add(newVar);

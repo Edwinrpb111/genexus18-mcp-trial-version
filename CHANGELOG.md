@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.5.1 — 2026-05-19
+
+### Added
+
+- **`genexus_inspect include=["variables"]` now returns `layoutAttIdsInUse`** (FR#3
+  2026-05-19): array of `var:N` / `att:N` references already used in the WebForm
+  layout. Lets the agent pick the next free slot when authoring new
+  `<gxAttribute />` bindings instead of guessing var:N by position+offset (which
+  doesn't hold once the WWP pattern adds system vars). Source:
+  `AnalyzeService.cs` scans `WebFormPart.Document.OuterXml`.
+
+- **`genexus_add_variable typeName` accepts SDT / BC / Domain bare names** (FR#4
+  2026-05-19): previously rejected `SdtAluUniGraInfo` with `UnknownType` listing
+  only primitives. Now bare identifiers (non-primitive, no parens) route through
+  `VariableInjector.ResolveTypeObject` and bind via `BindVariableToSdt` /
+  `BindVariableToBC` / `DomainBasedOn`. If the KB doesn't have a match, returns
+  a clear `UnknownType` with the bad name in the message (no silent NUMERIC
+  fallback). Existing `&Foo` (explicit domain prefix) and primitive paths
+  unchanged.
+
+- **`genexus_inspect include=["controls"]` fills `name` for `gxAttribute` /
+  `gxButton` controls that omit `id` / `ControlName`** (FR#5 2026-05-19):
+  synthetic `name = "{type}@{dataBinding}"` (e.g. `gxAttribute@var:8`). Gives
+  the agent a stable handle to pass to `genexus_layout set_property`. Previously
+  these entries had `name: null`.
+
+### Known limitations (documented, not fixed)
+
+- **`gxButton OnClickEvent` custom events ignored by HTML form generator**
+  (FR#1): in `<Form id="1" type="html">`, every `<gxButton>` renders with
+  `data-gx-evt="5"` (Enter) regardless of `OnClickEvent="'Foo'"` / `onClickEvent`
+  / `eventGX`. Workaround: use `<action onClickEvent="'Foo'">` in
+  `<Form type="layout">`, or wire OnClickEvent through the GeneXus IDE Properties
+  Panel. Root cause: SDK event-wiring API not exposed via raw XML — needs
+  dedicated SDK probe session.
+
+- **`gxAttribute ReadOnly="False"` ignored when local variable shadows a
+  same-name transaction attribute, specifically for `ControlType="Radio Button"`
+  / `"Combo Box"`** (FR#2): rendered with `disabled=""` `class="gx-disabled"`
+  `data-gx-readonly=""`. Text input variant (no `ControlType`) is editable.
+  Workaround: rename the local variable to avoid shadowing
+  (e.g. `&Alu2RegProf` → `&RespostaRegProf`). Tracked in
+  `docs/mcp-friction-report-2026-05-19.md`.
+
 ## v2.5.0 — 2026-05-18
 
 ### Fixed

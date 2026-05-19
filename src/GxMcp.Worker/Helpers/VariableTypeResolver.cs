@@ -44,12 +44,31 @@ namespace GxMcp.Worker.Helpers
 
             var m = TypeRegex.Match(input);
             if (!m.Success)
+            {
+                // FR#4 (friction-report 2026-05-19): allow SDT / BC / Domain references by bare
+                // name (e.g. "SdtAluUniGraInfo", "SdtFoo.Item"). Resolver doesn't have KB access
+                // so it can't confirm the object exists — that check moves to WriteService where
+                // ResolveTypeObject does the SDK lookup and returns UnknownType if missing.
+                if (Regex.IsMatch(input, @"^[A-Za-z_][A-Za-z0-9_\.]*$"))
+                {
+                    // Use DomainReference for backward compat with AttributeTypeApplier — the
+                    // canonical type name covers SDT/BC/Domain since all three go through the
+                    // same SDK ResolveTypeObject lookup at WriteService level.
+                    return new TypeResolution { Recognized = true, CanonicalType = "DomainReference", DomainName = input };
+                }
                 return new TypeResolution { Recognized = false, Suggestion = SuggestClosest(input), AcceptedList = GetAccepted() };
+            }
 
             var typeWord = m.Groups[1].Value;
             string canonical;
             if (!Synonyms.TryGetValue(typeWord, out canonical))
+            {
+                // Not a primitive — same SDT/BC/Domain fallback path. Has parens means user passed
+                // length/decimals (e.g. "SdtFoo(50)") which is invalid for object refs — reject.
+                if (!m.Groups[2].Success)
+                    return new TypeResolution { Recognized = true, CanonicalType = "DomainReference", DomainName = typeWord };
                 return new TypeResolution { Recognized = false, Suggestion = SuggestClosest(typeWord), AcceptedList = GetAccepted() };
+            }
 
             int? len = m.Groups[2].Success ? (int?)int.Parse(m.Groups[2].Value) : null;
             int? dec = m.Groups[3].Success ? (int?)int.Parse(m.Groups[3].Value) : null;

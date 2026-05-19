@@ -23,8 +23,9 @@ namespace GxMcp.Worker.Tests
         }
 
         [Fact]
-        public void Resolve_Unknown_ReturnsNotRecognizedWithSuggestion()
+        public void Resolve_UnknownWithParens_StillRejected()
         {
+            // Bare-word fallback should not catch things with bogus (n) syntax — those are typos.
             var r = VariableTypeResolver.Resolve("Bogus(99)");
             Assert.False(r.Recognized);
             Assert.NotNull(r.Suggestion);
@@ -38,6 +39,21 @@ namespace GxMcp.Worker.Tests
             Assert.True(r.Recognized);
             Assert.Equal("DomainReference", r.CanonicalType);
             Assert.Equal("PesCod", r.DomainName);
+        }
+
+        [Theory]
+        // FR#4 (friction-report 2026-05-19): SDT / BC names resolved as DomainReference
+        // (legacy name; covers all SDK ResolveTypeObject paths: SDT, BC, Domain). Resolver
+        // is KB-blind — WriteService returns UnknownType if SDK can't find it.
+        [InlineData("SdtAluUniGraInfo", "SdtAluUniGraInfo")]
+        [InlineData("SdtFoo.Item", "SdtFoo.Item")]
+        [InlineData("MyBusinessComponent", "MyBusinessComponent")]
+        public void Resolve_BareObjectName_AcceptsAsDomainReference(string input, string expectedName)
+        {
+            var r = VariableTypeResolver.Resolve(input);
+            Assert.True(r.Recognized);
+            Assert.Equal("DomainReference", r.CanonicalType);
+            Assert.Equal(expectedName, r.DomainName);
         }
     }
 }
