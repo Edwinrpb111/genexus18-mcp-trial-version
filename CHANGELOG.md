@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`genexus_whoami` now reports update availability as structured data.**
+  The response includes an `update` block with `currentVersion`,
+  `latestVersion`, `updateAvailable`, `checkedAt`, `releaseUrl`, `command`,
+  and `restartRequired`. AI agents can detect a pending upgrade in the
+  same call where they read the KB context, then proactively offer the
+  upgrade command — no longer have to rely on the stderr-style
+  `notifications/message` the user might miss.
+
+  The data comes from the 24h-cached GitHub release check the gateway
+  already runs in the background on `initialize`. Reading it is
+  zero-latency; the LLM never blocks on a network round-trip.
+
+  Set `GENEXUS_MCP_NO_UPDATE_CHECK=1` to disable the background check
+  (corporate networks that block GitHub API). When disabled, `update`
+  reports `updateAvailable: false` with a `note` so the LLM knows not to
+  pester.
+
+  Documented as the "Self-update protocol (LLM-facing)" section in
+  `AGENTS.md` so contributing agents know to surface available upgrades
+  without auto-installing.
+
 ## v2.5.3 — 2026-05-19
 
 ### Added

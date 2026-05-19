@@ -502,6 +502,14 @@ namespace GxMcp.Gateway
                     ["serverVersion"] = McpRouter.ServerVersion,
                     ["protocolVersion"] = McpRouter.SupportedProtocolVersion
                 },
+                // Self-update awareness — LLM-visible structured data sourced from the
+                // 24h-cached UpdateNotifier result. Lets the agent check whoami.update.
+                // updateAvailable before each session and proactively offer the upgrade
+                // command instead of relying on the stderr-style notifications/message.
+                ["update"] = UpdateNotifier.GetCachedStatusSync() ?? new JObject {
+                    ["currentVersion"] = McpRouter.ServerVersion,
+                    ["updateAvailable"] = false
+                },
                 // v2.3.8 Task 1.2: surface index readiness so agents know whether to
                 // call `lifecycle action=index` before relying on search/analyze.
                 ["index"] = BuildIndexBlock()

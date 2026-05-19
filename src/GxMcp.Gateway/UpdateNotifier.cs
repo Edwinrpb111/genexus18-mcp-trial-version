@@ -25,6 +25,49 @@ namespace GxMcp.Gateway
 
         private static int _triggered;
 
+        /// <summary>
+        /// Read-only snapshot of the last update check (cache only — does not trigger a fetch).
+        /// Surfaced via <c>genexus_whoami.update</c> so the LLM can detect update availability
+        /// as structured data, not just as a stderr notification the user might miss.
+        /// </summary>
+        public static JObject? GetCachedStatusSync()
+        {
+            try
+            {
+                string? current = GetCurrentVersion();
+                if (string.IsNullOrEmpty(current)) return null;
+
+                var cached = ReadCache();
+                if (cached == null || string.IsNullOrEmpty(cached.LatestVersion))
+                {
+                    // No prior check yet — return current version only, no update info.
+                    return new JObject {
+                        ["currentVersion"] = current,
+                        ["latestVersion"] = null,
+                        ["updateAvailable"] = false,
+                        ["checkedAt"] = null,
+                        ["note"] = "no update-check yet (runs on next initialize handshake)"
+                    };
+                }
+
+                bool available = CompareSemver(cached.LatestVersion!, current!) > 0;
+                return new JObject {
+                    ["currentVersion"] = current,
+                    ["latestVersion"] = cached.LatestVersion,
+                    ["updateAvailable"] = available,
+                    ["checkedAt"] = cached.CheckedAt.ToString("o"),
+                    ["releaseUrl"] = cached.ReleaseUrl,
+                    ["command"] = available ? "npx genexus-mcp@latest init" : null,
+                    ["restartRequired"] = available
+                };
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"[UpdateCheck] GetCachedStatusSync: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
         public static void TriggerOnce()
         {
             if (Interlocked.CompareExchange(ref _triggered, 1, 0) != 0) return;

@@ -24,6 +24,40 @@ broad rules that accumulate over time.
   user, force-killing anything when no MSB lock error is present.
 - **Granted:** 2026-05-15 by user. Last reviewed: 2026-05-15.
 
+## Self-update protocol (LLM-facing)
+
+When an AI agent connects to this MCP, it can — and should — proactively check whether the server it's running against is up to date.
+
+### How to check
+
+Call `genexus_whoami`. The response includes an `update` block:
+
+```json
+"update": {
+  "currentVersion": "2.5.0",
+  "latestVersion": "2.5.3",
+  "updateAvailable": true,
+  "checkedAt": "2026-05-19T19:22:00Z",
+  "releaseUrl": "https://github.com/lennix1337/Genexus18MCP/releases/tag/v2.5.3",
+  "command": "npx genexus-mcp@latest init",
+  "restartRequired": true
+}
+```
+
+The check is performed by the gateway in the background on `initialize`, cached for 24h in `%LOCALAPPDATA%\GenexusMCP\update-check.json`. `whoami` just reads the cache — instant, no network round-trip on the user's tool call.
+
+### What the LLM should do
+
+- **On the first `whoami` of a session**, look at `update.updateAvailable`. If `true`, surface it to the user in plain language: *"Heads up — GeneXus MCP v{latestVersion} is out (you're on v{currentVersion}). Release notes: {releaseUrl}. Want me to install it?"*
+- **If the user agrees**, run the upgrade via the Bash / shell tool the client provides. The exact command lives in `update.command` (default `npx genexus-mcp@latest init`); pass the user's KB and GeneXus paths from `whoami.kb.path` and `whoami.geneXus.installationPath` if running the non-interactive form: `npx genexus-mcp@latest init --kb "<kb>" --gx "<gx>"`.
+- **Then tell the user to fully restart the AI client.** The gateway can't hot-reload itself (it's the process the client spawned); the new binaries are picked up on the next launch. `update.restartRequired` is the explicit signal.
+- **Do not auto-update without asking.** Installs touch the user's MCP client config and the user expects to see the upgrade prompt before paths change.
+- **Don't nag.** Mention the available update once per session, not on every tool call. The cached `checkedAt` is your hint — if it's the same value as a few turns ago, the user has been told.
+
+### When the update check is disabled
+
+Set environment variable `GENEXUS_MCP_NO_UPDATE_CHECK=1` to disable the background check entirely. Some corporate networks block GitHub API; in those cases `update` returns `{currentVersion, updateAvailable: false, note: "no update-check yet ..."}` and the LLM should respect the absence and not pester.
+
 ## Release discipline
 
 - Before any release (`scripts/release.ps1`, tag, or GitHub Release), update
