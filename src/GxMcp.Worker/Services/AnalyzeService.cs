@@ -551,6 +551,33 @@ namespace GxMcp.Worker.Services
                     catch { /* swallow — keep response valid */ }
                 }
 
+                // W6 — Theme-specific: classes + control compatibility + (optional) CSS rules.
+                // Accepts `include=["classes"]` (default for theme objects) and `include=["classesFull"]`
+                // for cssRule + properties dictionary. Filters via `controlTypeFilter` / `nameFilter`
+                // in the include array (encoded as inline JSON objects). Reflection-based — see
+                // ThemeInspector for the SDK probe.
+                if (ThemeInspector.IsTheme(obj))
+                {
+                    try
+                    {
+                        string detail = (include != null && include.Any(i => string.Equals(i?.ToString(), "classesFull", StringComparison.OrdinalIgnoreCase)))
+                            ? "full" : "summary";
+                        var themeView = ThemeInspector.InspectTheme(obj, detail);
+                        if (themeView != null)
+                        {
+                            foreach (var p in themeView.Properties())
+                            {
+                                // Skip name/type/description we already wrote.
+                                if (string.Equals(p.Name, "name", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(p.Name, "description", StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                result[p.Name] = p.Value;
+                            }
+                        }
+                    }
+                    catch { /* swallow — keep response valid */ }
+                }
+
                 // DataProvider-specific: returnsSDT + readsFromTables
                 if (obj is Artech.Genexus.Common.Objects.DataProvider dpObj)
                 {
