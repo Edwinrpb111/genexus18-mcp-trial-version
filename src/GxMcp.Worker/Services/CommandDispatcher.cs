@@ -58,6 +58,7 @@ namespace GxMcp.Worker.Services
         private readonly ApplyTemplateService _applyTemplateService;
         private readonly EditAndBuildOrchestrator _editAndBuildOrchestrator;
         private readonly PreviewService _previewService;
+        private readonly PopupTemplateService _popupTemplateService;
 
         private CommandDispatcher()
         {
@@ -109,6 +110,7 @@ namespace GxMcp.Worker.Services
             _applyTemplateService = new ApplyTemplateService(_writeService);
             _editAndBuildOrchestrator = new EditAndBuildOrchestrator(_writeService, _analyzeService, _buildService);
             _previewService = new PreviewService(_objectService, _buildService);
+            _popupTemplateService = new PopupTemplateService(_objectService, _writeService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -665,6 +667,14 @@ namespace GxMcp.Worker.Services
                         break;
                     case "refactor":
                         return _refactorService.Refactor(target, action, payload);
+                    case "popup":
+                        if (action == "Create")
+                        {
+                            string popupName = target ?? args?["name"]?.ToString();
+                            var popupSpec = args?["spec"] as JObject;
+                            return _popupTemplateService.CreatePopup(popupName, popupSpec);
+                        }
+                        break;
                     case "preview":
                         if (action == "Render")
                         {

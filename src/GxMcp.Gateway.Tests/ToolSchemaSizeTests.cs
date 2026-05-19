@@ -50,7 +50,9 @@ namespace GxMcp.Gateway.Tests
             //   v2.5.2 (W2+W4 from IDE-parity roadmap): 5300 → 6000 to accommodate genexus_preview
             //   (~410 tokens for full a11y / capture / baseline schema) and genexus_apply_pattern
             //   (~150 tokens for pattern key / settings tree).
-            Assert.True(approxTokens < 6000, $"tool_definitions.json is ~{approxTokens} tokens; budget 6000.");
+            //   v2.5.3 (W3 from IDE-parity roadmap): 6000 → 6300 to accommodate genexus_create_popup
+            //   (~290 tokens for the popup spec sub-schema: inputs[options], buttons, inParms/outParms).
+            Assert.True(approxTokens < 6300, $"tool_definitions.json is ~{approxTokens} tokens; budget 6300.");
         }
     }
 }

@@ -238,6 +238,110 @@
       "name": "genexus_create_object"
     },
     {
+      "description": "W3: create a popup WebPanel with a Form type=\"layout\" body so radio/combo bindings render editable. Spec carries title, description, inputs (radio|combo|text with options), buttons, inParms, outParms.",
+      "inputSchema": {
+        "properties": {
+          "kb": {
+            "description": "Target KB. Required when 2+ open.",
+            "type": "string"
+          },
+          "name": {
+            "description": "WebPanel name. Created if missing; updated if exists.",
+            "type": "string"
+          },
+          "spec": {
+            "description": "Popup spec.",
+            "properties": {
+              "buttons": {
+                "items": {
+                  "properties": {
+                    "caption": {
+                      "type": "string"
+                    },
+                    "event": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "description": {
+                "type": "string"
+              },
+              "inParms": {
+                "description": "e.g. [\"AluAnoCad:Numeric(2)\"]",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "inputs": {
+                "items": {
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "items": {
+                        "properties": {
+                          "label": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "showWhen": {
+                      "description": "e.g. \"RespRegProf == 'S'\"; emits Refresh event toggling group visibility.",
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "radio",
+                        "combo",
+                        "text"
+                      ],
+                      "type": "string"
+                    },
+                    "varName": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "varName"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "outParms": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "spec"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_create_popup"
+    },
+    {
       "description": "Delete an object from the KB. Irreversible — confirm=true required.",
       "inputSchema": {
         "properties": {

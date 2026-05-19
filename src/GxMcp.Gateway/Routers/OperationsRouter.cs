@@ -164,6 +164,16 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_layout":
                     return ConvertLayoutToolCall(args);
 
+                case "genexus_create_popup":
+                    return new
+                    {
+                        module = "Popup",
+                        action = "Create",
+                        target = args?["name"]?.ToString(),
+                        name = args?["name"]?.ToString(),
+                        spec = args?["spec"]
+                    };
+
                 case "genexus_preview":
                     return new
                     {
