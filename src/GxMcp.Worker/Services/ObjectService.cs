@@ -1351,9 +1351,19 @@ namespace GxMcp.Worker.Services
                     return result.ToString();
                 }
 
-                if (part == null) 
+                if (part == null)
                 {
                     result["error"] = $"Part '{partName}' not found in {obj.Name}";
+                    try
+                    {
+                        var avail = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+                        if (avail != null && avail.Length > 0)
+                        {
+                            result["availableParts"] = new JArray(avail);
+                            result["hint"] = $"Valid parts for {obj.TypeDescriptor?.Name ?? "object"}: {string.Join(", ", avail)}.";
+                        }
+                    }
+                    catch { }
                     return result.ToString();
                 }
 

@@ -351,6 +351,7 @@ namespace GxMcp.Gateway
             public DateTime? LastIndexedAt;
             public double? Progress;
             public int? EtaMs;
+            public DateTime RefreshedAtUtc = DateTime.MinValue;
         }
         private static IndexStateSnapshot _lastKnownIndexState = new IndexStateSnapshot();
         private static readonly object _lastKnownIndexStateLock = new object();
@@ -365,7 +366,8 @@ namespace GxMcp.Gateway
                     TotalObjects = totalObjects,
                     LastIndexedAt = lastIndexedAt,
                     Progress = progress,
-                    EtaMs = etaMs
+                    EtaMs = etaMs,
+                    RefreshedAtUtc = DateTime.UtcNow
                 };
             }
         }
@@ -452,7 +454,21 @@ namespace GxMcp.Gateway
         // any caller that doesn't want to block on a worker round-trip.
         internal static async Task<JObject> BuildWhoamiPayloadAsync()
         {
-            await TryRefreshIndexStateFromWorkerAsync().ConfigureAwait(false);
+            // Skip the worker round-trip when our cached snapshot is recent enough.
+            // whoami is the most-called first-turn tool — a stale-by-a-few-seconds
+            // index status is far better UX than a 1.5s blocking call. Search/lifecycle
+            // paths refresh the snapshot whenever they receive new telemetry, so the
+            // cache stays warm during real use.
+            IndexStateSnapshot snap;
+            lock (_lastKnownIndexStateLock) { snap = _lastKnownIndexState; }
+            bool cacheFresh = snap.RefreshedAtUtc != DateTime.MinValue
+                && (DateTime.UtcNow - snap.RefreshedAtUtc).TotalSeconds < 15;
+            if (!cacheFresh)
+            {
+                // Aggressive timeout: whoami must feel instant. If the worker is
+                // genuinely slow, returning a slightly stale snapshot beats blocking.
+                await TryRefreshIndexStateFromWorkerAsync(timeoutMs: 400).ConfigureAwait(false);
+            }
             return BuildWhoamiPayload();
         }
 
@@ -1914,6 +1930,20 @@ namespace GxMcp.Gateway
                             }
 
                             bool isErr = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+                            // Inner-payload error detection — tools that return their
+                            // failure envelope as result.{error|status} (e.g. genexus_read
+                            // returning {"part":"Source","error":"Part 'Source' not found ..."})
+                            // were previously sent with isError=false because we only checked
+                            // the outer envelope. Mirror the inner shape so MCP clients that
+                            // branch on isError stay correct.
+                            if (!isErr && finalResult is JObject innerErrObj)
+                            {
+                                bool innerHasError = innerErrObj["error"] != null
+                                    || string.Equals(innerErrObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(innerErrObj["status"]?.ToString(), "NotFound", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(innerErrObj["status"]?.ToString(), "NotImplemented", StringComparison.OrdinalIgnoreCase);
+                                if (innerHasError) isErr = true;
+                            }
 
                             // TerseErrors: trim error envelopes to {message, code, hint} by default.
                             // verbose_errors=true restores the full payload. Gated by PerfProfile.V1Enabled.

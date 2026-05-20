@@ -26,6 +26,25 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target);
                 if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
+                // Fast type guard — WWP only applies to WorkWithPlus instances or to
+                // Transaction/WebPanel parents that may own one. For Procedure/SDT/
+                // Domain/etc., ResolveWWPInstance would still walk model.Objects.GetAll()
+                // (10s+ on large KBs) only to return null. Reject upfront.
+                string typeName = obj.TypeDescriptor?.Name ?? "";
+                bool wwpEligible = string.Equals(typeName, "WorkWithPlus", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(typeName, "Transaction", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(typeName, "WebPanel", StringComparison.OrdinalIgnoreCase);
+                if (!wwpEligible)
+                {
+                    return Models.McpResponse.Error(
+                        "Object type not eligible for WorkWithPlus pattern",
+                        target,
+                        null,
+                        $"pattern_metadata applies to WorkWithPlus / Transaction / WebPanel objects; '{target}' is a {typeName}.",
+                        obj.Name,
+                        typeName);
+                }
+
                 KBObject instanceObj = ResolveWWPInstance(obj);
                 if (instanceObj == null) return Models.McpResponse.Error("WorkWithPlus instance not found", target, null, "No WorkWithPlus instance was resolved for the requested object.");
 

@@ -209,8 +209,16 @@ namespace GxMcp.Worker.Services
                         {
                             score = CalculateSemanticScore(entry, criteria.Terms, criteria.TypeFilter);
 
-                            // SHORT-CIRCUIT: If exact keyword match failed entirely and it's a structural container, skip vector math entirely
-                            if (score <= 0 && (entry.Type == "Folder" || entry.Type == "Module"))
+                            // SHORT-CIRCUIT: structural noise types should never surface unless
+                            // the caller explicitly asked for them via typeFilter. Index/Folder/
+                            // Module had been polluting query results when there was no exact
+                            // name match (see Probe#2: "Country" returned 15 Index objects).
+                            bool isNoiseType = entry.Type == "Folder" || entry.Type == "Module" || entry.Type == "Index";
+                            bool noiseExplicitlyRequested = !string.IsNullOrEmpty(criteria.TypeFilter)
+                                && IsTypeMatch(entry.Type, criteria.TypeFilter);
+                            if (score <= 0 && isNoiseType && !noiseExplicitlyRequested)
+                                return new RankedResult { Score = -1 };
+                            if (isNoiseType && !noiseExplicitlyRequested)
                                 return new RankedResult { Score = -1 };
 
                             if (!isQuick && entry.Embedding != null && queryEmbedding != null)
@@ -283,11 +291,31 @@ namespace GxMcp.Worker.Services
                     });
                 }
 
-                var suggestion = BuildSuggestedNext(scoredResults);
-                if (suggestion != null)
+                // Only surface a "suggested_next" when the top result is a confident
+                // name match (exact >= 10000, prefix >= 1000). Substring/vector-only
+                // hits had been driving agents to wrong objects (e.g. literal
+                // "Country" suggesting "QueryViewerCountry"). Always emit a
+                // match_quality so the caller can decide.
+                var meta = (responseObj["_meta"] as JObject) ?? new JObject();
+                string matchQuality = "none";
+                if (scoredResults.Count > 0)
                 {
-                    responseObj["_meta"] = new JObject { ["suggested_next"] = suggestion };
+                    int topScore = scoredResults[0].Score;
+                    string topName = scoredResults[0].Entry?.Name ?? "";
+                    bool topIsExact = criteria.Terms.Any(t => string.Equals(topName, t, StringComparison.OrdinalIgnoreCase));
+                    bool topIsPrefix = !topIsExact && criteria.Terms.Any(t => topName.StartsWith(t, StringComparison.OrdinalIgnoreCase));
+                    if (topIsExact) matchQuality = "exact";
+                    else if (topIsPrefix) matchQuality = "prefix";
+                    else if (topScore >= 500) matchQuality = "substring";
+                    else matchQuality = "vector";
                 }
+                meta["match_quality"] = matchQuality;
+                if (matchQuality == "exact" || matchQuality == "prefix")
+                {
+                    var suggestion = BuildSuggestedNext(scoredResults);
+                    if (suggestion != null) meta["suggested_next"] = suggestion;
+                }
+                responseObj["_meta"] = meta;
 
                 if (_indexCacheService.IsScanning)
                 {
@@ -369,11 +397,21 @@ namespace GxMcp.Worker.Services
                     ["_meta"] = new JObject
                     {
                         ["direct_lookup"] = true,
+                        // Direct lookup means the SDK returned an exact name match —
+                        // surface match_quality so the envelope is consistent with the
+                        // index path (callers can branch on this field uniformly).
+                        ["match_quality"] = "exact",
                         ["suggested_next"] = BuildSuggestedReadFor(obj.Name, typeName)
                     }
                 };
 
-                if (_indexCacheService.IsScanning) AnnotatePartial(responseObj);
+                // Annotate partial whenever the background bulk index hasn't finished —
+                // even on a direct-lookup success — so the agent knows that a re-query
+                // (e.g. broader search by attribute) may yield more results once the
+                // index is warm. Probe#1 observed cold-state queries silently omitting
+                // this flag.
+                if (_indexCacheService.IsScanning || _indexCacheService.IsIndexMissing)
+                    AnnotatePartial(responseObj);
 
                 return responseObj.ToString(Newtonsoft.Json.Formatting.None);
             }

@@ -108,7 +108,20 @@ namespace GxMcp.Worker.Services
                     warnings.Add(w.Element("Message")?.Value);
                 result["warnings"] = warnings;
 
-                Logger.Info($"GetNavigation SUCCESS: {targetName} in {sw.ElapsedMilliseconds}ms");
+                // Empty-levels envelope: without a status hint the caller can't tell
+                // "no For Each / data-bound code in this object" from "the analysis
+                // failed silently". Set status accordingly.
+                if (levels.Count == 0)
+                {
+                    result["status"] = "NoNavigationBlocks";
+                    result["hint"] = "Object has no For Each / data-bound navigation blocks. Use mode=summary or mode=data_context for variable/call analysis.";
+                }
+                else
+                {
+                    result["status"] = "OK";
+                }
+
+                Logger.Info($"GetNavigation SUCCESS: {targetName} in {sw.ElapsedMilliseconds}ms levels={levels.Count}");
                 return result.ToString();
             }
             catch (Exception ex)

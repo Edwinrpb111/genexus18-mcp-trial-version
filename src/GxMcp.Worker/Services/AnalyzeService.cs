@@ -1087,16 +1087,12 @@ namespace GxMcp.Worker.Services
 
         public string ExplainCode(string target, string codeSnippet)
         {
-            try
-            {
-                // This is a placeholder for AI-powered explanation.
-                // In a real scenario, this would call LLM.
-                return "{\"explanation\":\"Code analysis simulation\",\"originalCode\":\"" + CommandDispatcher.EscapeJsonString(codeSnippet ?? "") + "\"}";
-            }
-            catch (Exception ex)
-            {
-                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
-            }
+            // analyze mode=explain was a placeholder that returned a hardcoded
+            // "Code analysis simulation" string regardless of input. The mode is
+            // now removed from the public tool schema; if an old client still
+            // dispatches here, return a clear NotImplemented envelope so the
+            // agent doesn't trust a fake answer.
+            return "{\"status\":\"NotImplemented\",\"error\":\"analyze mode=explain is not implemented. Use mode=summary, linter, navigation, data_context, or pattern_metadata.\"}";
         }
 
         private static readonly Guid SDT_STRUCTURE_PART_GUID = Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");

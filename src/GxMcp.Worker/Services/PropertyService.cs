@@ -14,9 +14,38 @@ namespace GxMcp.Worker.Services
     {
         private readonly ObjectService _objectService;
 
+        // Small TTL cache for GetProperties — cold path on certain object kinds
+        // (Domain, External Object) hits 3s the first time because the SDK lazily
+        // hydrates property definitions via reflection. Subsequent reads of the
+        // same object usually want the same envelope, so we cache by GUID for a
+        // few seconds. SetProperty invalidates the entry explicitly.
+        private static readonly Dictionary<string, (DateTime expiresAt, string json)> _propertyCache
+            = new Dictionary<string, (DateTime, string)>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object _propertyCacheLock = new object();
+        private const int PropertyCacheTtlSeconds = 30;
+
         public PropertyService(ObjectService objectService)
         {
             _objectService = objectService;
+        }
+
+        private static string CacheKey(KBObject obj, string controlName)
+        {
+            string guid;
+            try { guid = obj.Guid.ToString(); } catch { guid = obj.Name ?? "?"; }
+            return guid + "|" + (controlName ?? "");
+        }
+
+        internal static void InvalidatePropertyCache(KBObject obj)
+        {
+            if (obj == null) return;
+            string guid;
+            try { guid = obj.Guid.ToString(); } catch { return; }
+            lock (_propertyCacheLock)
+            {
+                var keys = _propertyCache.Keys.Where(k => k.StartsWith(guid + "|", StringComparison.OrdinalIgnoreCase)).ToList();
+                foreach (var k in keys) _propertyCache.Remove(k);
+            }
         }
 
         public string GetProperties(string target, string controlName = null, string typeFilter = null)
@@ -26,6 +55,13 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) return Models.McpResponse.Error("Object not found", target);
 
+                string ck = CacheKey(obj, controlName);
+                lock (_propertyCacheLock)
+                {
+                    if (_propertyCache.TryGetValue(ck, out var hit) && hit.expiresAt > DateTime.UtcNow)
+                        return hit.json;
+                }
+
                 dynamic container = obj;
                 if (!string.IsNullOrEmpty(controlName))
                 {
@@ -33,7 +69,12 @@ namespace GxMcp.Worker.Services
                     if (container == null) return Models.McpResponse.Error($"Control '{controlName}' not found in {obj.Name}", target);
                 }
 
-                return SerializeProperties(container).ToString();
+                string json = SerializeProperties(container).ToString();
+                lock (_propertyCacheLock)
+                {
+                    _propertyCache[ck] = (DateTime.UtcNow.AddSeconds(PropertyCacheTtlSeconds), json);
+                }
+                return json;
             }
             catch (Exception ex)
             {
@@ -66,6 +107,7 @@ namespace GxMcp.Worker.Services
                         obj.EnsureSave();
                         trans.Commit();
                         committed = true;
+                        InvalidatePropertyCache(obj);
                     }
                     finally
                     {
