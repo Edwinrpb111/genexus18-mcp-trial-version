@@ -5,7 +5,21 @@
 > Compose/Materialize/Wire/Bind/Attach). First 8 public methods shown per type — see
 > `raw.json` for the complete member list.
 
-**Count:** 1573
+**Count:** 2665
+
+## `Artech.Architecture.BL.Framework`
+
+### `Artech.Architecture.BL.Framework.Services.BLServices`
+
+```
+
+```
+
+### `Artech.Architecture.BL.Framework.Services.BLServicesGuid`
+
+```
+
+```
 
 ## `Artech.Architecture.Common`
 
@@ -2071,6 +2085,45 @@ static ZoomFactorFromIndex(Object indexObj) -> Int32
 
 ```
 
+## `Artech.Common.Language`
+
+### `Artech.Common.Language.ComponentModel.ServiceDefinitionTokenizer`
+
+```
+GetNextLine(IReftypeStructureWrapper startToken,Int32& rowPos,Int32& charPos) -> Int32
+```
+
+### `Artech.Common.Language.Parser.Resolvers.ProgramResolver`
+
+```
+static GetClassDefinition(IParserData valdata,IParserObjectBase obj,Boolean& missingObj) -> ITypedObjectInfo
+static IsProgramExpression(IParserData valdata,IParserWord obj,ExpressionType expectedType,Boolean& missingObj,ExpressionType& pgmType) -> Boolean
+static IsExternalObjectExpression(IParserData valdata,IParserWord obj,ExpressionType expectedType,Boolean& missingObj) -> Boolean
+static IsEXOName(IParserData valdata,String name) -> Boolean
+static IsProgramName(IParserData valdata,String name) -> Boolean
+static IsModuleName(IParserData valdata,String name) -> Boolean
+static GetProgramDefinition(IParserData valdata,KBObject obj) -> ITypedObjectInfo
+static GetProgramDefinition(KBModel model,Boolean onlyMetadata) -> ITypedObjectInfo
+```
+
+## `Artech.Common.Language.Parser`
+
+### `Artech.Common.Language.Parser.CParserEngine`
+
+```
+Parse() -> Boolean
+Dispose() -> Void
+```
+
+## `Artech.Common.Language.Parser.v2`
+
+### `Artech.Common.Language.ParserV2.CParserEngine`
+
+```
+Parse() -> Boolean
+Dispose() -> Void
+```
+
 ## `Artech.Common.Properties`
 
 ### `Artech.Common.Properties.CompositeResolver`
@@ -2431,6 +2484,468 @@ static Login(IPLoginData loginData) -> OAuthLoginResult
 
 ```
 
+```
+
+## `Artech.Core.UI`
+
+### `Artech.Core.UI.Dialogs.SaveMultiDocumentDialog`
+
+```
+
+```
+
+### `Artech.Core.UI.Help.ErrorListItem+LocationHelper`
+
+```
+
+```
+
+### `Artech.Core.UI.Help.ObjectSpec+GeneratorObj`
+
+```
+
+```
+
+### `Artech.Core.UI.InfragisticsHelpers.UltraComboHelper`
+
+```
+static LoadFilterCombo(UltraComboEditor combo,IEnumerable`1<KBObject> objects) -> Void
+static ClearCombo(UltraComboEditor combo) -> Void
+```
+
+### `Artech.Core.UI.Services.CallBrowserService`
+
+```
+ShowObjectReferences(KBObject obj) -> Void
+```
+
+### `Artech.Core.UI.Services.ClipboardService`
+
+```
+AddData(KBObject obj) -> Void
+SetData(KBObject obj) -> Void
+AddData(IEnumerable`1<KBObject> objects) -> Void
+SetData(IEnumerable`1<KBObject> objects) -> Void
+AddData(TData obj) -> Void
+SetData(TData obj) -> Void
+AddData(TData obj,TextFormat`1<TData> textFormat,String separator) -> Void
+SetData(TData obj,TextFormat`1<TData> textFormat) -> Void
+```
+
+### `Artech.Core.UI.Services.CommandDispatcherService`
+
+```
+Dispatch(CommandKey key) -> Void
+Dispatch(CommandKey key,CommandData commandData) -> Void
+Dispatch(ICommandTarget target,CommandKey key) -> Void
+Dispatch(ICommandTarget target,CommandKey key,CommandData commandData) -> Void
+Invoke(Delegate method) -> Object
+QueryObjectDefinedPackage(KBObject obj,CommandKey cmdKey,CommandData commandData,CommandStatus& status) -> Boolean
+ExecObjectDefinedPackage(KBObject obj,CommandKey cmdKey,CommandData commandData) -> Boolean
+GetCommandStatus(CommandKey cmdKey) -> CommandStatus
+```
+
+### `Artech.Core.UI.Services.DCOListViewService`
+
+```
+CreateListView(Guid listViewId,Icon icon,String contextMenu,ICommandTarget commantTarget) -> IListView
+CreateListView(Guid listViewId,Icon icon,String contextMenu) -> IListView
+GetListView(Guid listViewId) -> IListView
+```
+
+### `Artech.Core.UI.Services.DCOStartPageService`
+
+```
+Initialize() -> Void
+OpenPage(String url,String title) -> Void
+OpenPage(String url,String title,Object scriptingFunctions) -> Void
+OpenPage(StartPageSettings settings) -> Void
+OpenPage(StartPageSettings settings,StartPageSettings staticStartPage) -> Void
+SetPage(String htmlPage) -> Void
+SetSmartPart(String idSmartPart,String content) -> Void
+RefreshContents() -> Void
+```
+
+### `Artech.Core.UI.Services.DCOStatusBarService`
+
+```
+Initialize() -> Void
+ShowStatusBar(Boolean show) -> Void
+GetStatusBar() -> IStatusBar
+DisplayText(String text) -> Void
+```
+
+### `Artech.Core.UI.Services.DefaultModelTreeResolver`
+
+```
+GetRootNode() -> IModelTreeNode
+GetRootObjects() -> IEnumerable`1<IModelTreeNode>
+GetNode(KBObject kbObject) -> IModelTreeNode
+```
+
+### `Artech.Core.UI.Services.DefaultUITypeBuilder`
+
+```
+Construct(KBObjectDescriptor descriptor,String name,String description,IKBObjectParent parent,KBCategory inCategory) -> KBObject
+DoDefaultAction(KBObject obj) -> Void
+```
+
+### `Artech.Core.UI.Services.DocumentManagerService`
+
+```
+Initialize() -> Void
+AddDocumentManager(Guid objType,IDocumentManagerService manager) -> Void
+IsOpenable(KBObjectDescriptor descriptor) -> Boolean
+OpenDocument(KBObject obj,OpenDocumentOptions options) -> Boolean
+IsOpenDocument(KBObject obj,IGxDocument& documentInfo) -> Boolean
+IsOpenDocument(KBObject obj) -> Boolean
+SaveAll(Boolean showUI) -> Boolean
+Save(Boolean showUI,IEnumerable`1<EntityKey> kbObjs) -> Boolean
+```
+
+### `Artech.Core.UI.Services.DragAndDropService`
+
+```
+AddData(IDataObject container,KBObject obj) -> Void
+AddData(IDataObject container,IEnumerable`1<KBObject> objects) -> Void
+AddData(IDataObject container,TData obj) -> Void
+AddData(IDataObject container,TData obj,TextFormat`1<TData> textFormat,String separator) -> Void
+AddData(IDataObject container,IEnumerable`1<TData> objects) -> Void
+AddData(IDataObject container,IEnumerable`1<TData> objects,TextFormat`1<TData> textFormat,String separator) -> Void
+CreateDataObject(KBObject obj) -> IDataObject
+CreateDataObject(IEnumerable`1<KBObject> objs) -> IDataObject
+```
+
+### `Artech.Core.UI.Services.EditorManagerService`
+
+```
+GetEditor(Guid partId) -> IGxView
+GetEditor(Guid preferredPackageId,Guid partId) -> IGxView
+GetController(Guid partId) -> IGxPartController
+GetController(Guid preferredPackageId,Guid partId) -> IGxPartController
+```
+
+### `Artech.Core.UI.Services.EnvironmentService`
+
+```
+ShowModalDialog(Form dialog) -> DialogResult
+DropDownControl(Control control,IWindowsFormsEditorService service) -> Void
+DisableQueryState() -> Void
+EnableQueryState() -> Void
+StartFeedbackDialog(String text) -> Guid
+StartFeedbackDialog(String text,Boolean showDetails) -> Guid
+StartFeedbackDialog(String text,Int32 totalSteps) -> Guid
+StartFeedbackDialog(String text,Int32 totalSteps,Boolean showDetails) -> Guid
+```
+
+### `Artech.Core.UI.Services.FindReplaceService`
+
+```
+CreateFindForm(FindReplaceAction actionTarget,IFindReplaceOptions options) -> FindForm
+ExecuteFind(FindReplaceAction actionTarget,IFindReplaceOptions options) -> Void
+CreateFindReplaceForm(FindReplaceAction actionTarget,IFindReplaceOptions options) -> FindReplaceForm
+Find(FindReplaceAction actionTarget,IFindReplaceOptions options) -> IFindReplaceResult
+Replace(FindReplaceAction actionTarget,IFindReplaceOptions options) -> IFindReplaceResult
+ReplaceAll(FindReplaceAction actionTarget,IFindReplaceOptions options) -> IFindReplaceResult
+MarkAll(FindReplaceAction actionTarget,IFindReplaceOptions options) -> IFindReplaceResult
+```
+
+### `Artech.Core.UI.Services.HelpService`
+
+```
+AddKeyword(String keyword) -> Void
+ReplaceKeyword(String keyword,String newKeyword) -> Boolean
+RemoveKeyword(String keyword) -> Boolean
+AddFilter(String name,String value) -> Void
+RemoveFilter(String name) -> Boolean
+ShowSearch(String requestText) -> Void
+ShowSearch(IHelpSearchRequest request) -> Void
+Search(IHelpSearchRequest request) -> IEnumerable`1<IHelpSearchResult>
+```
+
+### `Artech.Core.UI.Services.HistoryManagerService`
+
+```
+OnAfterOpenKB(Object sender,KBEventArgs e) -> Void
+ShowKBObjectHistory(KBObject obj) -> Void
+ShowEntityHistory(Entity ent) -> Void
+```
+
+### `Artech.Core.UI.Services.MenuService`
+
+```
+ShowContextMenu(Guid packageId,String menuId,Point screenPoint) -> Void
+ShowContextMenu(Int32 activeItemIndex,Guid packageId,String menuId,Point screenPoint) -> Void
+ShowContextMenu(String activeItemKey,Guid packageId,String menuId,Point screenPoint) -> Void
+ShowContextMenu(Guid packageId,String menuId,Point screenPoint,Object contextData) -> Void
+ShowContextMenu(Int32 activeItemIndex,Guid packageId,String menuId,Point screenPoint,Object contextData) -> Void
+ShowContextMenu(String activeItemKey,Guid packageId,String menuId,Point screenPoint,Object contextData) -> Void
+CloseContextMenu() -> Void
+GetMenuItem(Guid packageId,String menuId) -> IMenuItem
+```
+
+### `Artech.Core.UI.Services.ModelTreeService`
+
+```
+GetModelTree() -> IModelTree
+```
+
+### `Artech.Core.UI.Services.NavigatorService`
+
+```
+GetNavigator() -> INavigator
+```
+
+### `Artech.Core.UI.Services.NewObjectDialogService`
+
+```
+CreateObject(CreateObjectOptions options) -> KBObject
+AttachBuilder(IUIObjectBuilder builder,KBObjectDescriptor descriptor) -> Void
+```
+
+### `Artech.Core.UI.Services.ObjectsService`
+
+```
+Create(CreateObjectOptions options) -> KBObject
+Copy(KBObject kbObject) -> KBObject
+Copy(KBObject kbObject,IKBObjectParent destinationParent,String destinationName) -> KBObject
+GetCopyName(KBObject obj,Module parent) -> String
+Open() -> Boolean
+Open(KBObject obj,OpenDocumentOptions options) -> Boolean
+IsVisible(IKBObject kbObject) -> Boolean
+GetKBObjectState(IKBObject kbobject) -> KBObjectStateInfo
+```
+
+### `Artech.Core.UI.Services.OutlinerService`
+
+```
+GetOutliner() -> IOutliner
+Reload(IOutlinerItemsDescriptor desc) -> Void
+```
+
+### `Artech.Core.UI.Services.OutputService`
+
+```
+MakeVisible() -> Void
+AddOutput(String outputId) -> Boolean
+GetOutput(String outputId) -> IOutputTarget
+```
+
+### `Artech.Core.UI.Services.ProductInfoService`
+
+```
+IsFirstTimeUse() -> Boolean
+IsRemote() -> Boolean
+TransformCommand(CommandDefinition def) -> Void
+GetLandingPage() -> StartPageSettings
+GetAfterKBCreatedPage() -> StartPageSettings
+HasProductInfoProvider() -> Boolean
+Support(Features features) -> Boolean
+Support(String category) -> Boolean
+```
+
+### `Artech.Core.UI.Services.PropertyService`
+
+```
+GetPropertyInspector() -> IPropertyInspector
+```
+
+### `Artech.Core.UI.Services.RecentKBsService`
+
+```
+GetRecentKBs() -> IRecentList`1<IRecentKB>
+SaveRecentKBs(IRecentList`1<IRecentKB> recentKBs) -> Boolean
+UpdateRecentKBsStartPage() -> Void
+UpdateRecentKBsMenu() -> Void
+GenerateRecentsSmartPart() -> String
+```
+
+### `Artech.Core.UI.Services.ReportViewService`
+
+```
+CreateReportView(String xslFileName,String title) -> IReportView
+CreateReportView(String xslFileName,String title,Boolean enableStatusStrip) -> IReportView
+```
+
+### `Artech.Core.UI.Services.SearchProviderService`
+
+```
+AddProvider(UISearchProvider provider) -> Void
+GetSearchProviders() -> IEnumerable`1<UISearchProvider>
+Search(Guid providerId,String text) -> Void
+```
+
+### `Artech.Core.UI.Services.SelectObjectDialogService`
+
+```
+SelectObjects(SelectObjectOptions options) -> IList`1<KBObject>
+SelectObject(SelectObjectOptions options) -> KBObject
+SelectObjectPartItems(String title,String subTitle,KBObject obj,Guid partType) -> ICollection
+SelectObjectPartItems(SelectObjectPartOptions options) -> ICollection
+RegisterCustom(KBObjectDescriptor type,ICustomSelectObjectDialog customDialog) -> Void
+```
+
+### `Artech.Core.UI.Services.TasksService`
+
+```
+Run(ITask task) -> Boolean
+```
+
+### `Artech.Core.UI.Services.ToolboxService`
+
+```
+GetToolbox() -> IToolbox
+ReloadCategories(IToolboxItemsDescriptor desc) -> Void
+```
+
+### `Artech.Core.UI.Services.ToolsOptionsService`
+
+```
+RegisterCategory(ConfigurationCategory category,String parentCategory) -> Void
+RegisterCategory(ConfigurationCategory category) -> Void
+ShowOptions() -> Void
+ShowOptions(String categoryName) -> Void
+```
+
+### `Artech.Core.UI.Services.ToolTipService`
+
+```
+AddContentProvider(IToolTipContentProvider contentProvider) -> Void
+ShowToolTip(Control control,Object obj) -> Boolean
+ShowToolTip(Control control,Object obj,Int32 delay) -> Boolean
+ShowToolTip(Control control,ToolTipData toolTipData) -> Void
+ShowToolTip(Control control,ToolTipData toolTipData,Int32 delay) -> Void
+HideToolTip() -> Void
+CanProvideToolTipData(Object data) -> Boolean
+GetToolTipData(Object data) -> ToolTipData
+```
+
+### `Artech.Core.UI.Services.ToolWindowService`
+
+```
+Initialize() -> Void
+CreateToolWindow(Guid toolWindowId) -> IToolWindow
+ShowToolWindow(Guid toolWindowId) -> Boolean
+PinToolWindow(Guid toolWindowId,Boolean pin) -> Boolean
+FocusToolWindow(Guid toolWindowId) -> Boolean
+FocusToolWindow(Guid toolWindowId,CommandData data) -> Boolean
+HighlightToolWindow(Guid toolWindowId) -> Boolean
+SelectToolWindow(Guid toolWindowId) -> Boolean
+```
+
+### `Artech.Core.UI.Services.TrackSelectionService`
+
+```
+Initialize() -> Void
+OnSelectChange(ISelectionContainer pSC) -> Boolean
+Subscribe(Guid guid,ISelectionListener listener) -> Void
+Unsubscribe(Guid guid) -> Void
+OnSelectChange(Object obj,Object objToSave) -> Void
+OnSelectChange(ICollection objs,ICollection objToSave) -> Void
+OnSelectChange(Object objs,Object objToSave,IPosition position) -> Void
+```
+
+### `Artech.Core.UI.Templates.ITemplateEngine`
+
+```
+CreateKnowledgeBase(KbTemplate template) -> Boolean
+```
+
+### `Artech.Core.UI.ToolWindows.ObjectBrowserUIHelper`
+
+```
+static LoadTypesCombo(IObjectBrowserUI browser,SelectObjectOptions options) -> Void
+static LoadTypesCombo(UltraComboEditor cboType,SelectObjectOptions options) -> Void
+static LoadFilterCombo(UltraComboEditor combo,IEnumerable`1<KBObject> objects) -> Void
+static HandleDateTimeTool(IObjectBrowserUI browser,ToolClickEventArgs e) -> Void
+```
+
+### `Artech.Core.UI.UX.JumpListHelper`
+
+```
+static LoadRecentKBs() -> Void
+```
+
+## `Artech.Debugx.Common`
+
+### `Artech.Debugx.Common.Data.EntityKeyHelper`
+
+```
+static TryGetFromString(String objKey,EntityKey& entityKey) -> Boolean
+```
+
+### `Artech.Debugx.Common.RemoteUI.SDNotificationDataServiceInformation`
+
+```
+WriteData(NotificationJsonWriter writer,RemoteSubscription target) -> Boolean
+```
+
+## `Artech.FrameworkDE`
+
+### `Artech.Common.Controls.Style.CustomToolStripRenderer`
+
+```
+static CreateInstance() -> CustomToolStripRenderer
+```
+
+### `Artech.FrameworkDE.Comparer.BlameRevisionTextHelper`
+
+```
+static GetToolTipSourceEditor(BlameRevisionInfo revision) -> String
+static GetToolTipStructEditor(BlameRevisionInfo revision) -> String
+static WhitespaceGenerator(Int32 quantity) -> String
+static getUserNameOnly(BlameRevisionInfo revision) -> String
+static GetLineLabel(BlameRevisionInfo revision,String lineNumber) -> String
+```
+
+### `Artech.FrameworkDE.DynamicListTool+DynamicListUpdater`
+
+```
+Invoke(DynamicListTool dynMenu) -> Void
+BeginInvoke(DynamicListTool dynMenu,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Artech.FrameworkDE.IDynamicMenuUpdaterManager`
+
+```
+CurrentChainOfUpdaters(Guid package) -> IEnumerable`1<IDynamicMenuUpdater>
+```
+
+### `Artech.FrameworkDE.Text.OutliningInfo+CollapsedTextResolver`
+
+```
+Invoke(String context) -> String
+BeginInvoke(String context,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> String
+```
+
+### `Artech.FrameworkDE.WebUtils.InteropHelper`
+
+```
+static ExecCmd(HtmlDocument document,MiscCommandTarget cmd) -> Boolean
+```
+
+### `Microsoft.Practices.CompositeUI.Commands.AdapterMapServiceException`
+
+```
+
+```
+
+### `Microsoft.Practices.CompositeUI.Commands.CommandAdapterMapService`
+
+```
+Register(Type invokerType,Type adapterType) -> Void
+CreateAdapter(Type invokerType) -> CommandAdapter
+UnRegister(Type invokerType) -> Void
+```
+
+### `Microsoft.Practices.CompositeUI.Commands.ICommandAdapterMapService`
+
+```
+Register(Type invokerType,Type adapterType) -> Void
+CreateAdapter(Type invokerType) -> CommandAdapter
+UnRegister(Type invokerType) -> Void
 ```
 
 ## `Artech.Generators`
@@ -10739,6 +11254,3215 @@ IsApplicable(IPropertyBag properties) -> Boolean
 GetDependencies() -> String[]
 ```
 
+## `Artech.Genexus.Debugx.SocketServer`
+
+### `Artech.Genexus.Debugx.SocketServer.WebSocket.IIMageService`
+
+```
+GetFile(String imageName,String themeName,String langName) -> Stream
+```
+
+### `Artech.Genexus.Debugx.SocketServer.WebSocket.WSImageService`
+
+```
+GetFile(String imageName,String themeName,String langName) -> Stream
+```
+
+### `Artech.Genexus.Debugx.SocketServer.WebSocket.WSService`
+
+```
+Send(Message msg) -> Void
+```
+
+## `Artech.Genexus.Language`
+
+### `Artech.Genexus.Language.ComponentModel.SavedAttributeFinder`
+
+```
+GetByName(String name) -> KBObject
+```
+
+### `Artech.Genexus.Language.ComponentModel.SavedObjectFinder`
+
+```
+GetObject(Module fromModule,Nullable`1<Guid> type,String name) -> ResolveResult
+GetObject(Module fromModule,IList`1<Guid> types,String name) -> ResolveResult
+GetCallableObject(Module fromModule,String name) -> ResolveResult
+ResolveCallableObject(Module fromModule,String name,Guid[] additionalTypes) -> ResolveResult
+IsValidCallableType(Guid type) -> Boolean
+```
+
+## `Artech.Genexus.Resolvers`
+
+### `Artech.Genexus.Resolvers.ActionGroupClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ActionGroupItemClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.AnimationClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.AnimationSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.APIPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ApplicationBarsSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ApplicationSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ATT_CONTROLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ATTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.AttributeClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.AttributeSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BaseCSSClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BASEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BaseSDBoxClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BaseSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BaseSDTextClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ButtonClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ButtonSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.CallTargetClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.CONTEXTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.CONTROLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DASHBOARDPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DATASELECTORPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DEPLOYPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DesignSystemBaseClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DesignSystemClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DesignSystemPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DesignSystemSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DOCPARTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DPRVPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_AS400NATIVEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_DAMENGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_DB2400PropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_DB2COMMONSERVERSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_DBFCDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_DBFIDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_HANAPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_INFORMIXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_MYSQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_ORACLEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_POSTGRESQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_SERVICEDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.DS_SERVICEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_SQLCEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_SQLITEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DS_SQLSERVERPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_AS400NATIVEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_DAMENGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_DB2400PropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_DB2COMMONSERVERSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_DBFCDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_DBFIDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_HANAPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_INFORMIXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_MYSQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_ORACLEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_POSTGRESQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_SERVICEDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.DV_SERVICEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_SQLCEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_SQLITEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DV_SQLSERVERPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_AS400NATIVEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_DAMENGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_DB2400PropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_DB2COMMONSERVERSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_DBFCDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_DBFIDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_HANAPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_INFORMIXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_MYSQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_ORACLEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_POSTGRESQLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_SERVICEDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.DVI_SERVICEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_SQLCEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_SQLITEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DVI_SQLSERVERPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EmbeddedPageClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ErrorViewerClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ErrorViewerLineClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EXOITEMPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EXOMETHPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EXOPARAMPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EXOPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EXOPROPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FILEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FlexClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMATTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMBTNPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMCLASSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FormClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMGRPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMIMGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMLINEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMOBJPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMRECTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FormSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMSFCPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMSFLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMTABCTRLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMTABPAGEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMTBLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMTEXTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FORMWNDPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FreeStyleGridClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GenericThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GridClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GridColumnClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GridRowClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GridRowSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GridSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GroupClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GroupSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GroupSeparatorSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GRPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GXThemeFontPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GXThemeResponsiveRulePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GXThemeTransformPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HELPGENSETTINGSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HELPIMPSETTINGSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HorizontalLineSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTML_PROP_EXT_USRMODEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLATTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLBODYPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLBTNPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLCONTHOLDERPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLDATAREAPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLDIVPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLELEMPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLEMBPAGEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLERRVWPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLFIELDSETPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLIMGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLLAYOUTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLLINKPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLOBJPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLSFLATTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLSFLCOLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLSFLFSPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLSFLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLSPANPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLTBLCELLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLTBLCOLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLTBLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLTBLRCELLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLTBLROWPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HTMLWEBCOMPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.HyperlinkClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.IDXPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ImageClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.IMAGEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ImageSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.IMG_CONTROLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.KBINFOPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.KBPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.LNGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MBROPTIONPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MBRPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MenuItemSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MenuSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MessagesClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MiniAppPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MNUOPTIONPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MNUPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MODELPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.MultimediaSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.NavigationStyleClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.PALETTEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.PopupClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.PRCPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ProgressSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryElementPropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryFilterGroupObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryFilterRangeCollectionObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryFilterRangeObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryObjectPropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryOutputFormatPropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryParameterPropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryValueCollectionPropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.QueryValuePropertiesObjectPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RNTCONTEXTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_ATTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_BANDPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_CTRLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_GENERICPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_IMGPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_LABELPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_LAYOUTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_LINEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_PRINTBPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPT_RECTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RPTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SDTITEMPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SDTLEVELPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SDTPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SectionClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SINGLEIMAGEPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.STENCILPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SuperAppPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SYNCPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TabClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TableCellClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TableClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TableRowClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TableSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TabPageClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TabPageSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TabSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TBDPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TBLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TextBlockClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TextBlockSDClassThemeStylePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ThemePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TransactionAttributePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TransactionLevelPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TRNPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TXT_CONTROLPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.UrlRewritePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.UserControlPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.WBPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.WKPPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.XFLPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.Resolvers.ANDROID`
+
+### `Artech.Genexus.Resolvers.ANDROIDPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.Resolvers.CSHARP`
+
+### `Artech.Genexus.Resolvers.CSHARPPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.Resolvers.JAVA`
+
+### `Artech.Genexus.Resolvers.JAVAPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.Resolvers.SMARTDEVICE`
+
+### `Artech.Genexus.Resolvers.SMARTDEVICEPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.Resolvers.SWIFT`
+
+### `Artech.Genexus.Resolvers.SWIFTPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Genexus.UI.Common`
+
+### `Artech.Genexus.UI.Common.Dialogs.FileContentSaveAsDialog`
+
+```
+ShowDialog() -> Void
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.GxControlHelperUI`
+
+```
+static CreateHTMLElement(IHTMLDocument2 doc2,GxControlType type) -> IHTMLElement
+static CreateHTMLElement(IHTMLDocument2 doc2,String type) -> IHTMLElement
+static ControlElem(IHTMLElement elem) -> IHTMLElement2
+static GetRenderElement(IHTMLElement elem) -> IHTMLElement
+static LoadInnerElements(IHTMLElement e,Dictionary`2<String,IHTMLElement> innerElements) -> Void
+static LoadInnerElements(IHTMLElement e,Dictionary`2<String,String> innerElements) -> Void
+static RestoreInnerElements(IHTMLElement e,Dictionary`2<String,String> innerElements) -> Void
+static BeforeRender(IHTMLElement element) -> Void
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.HelpItemHelper`
+
+```
+static GetHtmlContent(HelpItem item) -> IHTMLDocument2
+static SetHtmlContent(HelpItem item,IHTMLDocument2 value) -> Void
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.HtmlHelperUI`
+
+```
+static GetChildByName(IHTMLDOMNode parentNode,String childName,Int32 maxDepth) -> IHTMLDOMNode
+static GetChildren(IHTMLElement parent) -> IEnumerable`1<IHTMLElement>
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.HtmlTagHelperUI`
+
+```
+static IsFreeStyleGrid(IHTMLElement e) -> Boolean
+static CheckProperties(IHTMLElement elem,IPropertyBag propBag,PropertyDescriptorCollection propertyDescriptionCollection,Object instance) -> Void
+static SerializeFromHtml(IHTMLElement elem,Hashtable props) -> Boolean
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.WebFormRenderUI`
+
+```
+static RenderForm(WebFormPart webForm,GetXmlOptions options) -> String
+```
+
+### `Artech.Genexus.UI.Common.MsHtml.WebRenderHelperUI`
+
+```
+static UpdateClass(PropertiesObject propObj,IHTMLElement elem) -> Void
+static UpdateImage(KBObject kbObj,PropertiesObject propObj,IHTMLElement elem,String propertyName,String htmlAttribute) -> Void
+static UpdateImageStyle(KBObject kbObj,PropertiesObject propObj,IHTMLElement elem,String propertyName,String htmlStyleAttribute) -> Void
+static GetImageUrl(KBObject kbObj,PropertiesObject propObj,String propertyName) -> String
+```
+
+### `Artech.Genexus.UI.Common.ObjectBuilders.DomainBuilder`
+
+```
+Construct(KBObjectDescriptor type,String name,String description,IKBObjectParent parent,KBCategory inCategory) -> KBObject
+DoDefaultAction(KBObject obj) -> Void
+```
+
+### `Artech.Genexus.UI.Common.ObjectBuilders.FileBuilder`
+
+```
+Construct(KBObjectDescriptor type,String name,String description,IKBObjectParent parent,KBCategory inCategory) -> KBObject
+DoDefaultAction(KBObject obj) -> Void
+```
+
+### `Artech.Genexus.UI.Common.ObjectBuilders.ImageBuilder`
+
+```
+Construct(KBObjectDescriptor type,String name,String description,IKBObjectParent parent,KBCategory inCategory) -> KBObject
+DoDefaultAction(KBObject obj) -> Void
+static Create(String name) -> Image
+```
+
+## `Artech.Genexus.UI.Resources`
+
+### `Artech.Genexus.UI.Resources.ResourcesHelper`
+
+```
+static GetString(String resourceId) -> String
+static GetIcon(String name) -> Icon
+static GetIcon(String name,Size size) -> Icon
+static GetIcon(Icon rawIcon,Size iconSize) -> Icon
+```
+
+## `Artech.GXplorer.BL`
+
+### `Artech.GXplorer.BL.Services.GXplorerSpecifierService`
+
+```
+StartDaemon(KnowledgeBase KB,String SegmentName,String MutexBaseName,Int32 GXProcessId) -> Boolean
+GetSQLSentences(KBModel modelInfo,KBModel model,List`1<String> prologQueries,List`1& sqlSentences,List`1& dataStoreIds,List`1& errors) -> Void
+GetRelatedAttributes(KBModel modelInfo,KBModel model,String atts,String& relatedAtts) -> Void
+DaemonHandleResponse(BuildDaemon daemon,BuildResponse response,BuildParameters daemonParams,Boolean& retValue) -> Boolean
+DaemonPreExecute(BuildDaemon daemon,BuildParameters daemonParams) -> Void
+SavePerfProps(BuildDaemon daemon) -> Void
+GetOtherSectionNames() -> IEnumerable`1<String>
+```
+
+## `Artech.GXplorer.Common`
+
+### `Artech.GXplorer.Common.Handlers.BuildEventHandlerBase+UpdateObjectsInXMLDelegate`
+
+```
+Invoke(List`1<KBObject> kbObjects,String xmlFile) -> Void
+BeginInvoke(List`1<KBObject> kbObjects,String xmlFile,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Artech.GXplorer.Common.Handlers.BuildEventHandlerBase+UpdateObjectTranslationsDelegate`
+
+```
+Invoke(TranslationContext translationContext,KBObject kbObject) -> Void
+BeginInvoke(TranslationContext translationContext,KBObject kbObject,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Artech.GXplorer.Common.Helpers.DashboardHelper`
+
+```
+static GetInstanceFromContext(ITypeDescriptorContext context) -> PatternBase
+static GetModelFromContext(ITypeDescriptorContext context) -> KBModel
+static ParseConditions(PatternBase instance,String conditions,String& normalizedConditions,List`1& conditionsTokens,Boolean& conditionsOK,String& errMessage) -> Void
+static AddDashboardParametersToQuery(List`1<DashboardVariable> variables,QueryObject query,String conditions) -> Void
+static GetAllDashboardVariables(PatternBase instance) -> List`1<DashboardVariable>
+static DashboardDataTypeToGeneXusType(String type) -> GeneXusType
+static GeneXusTypeToDashboardDataType(GeneXusType gxType) -> String
+static QueryElementTypeToDashboardElementType(ElementType type) -> String
+```
+
+### `Artech.GXplorer.Common.Helpers.DataStoreHelper`
+
+```
+static GetDataStores(KnowledgeBase kb) -> IEnumerable`1<GxDataStore>
+static GetDataStore(KnowledgeBase kb,Int32 datastoreid) -> GxDataStore
+static GetDataStore(KnowledgeBase kb,String datastorename) -> GxDataStore
+static GetDataStoreForModel(KnowledgeBase kb,KBModel model,Int32 datastoreid) -> GxDataStore
+static GetDefaultDataStore(KnowledgeBase kb) -> GxDataStore
+```
+
+### `Artech.GXplorer.Common.Helpers.DateTimeHelper`
+
+```
+static ConvertFromString(String dtStr,DateTime& dt,Boolean& isValid) -> Void
+static IsValid(String token) -> Boolean
+static ConvertToString(DateTime d,Boolean onlydate) -> String
+```
+
+### `Artech.GXplorer.Common.Helpers.DefaultStyleHelper`
+
+```
+static DefaultStyle(KBModel designModel) -> KBObject
+static DefaultStyleIsOrImportsUnanimo(KBModel designModel) -> Boolean
+static IsOrImportsQueryViewer(DesignSystem ds) -> Boolean
+static IsOrImportsDashboardViewer(DesignSystem ds) -> Boolean
+static GetStyleRule(KBModel designModel,ThemeClassReference themeClassRef) -> String
+```
+
+### `Artech.GXplorer.Common.Helpers.GenericHelper`
+
+```
+static resetNextQueryId() -> Void
+static resetNextAliasId() -> Void
+static nextQueryId() -> Int32
+static nextAlias() -> String
+static addToCommaSeparatedList(String& list,String element) -> Void
+static getSubqueriesAsParameters(List`1<QueryTreeNode> queriesFound) -> String
+static getTranslatableConstantsAsParameters(List`1<QueryTranslatableConstant> translatableConstants) -> String
+static getPrologVarType(eDBType attType) -> String
+```
+
+### `Artech.GXplorer.Common.Helpers.LanguageHelper`
+
+```
+static ImportUsercontrolsTranslations(KBModel designModel) -> Boolean
+static UserControlVersionIndependentDateOutputTypeId(String ucName) -> Int32
+```
+
+### `Artech.GXplorer.Common.Helpers.SQLHelper`
+
+```
+static sqlMakeConstant(eDBType attType,String c,Boolean isAttributeId,Boolean isParameter) -> String
+static SQLSentenceToHtml(QueryObject query,String sqlSentence) -> String
+```
+
+### `Artech.GXplorer.Common.Helpers.WebServerHelper`
+
+```
+static ExcludedDatastores() -> List`1<GxDataStore>
+static OfflineDatastores() -> List`1<GxDataStore>
+static DataConnectionOK(GxDataStore ds,String& connectionMessage) -> Boolean
+static Initialize(KnowledgeBase kb) -> Boolean
+static Terminate() -> Void
+static InitializeErrorMessage() -> String
+static VirtualUrl() -> String
+static VirtualUrl(String program) -> String
+```
+
+### `Artech.GXplorer.Common.Resolvers.FontResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.GXplorer.Common.Resolvers.LengthResolver`
+
+```
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.GXplorer.Common.Resolvers.QueryElementAggregationPropertiesVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.GXplorer.Common.Resolvers.QueryElementAggregationTypeDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.GXplorer.Common.Resolvers.QueryElementNoAggregationPropertiesVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.GXplorer.Common.Resolvers.QueryElementUseDomainDescriptionsVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartAxesLabelsFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartAxesTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartLegendFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartSeriesLabelsFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartTimelineControlsFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVChartTooltipFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVMapLegendFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVMapSeriesLabelsFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVMapTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVMapTooltipFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableAxesTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableAxesTotalFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableAxesValuesFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableDataTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableDataTotalFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableDataValuesFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableDialogFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableFooterFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableHeaderFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVPivotTableTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableBodyEvenFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableBodyOddFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableColumnHeadersFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableDialogFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableFooterFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Resolvers.QVTableTitleFontResolver`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Services.GXplorerBLServices`
+
+```
+
+```
+
+### `Artech.GXplorer.Common.Services.IGXplorerSpecifierService`
+
+```
+Initialize(KnowledgeBase kb) -> Boolean
+GetSQLSentences(KBModel modelInfo,KBModel model,List`1<String> prologQueries,List`1& sqlSentences,List`1& dataStoreIds,List`1& errors) -> Void
+GetRelatedAttributes(KBModel modelInfo,KBModel model,String atts,String& relatedAtts) -> Void
+StartDaemon(KnowledgeBase KB,String SegmentName,String MutexName,Int32 GXProcessId) -> Boolean
+```
+
+## `Artech.Gxpm.BL`
+
+### `Artech.Gxpm.BL.Services.GxpmDynamicFormsService`
+
+```
+Initialize() -> Void
+ClearCache() -> Void
+GetFormHeaders(KnowledgeBase kb) -> IEnumerable`1<DynamicFormHeader>
+GetForm(KnowledgeBase kb,Guid guid,Int32 version) -> DynamicForm
+```
+
+### `Artech.Gxpm.BL.Services.GxpmPlatformsService`
+
+```
+GetCompatiblePlatformDescriptor(KBModel model) -> PlatformDescriptor
+Dispose() -> Void
+```
+
+### `UpdateConfigWeb.Helpers.JsonHelper`
+
+```
+static Serialize(T tobject,Encoding encoding) -> String
+static Deserialize(String jsonValue,Encoding encoding) -> T
+```
+
+## `Artech.Gxpm.Common`
+
+### `Artech.Gxpm.Common.CustomTypes.WFGXDataStoreDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.CustomTypes.WFGXEnvironmentDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.CustomTypes.WFGXEnvironmentValidResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Events.GxpmAskUpdatePlatform`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Helpers.AmazonHelper`
+
+```
+static PackageAction(String packageName) -> Boolean
+static GetPlatformBucketFile(KBModel model) -> String
+static AreUpgradeAvailable(Version currentVersion,String packageName) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Helpers.BusinessProcessDiagramDeployInfo`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Helpers.GxpmInfoHelper`
+
+```
+static CanBeInvokedFromBusinessProcess(KBObject kbObject) -> Boolean
+static GetObjectDescriptors(IEnumerable`1<Guid> types) -> IEnumerable`1<KBObjectDescriptor>
+static GetVersionParts(String version,Int32& mainVersion,Int32& evolutionVersion,Int32& upgrade,Int32& build) -> Void
+static GetEntitiesReferencedByWorkflowEntitiesInfo(KBModel model,IEnumerable`1<BusinessProcessDiagramObject> specificObjects) -> IDictionary`2<EntityKey,IList`1<EntityKey>>
+static SetBasicDeployRequired(KBModel model,Boolean required) -> Void
+static IsBasicDeployRequired(KBModel model) -> Boolean
+static LoadLastBuildTimestamp(KBModel model) -> Nullable`1<DateTime>
+static SaveLastBuildTimestamp(KBModel model,Nullable`1<DateTime> timestamp) -> Void
+```
+
+### `Artech.Gxpm.Common.Helpers.KBModelHelper`
+
+```
+static GetChildModels(KBModel model) -> IEnumerable`1<KBModel>
+static GetReorgPending(KBModel targetModel) -> Boolean
+static GetFullPath(KBModel model) -> String
+static GetFullPath(GxGenerator env) -> String
+static GetFullBinPath(GxGenerator env) -> String
+static GetJavaWorkflowClassesFullPath(GxGenerator env) -> String
+static GetJavaWorkflowServletClassesFullPath(GxGenerator env) -> String
+static GetJavaClasspath(GxGenerator env) -> String
+```
+
+### `Artech.Gxpm.Common.Helpers.KBObjectHelper`
+
+```
+static IsWorkflowMapeableType(eDBType type) -> Boolean
+static IsWorkflowMapeableParameter(Parameter parameter) -> Boolean
+static GetWorkflowParameters(ICallableObject callable) -> IEnumerable`1<Parameter>
+static GetWorkflowParameters(BusinessProcessDiagramObject diagram) -> IEnumerable`1<Parameter>
+static GetWWDevicesWorkflowMapeableParameters(PatternInstanceElement panel) -> IEnumerable`1<Parameter>
+static GetWWDevicesWorkflowMapeableParameters(PatternInstance instance,String panelName) -> IEnumerable`1<Parameter>
+static GetWWDevicesLevelsNames(PatternInstance instance) -> IEnumerable`1<String>
+static GetWWDevicesLevels(PatternInstance instance) -> IEnumerable`1<PatternInstanceElement>
+```
+
+### `Artech.Gxpm.Common.Helpers.PlatformsHelper`
+
+```
+static IsPlatformSupported(GeneratorType genType,DbmsType dbmsType,String version) -> Boolean
+static IsPlatformSupported(KBModel model) -> Boolean
+static GetPlatformName(GeneratorType genType,DbmsType dbmsType,String version,Boolean nlsSupport) -> String
+```
+
+### `Artech.Gxpm.Common.Helpers.PropertiesHelper`
+
+```
+static GetKBObjectReferenceSettings(PropertyDescriptor propDesc) -> KBObjectReferenceSettingsAttribute
+static GetSelectObjectOptions(ITypeDescriptorContext context) -> SelectObjectOptions
+static GetReferencedPropertyDescriptor(ITypeDescriptorContext context) -> PropertyDescriptor
+static GetReferencedPropertyDescriptor(PropertiesObject props,String propertyName) -> PropertyDescriptor
+static GetReferencedPropertyValue(PropertiesObject props,String propertyName) -> T
+```
+
+### `Artech.Gxpm.Common.Helpers.SourceCodeHelper`
+
+```
+Append(String text,Boolean atStart) -> Void
+InsertInMainProc(String text,Boolean atStart) -> Void
+InsertInNamedCodeBlock(NamedCodeBlockType blockType,String blockName,String text,Boolean atStart) -> Boolean
+ContainsNamedCodeBlock(NamedCodeBlockType blockType,String blockName) -> Boolean
+IsCommented(Int32 position) -> Boolean
+GetTextPosition(Int32 absolutePosition) -> TextPosition
+FindMatch(Int32 initialPosition,String pattern,Boolean includeCommented) -> Match
+```
+
+### `Artech.Gxpm.Common.Helpers.VariablesHelper`
+
+```
+static GetExternalObject(Variable gxVar) -> ExternalObject
+GetAdded(String baseName) -> Variable
+GetAdded() -> IEnumerable`1<Variable>
+Added(String baseName) -> Boolean
+CalculateVariableName(String baseName) -> String
+Add(String baseName,String typeName,Boolean reuse) -> Variable
+Add(String baseName,eDBType type,Int32 length,Boolean reuse) -> Variable
+GetCompatible(ITypedObject typed) -> Variable
+```
+
+### `Artech.Gxpm.Common.Objects.BusinessProcessDiagramObject`
+
+```
+static Get(KBModel model,Int32 id) -> BusinessProcessDiagramObject
+static Get(KBModel model,QualifiedName name) -> BusinessProcessDiagramObject
+static GetAll(KBModel model) -> IEnumerable`1<BusinessProcessDiagramObject>
+Save() -> Void
+ValidateData(OutputMessages output) -> Boolean
+ToString() -> String
+```
+
+### `Artech.Gxpm.Common.Objects.Role.RoleBusinessProcessDiagramDocument`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Objects.Role.RoleBusinessProcessDiagramDocumentList`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Objects.Role.RoleBusinessProcessDiagramDocumentListConverter`
+
+```
+CanConvertFrom(ITypeDescriptorContext context,Type sourceType) -> Boolean
+CanConvertTo(ITypeDescriptorContext context,Type destinationType) -> Boolean
+ConvertFrom(ITypeDescriptorContext context,CultureInfo culture,Object value) -> Object
+ConvertTo(ITypeDescriptorContext context,CultureInfo culture,Object value,Type destinationType) -> Object
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.BusinessProcessDiagramDocument`
+
+```
+GetFlowNodes() -> IEnumerable`1<FlowNode>
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.BusinessProcessDiagramTrnsInfo`
+
+```
+GetTransactionByName(String name) -> Transaction
+GetTransactionExtendedAttributes(Transaction trn) -> IEnumerable`1<Attribute>
+GetApplicationDeclaration(Transaction trn) -> ApplicationDeclaration
+GetApplicationDeclaration(Attribute attr) -> ApplicationDeclaration
+GetBaseTransactions(Attribute attr) -> IEnumerable`1<Transaction>
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.BusinessProcessRuleAttribute`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomBusinessProcessApplicationAttribute`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomBusinessProcessApplicationType`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomTypes.BusinessProcessDocument`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomTypes.BusinessProcessDocumentList`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomTypes.BusinessProcessDocumentListConverter`
+
+```
+CanConvertFrom(ITypeDescriptorContext context,Type sourceType) -> Boolean
+CanConvertTo(ITypeDescriptorContext context,Type destinationType) -> Boolean
+ConvertFrom(ITypeDescriptorContext context,CultureInfo culture,Object value) -> Object
+ConvertTo(ITypeDescriptorContext context,CultureInfo culture,Object value,Type destinationType) -> Object
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.CustomTypes.BusinessProcessDocumentListText`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityAppDynamicFormDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityBackColor2DefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityBackColorDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityBorderStyleDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityCalendarDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityConsultDynamicFormDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityDocsDescriptionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityDynamicFormDeclarationVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityDynamicFormsDeclarationTypeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityPreviewDynamicFormDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityPrvAppDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityPrvSDAppDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityQryAppDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ActivityQrySDAppDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.BaseAppDeclarationDescriptionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.BaseDynamicFormDeclarationDescriptionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.BaseRuleDeclarationDescriptionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.BatchActivityDeclDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.BusinessProcessDocsDescriptionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ConditionalEventPropVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ConditionEventRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ConnectorConditionRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventActivityToCompensateVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventErrorCodeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventInterruptsVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventIsThrowDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventIsThrowVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventTriggerResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventTriggerValidResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.FlowEventTriggerVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.IntActivityDeclDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.IntActivitySDDeclDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ISO8601CycleDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.ISO8601PeriodDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.LapseExpressionRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.MICmpxFlowRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.MIExprRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.MILoopConditionRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.PWFNodeGuidDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.PWFPrcGuidDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.PWFPrcIdDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.PWFPrcIdVisibleResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.RelevantDataReferenceValidResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.RoutingTypeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SequenceFlowCndCodeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SequenceFlowCndRuleVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SequenceFlowConnectorTypeResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SequenceFlowConnectorTypeValidResolver`
+
+```
+IsValid(IPropertyBag properties,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SequenceFlowConnectorTypeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SubjectRuleDeclarationDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SubpParameterMappingListVisbleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.SubprocessDeclDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TaskRolesVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventDateExpressionProcedureVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventDateProcedureVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventPropVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeCycleDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,PropDefinition definition,Object& value) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeCycleValidResolver`
+
+```
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeCycleVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeDateDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,PropDefinition definition,Object& value) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeDateValidResolver`
+
+```
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeDateVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeDurationDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,PropDefinition definition,Object& value) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimeDurationVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimerDefinitionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimerDefinitionValuesResolver`
+
+```
+GetValues(IPropertyBag properties) -> IEnumerable`1<ValuesItem>
+GetNameFromValue(Object value) -> String
+GetNonExclusiveValuesSupported() -> Boolean
+GetValueFromName(String name) -> Object
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTimerDefinitionVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.TimerEventTypeVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Resolvers.UTCDateTimeDescriptionDefaultResolver`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Serialization.BusinessProcessDiagramDocumentXmlSerializer`
+
+```
+Deserialize(String xml,DiagramDocument document) -> Void
+Serialize(DiagramDocument document,DiagramXmlSerializationOptions options) -> String
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Serialization.BusinessProcessDiagramLinkXmlSerializer`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Serialization.BusinessProcessDiagramNodeXmlSerializer`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.Serialization.Version1.BusinessProcessDiagramDocumentXmlSerializer`
+
+```
+Deserialize(BusinessProcessDiagramPart part,String xml) -> Void
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagram.SubProcess`
+
+```
+GetFlowNodes() -> IEnumerable`1<FlowNode>
+```
+
+### `Artech.Gxpm.Common.Parts.BusinessProcessDiagramPart`
+
+```
+GetTransactionsInfo() -> BusinessProcessDiagramTrnsInfo
+ResetLockedDocument() -> Void
+GetNewElements() -> IEnumerable`1<DiagramElement>
+GetDeletedElements() -> IEnumerable`1<DiagramElement>
+GetPartReferences() -> IEnumerable`1<EntityReference>
+CreateXmlSerializer() -> DiagramDocumentXmlSerializer
+```
+
+### `Artech.Gxpm.Common.Properties+BusinessProcessDiagram`
+
+```
+static GetMain(IPropertyBag properties) -> Boolean
+static SetMain(IPropertyBag properties,Boolean value) -> Void
+static GetNeedImpact(IPropertyBag properties) -> Boolean
+static SetNeedImpact(IPropertyBag properties,Boolean value) -> Void
+static GetObjectsPath(IPropertyBag properties) -> String
+static SetObjectsPath(IPropertyBag properties,String value) -> Void
+static GetAutomaticProcessLaunch(IPropertyBag properties) -> Boolean
+static SetAutomaticProcessLaunch(IPropertyBag properties,Boolean value) -> Void
+```
+
+### `Artech.Gxpm.Common.Properties+BusinessProcessDocument`
+
+```
+static GetDocument(IPropertyBag properties) -> KBObjectReference
+static SetDocument(IPropertyBag properties,KBObjectReference value) -> Void
+static GetShared(IPropertyBag properties) -> Boolean
+static SetShared(IPropertyBag properties,Boolean value) -> Void
+```
+
+### `Artech.Gxpm.Common.Properties+SubProcess`
+
+```
+static SetEnableSkip(IPropertyBag properties,Boolean value) -> Void
+static GetSendEMailWhenTimeExpire(IPropertyBag properties) -> Boolean
+static SetSendEMailWhenTimeExpire(IPropertyBag properties,Boolean value) -> Void
+static GetProcessDecl(IPropertyBag properties) -> ApplicationDeclaration
+static SetProcessDecl(IPropertyBag properties,ApplicationDeclaration value) -> Void
+static GetProcess(IPropertyBag properties) -> ApplicationDeclarationText
+static SetProcess(IPropertyBag properties,ApplicationDeclarationText value) -> Void
+static GetTimeUnit(IPropertyBag properties) -> String
+```
+
+### `Artech.Gxpm.Common.Properties+SubProcess+ProcessingMode_Enum`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+SubProcess+ProcessingMode_Values`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+SubProcess+SubprocessLocation_Enum`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+SubProcess+SubprocessLocation_Values`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+Task+ProcessingMode_Enum`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+Task+ProcessingMode_Values`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+Task+SubprocessLocation_Enum`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Properties+Task+SubprocessLocation_Values`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Resolvers.EnableWorkflowRuntimeDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Resolvers.EnableWorkflowRuntimeReadonlyResolver`
+
+```
+IsReadOnly(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Gxpm.Common.Services.BusinessProcessDeployCreateNewVersion`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.BusinessProcessDeployOptions`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.GxpmBLServices`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.GxpmBLServicesGuid`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.GxpmUIServices`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.GxpmUIServicesGuid`
+
+```
+
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmBuildService`
+
+```
+Cancel() -> Void
+CheckNeededDeploy(KBModel targetModel) -> Boolean
+DeployWorkflowRuntime(KBModel targetModel) -> Boolean
+DeployWorkflowRuntime(KBModel targetModel,Boolean force) -> Boolean
+CreateDatabase(KBModel targetModel) -> Boolean
+CheckNeededReorganization(KBModel targetModel) -> Boolean
+CheckNeededBusinessProcessesDeploy(KBModel targetModel,BusinessProcessDeployOptions options) -> Boolean
+DeployBusinessProcesses(KBModel targetModel,BusinessProcessDeployOptions options) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmDialogsService`
+
+```
+SelectDynamicForm() -> DynamicFormHeader
+DisplayConditionRules(Gateway gateway) -> Void
+EditLinkCondition(Connector link,String& conditionSource) -> Boolean
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmDynamicFormsService`
+
+```
+ClearCache() -> Void
+GetFormHeaders(KnowledgeBase kb) -> IEnumerable`1<DynamicFormHeader>
+GetForm(KnowledgeBase kb,Guid guid,Int32 version) -> DynamicForm
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmOutputService`
+
+```
+SetOutputPriority(Boolean fastFlush) -> Void
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmPlatformsService`
+
+```
+GetCompatiblePlatformDescriptor(KBModel targetModel) -> PlatformDescriptor
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmToolWindowsService`
+
+```
+ShowRolesToolWindow() -> Void
+ShowCalendarsToolWindow() -> Void
+ShowDocumentsToolWindow() -> Void
+ShowNotificationsToolWindow() -> Void
+```
+
+### `Artech.Gxpm.Common.Services.IGxpmValidationService`
+
+```
+CreateBusinessRuleValidator(BusinessProcessDiagramObject diagram) -> IRuleValidator
+Validate(BusinessProcessDiagramObject diagram,GxpmValidationType type) -> ValidationReport
+```
+
+## `Artech.Gxpm.Diagram`
+
+### `Artech.Gxpm.Diagram.UI.GoHelper`
+
+```
+static Round(RectangleF rect) -> RectangleF
+static Round(PointF point) -> PointF
+static GetNearestSide(RectangleF objBounds,PointF point) -> ObjectSide
+static GetRectangle(PointF center,SizeF radio) -> RectangleF
+static IntersectionRect(RectangleF a,RectangleF b) -> RectangleF
+static IntersectsRect(RectangleF a,RectangleF b) -> Boolean
+static GetRootAncestor(GoObject obj) -> GoGroup
+static GetFirstSelectable(GoObject obj) -> GoObject
+```
+
+### `Artech.Gxpm.Diagram.UI.MathHelper`
+
+```
+static ProjectPointInNearestSegment(PointF[] segmentsPoints,PointF point) -> PointF
+static DistFromPointToSegment(PointF point,PointF pA,PointF pB) -> Single
+static DistancePointToCircumference(PointF point,Single radius,PointF center) -> Single
+static DistancePointToRectangleBorders(PointF point,RectangleF rect) -> Single
+static ProdVect2F(PointF a,PointF b) -> Single
+static ProdVect2F(Single x1,Single y1,Single x2,Single y2) -> Single
+static Magnitude(PointF pt) -> Single
+static GetEstimatedDpiUsedFactor(PointF pointO,RectangleF rectO,PointF pointD,RectangleF rectD,Single& dBest) -> Single
+```
+
+### `Artech.Gxpm.Diagram.UI.PaintHelper`
+
+```
+static CreateBrush(GraphicalProperties props) -> Brush
+static CreatePen(GraphicalProperties props) -> Pen
+```
+
+## `Artech.Gxpm.Resolvers`
+
+### `Artech.Genexus.Resolvers.ActivityDocumentPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ActivityPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ActorPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.AppWFPropertiesPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ArtifactPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BusinessProcessDiagramDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.BusinessProcessDiagramPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.BusinessProcessDocumentDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.BusinessProcessDocumentPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.CalendarPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ChoicePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.ConnectorPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.DocumentPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EndEventPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EnvironmentWFPropertiesPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.EventPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FlowElementPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.FlowNodePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GatewayPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.GxpmInfoPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.IntermediateEventPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.KBVersionWFPropertiesPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.NotificationTemplatePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.OperatorPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RelevantDataPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RoleDocumentPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.RolePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.StartEventPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.SubProcessDefinitionLoader`
+
+```
+Accept(PropDefinitionCollection properties) -> Void
+```
+
+### `Artech.Genexus.Resolvers.SubProcessPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TaskPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.TextAnnotationPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.UseCaseDiagramEdgePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.UseCaseDiagramNodePropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Genexus.Resolvers.UseCasePropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Gxpm.Utils`
+
+### `Artech.Gxpm.Utils.ClasspathHelper`
+
+```
+AddLibDirectory(String directory,String inclussionPattern,String exclusionPattern) -> Void
+AddPath(String path) -> Void
+ToString() -> String
+```
+
+### `Artech.Gxpm.Utils.DamengDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.Db2UdbDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.DBConnectionHelper`
+
+```
+GetJdbcDriverDescriptor(String name) -> JdbcDriverDescriptor
+BuildJdbcUrl(DBConnectionConfig config) -> String
+GetIntegratedSecurityAttrs(Boolean useIngratedSecurity) -> String
+```
+
+### `Artech.Gxpm.Utils.DBConnectionHelperFactory`
+
+```
+static GetHelper(Int32 dbmsCode) -> DBConnectionHelper
+```
+
+### `Artech.Gxpm.Utils.ExecHelper`
+
+```
+ExecuteCommand(Dictionary`2<String,String> envVars,String baseDir,String fileName,String[] args) -> Boolean
+ExecuteCommandWithSyncOutput(Dictionary`2<String,String> envVars,String baseDir,String fileName,String[] args) -> Boolean
+ExecuteWFJavaReorg(String interpreterPath,String platformDir,String workingDir,String metadataDir,String extraClasspath,String reorgLibName,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig) -> Boolean
+ExecuteWFJavaUtilityProc(String interpreterPath,String platformDir,String workingDir,String metadataDir,String extraClasspath,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig,String className,String[] args) -> Boolean
+ExecuteWFNetReorg(String platformDir,String workingDir,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig,String asmName) -> Boolean
+ExecuteWFNetCoreReorg(String platformDir,String workingDir,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig,String asmName) -> Boolean
+ExecuteWFNetUtilityProc(String platformDir,String workingDir,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig,String exeName,String[] args) -> Boolean
+ExecuteWFNetCoreUtilityProc(String platformDir,String workingDir,IEnumerable`1<DBConnectionConfig> dbConfigs,Boolean overwriteConfig,String fileName,String[] args) -> Boolean
+```
+
+### `Artech.Gxpm.Utils.InformixDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.IOHelper`
+
+```
+static RenameFile(String fileName,String newFileName) -> Void
+static CopyFileTo(String srcDir,String fileName,String targetDir,Boolean overwrite) -> Void
+static CopyFileTo(String filePath,String targetDir,Boolean overwrite) -> Void
+static GetMatchingFiles(String path,String searchPattern) -> IEnumerable`1<String>
+static CopyFiles(String sourceDir,String targetDir,String searchPattern,Boolean overwrite) -> Void
+static CopyFiles(String sourceDir,String targetDir,String searchPattern,SearchOption searchOption,Boolean overwrite) -> Void
+static CopyFiles(String sourceDir,String targetDir,String searchPattern,SearchOption searchOption,Boolean overwrite,String excludePattern) -> Void
+static CopyDirectory(String sourceDir,String targetDir,Boolean recursive,Boolean overwrite) -> Void
+```
+
+### `Artech.Gxpm.Utils.JdkInfoHelper`
+
+```
+static GetJreHomePath() -> String
+static GetJdkHomePath() -> String
+static GetJdkInterpreterPath() -> String
+```
+
+### `Artech.Gxpm.Utils.MySqlDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.OracleDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.PostgreSqlDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.ReflectionHelper`
+
+```
+static GetAttributes(Object obj) -> IEnumerable`1<TAttribute>
+static GetDynamicAddedAttributes(Object obj) -> IEnumerable`1<TAttribute>
+```
+
+### `Artech.Gxpm.Utils.SapHanaDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.SeriesDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.SqlServerDBConnectionHelper`
+
+```
+BuildJdbcUrl(DBConnectionConfig config) -> String
+```
+
+### `Artech.Gxpm.Utils.TwoFishHelper`
+
+```
+static Encrypt64(String value,String key) -> String
+static Encrypt64Reverse(String value,String key) -> String
+static encrypt16(String value,String key) -> String
+static decrypt16(String value,String key) -> String
+static Decrypt64(String value,String key) -> String
+static getCheckSumLength() -> Int32
+static GetServerKey() -> String
+static GetSiteKey() -> String
+```
+
+## `Artech.Layers.Framework`
+
+### `Artech.Layers.Framework.GxServiceManager`
+
+```
+ReplaceServices(IServicesExtension extensions) -> Void
+AddService(IGxPackage package,IGxService newService) -> Void
+GetService(Guid serviceId) -> IGxService
+TryGetService(Guid serviceId,IGxService& service) -> Boolean
+GetService() -> TService
+TryGetService(TService& service) -> Boolean
+EnableServices() -> Void
+UnloadServices() -> Void
+```
+
+### `Artech.Layers.Framework.GxServiceProvider`
+
+```
+GetService(Guid serviceId) -> IGxService
+GetService() -> TService
+TryGetService(Guid serviceId,IGxService& service) -> Boolean
+TryGetService(TService& service) -> Boolean
+EnableServices() -> Void
+UnloadServices() -> Void
+ReplaceServices(IServicesExtension extension) -> Void
+```
+
+### `BLServiceProvider`
+
+```
+
+```
+
+## `Artech.Library.BL`
+
+### `Artech.Library.BL.FileToExecute`
+
+```
+
+```
+
 ## `Artech.LibraryDeployer`
 
 ### `Artech.LibraryDeployer.ConnectionHelper`
@@ -10821,6 +14545,2027 @@ BuildJdbcUrl(DeployConfig config) -> String
 BuildJdbcUrl(DeployConfig config) -> String
 ```
 
+## `Artech.MsBuild.Common`
+
+### `Artech.MsBuild.Common.IdeOutputService`
+
+```
+StartSection(String sectionName) -> Void
+StartSection(String sectionId,String sectionName) -> Void
+StartSection(String sectionName,Boolean reuseSection) -> Void
+StartSection(String sectionId,String sectionName,Boolean reuseSection) -> Void
+EndSection(String sectionName,Boolean success) -> Void
+EndSection(String sectionId,String sectionName,Boolean success) -> Void
+Clear() -> Void
+AddText(String value) -> Void
+```
+
+### `Artech.MsBuild.Common.IOutputServiceFactory`
+
+```
+Create() -> IOutputTarget
+```
+
+### `Artech.MsBuild.Common.NormalOutputService`
+
+```
+StartSection(String sectionName) -> Void
+StartSection(String sectionId,String sectionName) -> Void
+StartSection(String sectionName,Boolean reuseSection) -> Void
+StartSection(String sectionId,String sectionName,Boolean reuseSection) -> Void
+EndSection(String sectionName,Boolean success) -> Void
+EndSection(String sectionId,String sectionName,Boolean success) -> Void
+Clear() -> Void
+AddText(String data) -> Void
+```
+
+### `Artech.MsBuild.Common.ObjectHelper`
+
+```
+static Get(KBModel model,Guid type,String name) -> KBObject
+static Get(KBModel model,String name,Boolean checkPrefix) -> KBObject
+static Get(KBModel model,String name) -> KBObject
+static GetKey(KBModel model,String name) -> EntityKey
+```
+
+## `Artech.Packages.Comparer.BL`
+
+### `Artech.Packages.Comparer.BL.Services.ComparerService`
+
+```
+OnBeforeCloseKB(Object sender,KBEventArgs e) -> Void
+AreEqualInContent(KBObject left,KBObject right,CompareObjectOptions objectOptions) -> Boolean
+CanCompareObjects(KBObject left,KBObject right) -> Boolean
+ShouldComparePart() -> Boolean
+ShouldComparePart(Guid objType,Guid partType) -> Boolean
+GetPartHelper() -> IComparerPartHelper
+GetPartHelper(Guid partType) -> IComparerPartHelper
+AreEqualInContent(KBObjectPart left,KBObjectPart right,Boolean compareVisualContent,CompareObjectOptions objectOptions) -> Boolean
+```
+
+### `Artech.Packages.Comparer.BL.Services.MergeService`
+
+```
+MergeObjects(KBObject baseObj,KBObject leftObj,KBObject rightObj,KBModel targetModel) -> KBObject
+MergeObjects(KBObject baseObj,KBObject leftObj,KBObject rightObj,KBModel targetModel,MergeObjectOptions options) -> KBObject
+MergeObjects(KBObject leftObj,KBObject rightObj,KBModel targetModel,Boolean ignoreConflicts) -> KBObject
+MergeObjects(KBObject leftObj,KBObject rightObj,KBModel targetModel,Boolean ignoreConflicts,IMergeObserver observer) -> KBObject
+MergeParts(KBObjectPart basePart,KBObjectPart leftPart,KBObjectPart rightPart,KBObject targetObj) -> Void
+MergeParts(KBObjectPart basePart,KBObjectPart leftPart,KBObjectPart rightPart,KBObject targetObj,MergeObjectOptions options) -> Void
+MergeVersions(KBVersion frozenReference,KBVersion developmentTarget,KBVersion developmentSource,MergeVersionOptions options) -> Boolean
+MergeModels(KBModel refModel,KBModel tgtModel,KBModel srcModel) -> Boolean
+```
+
+## `Artech.Packages.GAM`
+
+### `Artech.Packages.GAM.IntegratedSecurityService`
+
+```
+GetDeployConfiguration(KBEnvironment environment,String metadataDir) -> DeployConfig
+DefineAPI(KBEnvironment environment,Boolean force) -> Boolean
+Deploy(KBModel environmentMdl) -> Boolean
+Deploy(KBModel environmentMdl,Boolean forceTableCreation,Boolean rebuild) -> Boolean
+Deploy(KBModel environmentMdl,DeploySettings settings) -> Boolean
+ExecuteUtility(GxModel environment,String executable,String args,OutputHandler standardOutput,OutputHandler standardError) -> Boolean
+ExecuteUtilityStandalone(String platformPath,Int32 generatorId,Int32 dbmsId,String metadataDir,String executable,String args,OutputHandler standardOutput,OutputHandler standardError,DeployConfig configuration,ILibraryService libraryService,String modelFullPath) -> Boolean
+CreateTables(KBModel environmentMdl) -> Boolean
+```
+
+### `Artech.Packages.GAM.Interop.DbmsHelper`
+
+```
+ExecuteRepositoryCreation(String repositoryGuid,String repositoryName,String repositoryNamesapce,String adminUserName,String adminUserPwd,String connectionUserName,String connectionUserPwd,SdtRepositoryCreateNewSDT& outData,List`1& errorMessages) -> Boolean
+ExecuteMetadataInitialization(String repositoryGuid,String repositoryName,String repositoryNamesapce,String adminUserName,String adminUserPwd,String connectionUserName,String connectionUserPwd,Boolean& isSuccess,String& pgmErrorMessage) -> Void
+GetConnectionFileContent(String repositoryGuid,String& connectionFileContent,List`1& errorMessages) -> Boolean
+ExecuteApplicationRegistration(String repositoryGuid,IEnumerator`1<GAMApplication> appsToRegister,List`1& outData,List`1& errorMessages) -> Boolean
+ExecuteCreateApplicationsPermissions(String repositoryGuid,String securityFilesPath) -> Boolean
+ExecuteApplicationCreation(String repositoryGuid,String applicationId,KBModel targetModel,List`1& errorMessages) -> Boolean
+ExecuteDeleteRepositoryCache(String repositoryId,KBModel targetModel) -> Boolean
+ExecuteMethod(String executable,String args,OutputHandler standardOutput,OutputHandler standardError) -> Boolean
+```
+
+### `Artech.Packages.GAM.SecurityInfoEntity+UpdateSampleOptions`
+
+```
+
+```
+
+## `Artech.Packages.Generators`
+
+### `Artech.Packages.Generators.Services.GeneratorsService`
+
+```
+Generate(KBModel model,Int32 genId,Boolean isBuildWithTheseOnly) -> Boolean
+EvaluateQuery(KBModel model,EvaluationQueryGen query) -> EvaluationResultGen
+StartDaemon(KnowledgeBase kb,Int32 genId,String segmentName,String mutexBaseName,Int32 gxProcessId) -> Boolean
+WaitFinalize() -> Void
+GenerateGroup(KBModel model,Int32 objClass,Int32 objId,String objects,Boolean isBuildWithTheseOnly) -> Boolean
+NotifyNGen(KBModel model,Int32 genId) -> Boolean
+OnBeforeBuild(Object sender,BuildEventArgs args) -> Void
+BeforeBuild(BuildEventArgs args) -> Void
+```
+
+### `GeneXus.Builder.ResourceBuilder`
+
+```
+static Main2(String[] args) -> Void
+static Build(String txtFileNameResources,String outFile) -> String
+```
+
+## `Artech.Packages.GenexusBL`
+
+### `Artech.Packages.Genexus.BL.Helpers.DynTrnHelper`
+
+```
+
+```
+
+### `Artech.Packages.Genexus.BL.Services.BaseLibraryManagerService`
+
+```
+LoadLibraries(KBModel model) -> Void
+static LoadModelLibraries(KBModel model) -> Void
+GetBaseLibraries(KBModel model) -> IEnumerable`1<BaseLibrary>
+GetBaseLibrary(KBModel model,String name) -> BaseLibrary
+```
+
+### `Artech.Packages.Genexus.BL.Services.CloudServicesManagerService`
+
+```
+Initialize() -> Void
+AddServicesProperties(Int32 gen,PropertiesDefinition baseProperties) -> Void
+LoadPropertiesToMain(ServiceDefinition service) -> Void
+GetServicesByType(ServiceType type) -> IEnumerable`1<ServiceDefinition>
+GetServiceByFriendlyName(ServiceType type,String friendlyName) -> ServiceDefinition
+GetServiceByName(ServiceType type,String name) -> ServiceDefinition
+GetReferences(KBModel model) -> String
+GetPackageReferences(KBModel model) -> String
+```
+
+### `Artech.Packages.Genexus.BL.Services.CurlGeneratorService`
+
+```
+Generate(KBModel model,String procName,String procDescription,KBObject parent,String curlCommand) -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.DeploymentTargetService`
+
+```
+GetTargetTypes() -> List`1<DeploymentTarget>
+GetTarget(String targetId) -> DeploymentTarget
+```
+
+### `Artech.Packages.Genexus.BL.Services.DeployService`
+
+```
+AddPartProvider(IDeployPartProvider deployPartProvider) -> Void
+AddHostConfiguration(IHostConfiguration hostConfiguration) -> Void
+Deploy() -> Void
+Deploy(GxModel from,GxModel to) -> Void
+SetCommandFactory(IDeployCommandFactory factory) -> Void
+SetModel(KBModel model) -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.ExtensionLibraryManagerService`
+
+```
+GetLibraries() -> IEnumerable`1<ExtensionLibrary>
+Initialize() -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.ExternalObjectInspectorService`
+
+```
+LoadFrom(String inspectorsDirectory) -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.GeneratorLogConfig`
+
+```
+
+```
+
+### `Artech.Packages.Genexus.BL.Services.KBConversionService`
+
+```
+NeedConversion(String location,SourceKBVersion& fromVersion) -> Boolean
+Convert(SourceKBVersion fromVersion,KBConnectionInfo info) -> Boolean
+ConvertKBTablesFromYi(String kbLocation) -> Boolean
+AddConverter(IKBConverter converter) -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.LibraryService`
+
+```
+Install(KBEnvironment kbEnv,String libraryId,Boolean forceImport,IOutputTarget output) -> Void
+Install(KBEnvironment kbEnv,String libraryId,Int32 generator,Int32 dbms,Boolean forceImport,IOutputTarget output) -> Void
+Install(KBEnvironment kbEnv,String libraryId,Int32 generator,Int32 dbms,Boolean forceImport,IOutputTarget output,LibraryInstallationOptions options) -> Void
+Install(KBEnvironment kbEnv,ILibraryInfo libraryInfo,Int32 generator,Int32 dbms,Boolean forceImport,IOutputTarget output,LibraryInstallationOptions options) -> Void
+InstallExportFiles(KBEnvironment kbEnv,String libraryId,Boolean forceImport,IOutputTarget output) -> Void
+InstallExportFiles(KBEnvironment kbEnv,ILibraryInfo libraryInfo,Boolean forceImport,IOutputTarget output) -> Void
+Reorganize(KBModel targetModel,String libraryId,IOutputTarget output,String& version) -> Boolean
+Reorganize(KBModel targetModel,String libraryId,IOutputTarget output,DeployConfig configuration,String& version) -> Boolean
+```
+
+### `Artech.Packages.Genexus.BL.Services.LogTargetsService`
+
+```
+Initialize() -> Void
+AddServicesProperties(Int32 gen,PropertiesDefinition baseProperties) -> Void
+GenerateLogConfig(KBModel model) -> Boolean
+GenerateTemplates(GxModel gxModel) -> Void
+CopyResources(KBModel model) -> Void
+GetAppender(PropertiesObject properties,Int32 generator,String extension,String logFormat) -> String
+GetTargets(Int32 generator) -> IEnumerable`1<ServiceDefinition>
+GetTargetByFriendlyName(Int32 generator,String friendlyName) -> ServiceDefinition
+```
+
+### `Artech.Packages.Genexus.BL.Services.ModelInformationService`
+
+```
+NeedReorg(KBModel fromModel,KBModel toModel) -> Boolean
+GetLastReorgTimestamp(KBModel model) -> DateTime
+GetLastModifiedTableTimestamp(KBModel model) -> DateTime
+GetLastModifiedObjectTimestamp(KBModel model) -> DateTime
+ObjClass_from_GUID(Guid guid) -> Int32
+ObjClass_to_GUID(Int32 objClass) -> Guid
+GetObjectKey(Int32 objClass,Int32 objId) -> EntityKey
+```
+
+### `Artech.Packages.Genexus.BL.Services.ParallelProcessingService`
+
+```
+Initialize() -> Void
+StartBatch(ParallelProcessingInfo InitializationInfo,KBModel Model,Boolean AllowParallelProcessing,ReaderWriterLockPolicy LockPolicy) -> IParallelProcessingServiceClient
+StartBatch(Func`2<ParallelProcessingInfo,IParallelProcessingLocalInfo> InitializationAction,ParallelProcessingInfo InitializationInfo,KBModel Model,Boolean AllowParallelProcessing,ReaderWriterLockPolicy LockPolicy) -> IParallelProcessingServiceClient
+StartBatch(String SectionName,Func`2<ParallelProcessingInfo,IParallelProcessingLocalInfo> InitializationAction,ParallelProcessingInfo InitializationInfo,KBModel Model,Boolean AllowParallelProcessing,ReaderWriterLockPolicy LockPolicy) -> IParallelProcessingServiceClient
+GetServer(Int32 ClientProcessId) -> IParallelProcessingServiceServer
+```
+
+### `Artech.Packages.Genexus.BL.Services.ParallelProcessingServiceClient`
+
+```
+EnqueueItem(Func`3<IParallelProcessingLocalInfo,ParallelProcessingInfo,ParallelProcessingInfo> action,ParallelProcessingInfo info) -> Int32
+EndBatch(ICancelEventArgs cancelSignal,Boolean stopOnError) -> IList`1<KeyValuePair`2<Int32,KeyValuePair`2<Boolean,ParallelProcessingInfo>>>
+Dispose() -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.ParallelProcessingServiceClientLocal`
+
+```
+EnqueueItem(Func`3<IParallelProcessingLocalInfo,ParallelProcessingInfo,ParallelProcessingInfo> action,ParallelProcessingInfo info) -> Int32
+EndBatch(ICancelEventArgs cancelSignal,Boolean stopOnError) -> IList`1<KeyValuePair`2<Int32,KeyValuePair`2<Boolean,ParallelProcessingInfo>>>
+Dispose() -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.ParallelProcessingServiceClientLocalBatch`
+
+```
+EnqueueItem(Func`3<IParallelProcessingLocalInfo,ParallelProcessingInfo,ParallelProcessingInfo> action,ParallelProcessingInfo info) -> Int32
+EndBatch(ICancelEventArgs cancelSignal,Boolean stopOnError) -> IList`1<KeyValuePair`2<Int32,KeyValuePair`2<Boolean,ParallelProcessingInfo>>>
+Dispose() -> Void
+```
+
+### `Artech.Packages.Genexus.BL.Services.RunServices.Project`
+
+```
+
+```
+
+### `Artech.Packages.Genexus.BL.Services.TablesService`
+
+```
+GetAssociatedTable(KBModel model,EntityKey trnKey,Int32 levelId) -> Table
+GetBestAssociatedTransaction(KBModel model,EntityKey tblKey) -> Transaction
+GetAssociatedTransactions(Table table) -> IEnumerable`1<Transaction>
+GetTableWithKey(KBModel model,IList`1<EntityKey> primaryKeyAtts) -> Table
+GetTablesWithKeyAttribute(KBModel model,EntityKey att) -> IList`1<Table>
+GetUdmTableId(KBModel model,Int32 mappedtableId) -> Int32
+GetMappedTableId(KBModel model,Int32 udmTableId) -> Int32
+GetRedundantAttributes(Table table) -> IList`1<EntityKey>
+```
+
+### `Artech.Packages.Genexus.BL.Services.TransactionsService`
+
+```
+ExportStructures(KBModel model,List`1<EntityKey> objs,String file,ExportOptions options) -> Boolean
+ExportStructures(KBModel model,IEnumerable`1<EntityKey> objs,String file,ExportOptions options) -> Boolean
+```
+
+### `Artech.Packages.Genexus.BL.Services.UserControlsManagerService`
+
+```
+Initialize() -> Void
+PostInitialize() -> Void
+Initialize(KBModel model,Boolean generateSupportFiles) -> Void
+Initialize(KBModel model) -> Void
+RefreshModelContainer(KBModel model) -> Void
+Reset() -> Void
+CreateSupportFiles(String folder) -> Void
+GetControlDependencies(String controlName,KBModel model) -> IEnumerable`1<IExportItem>
+```
+
+### `Artech.Packages.Genexus.BL.Services.UserControlsManagerServicesResources`
+
+```
+EnsureResources(String name,KBObject obj,PropertiesObject properties) -> Void
+EnsureResources(String name,KBObject obj,VariablesPart variablesPart,Action onVariablesPartChanged,String& eventsSource,PropertiesObject properties) -> Void
+EnsureResources(ControlDefinition definition,KBObject obj,PropertiesObject properties) -> Void
+EnsureResources(ControlDefinition definition,KBObject obj,VariablesPart variablesPart,Action onVariablesPartChanged,String& eventsSource,PropertiesObject properties) -> Void
+```
+
+## `Artech.Packages.HelpGenerator`
+
+### `Artech.Packages.HelpGenerator.GeneratorService`
+
+```
+Generate(ApplicationHelpGeneratorOptions options) -> Boolean
+Generate(ApplicationHelpGeneratorOptions options,IProgressListener listener) -> Boolean
+Import(String gxlFileName,ApplicationHelpImportOptions options) -> Boolean
+Import(String gxlFileName,ApplicationHelpImportOptions options,IProgressListener listener) -> Boolean
+```
+
+### `Artech.Packages.HelpGenerator.Options.Converters.HelpGeneratorLanguageTypeConverter`
+
+```
+GetStandardValuesSupported(ITypeDescriptorContext context) -> Boolean
+GetStandardValuesExclusive(ITypeDescriptorContext context) -> Boolean
+GetStandardValues(ITypeDescriptorContext context) -> StandardValuesCollection
+ConvertFrom(ITypeDescriptorContext context,CultureInfo culture,Object value) -> Object
+ConvertTo(ITypeDescriptorContext context,CultureInfo culture,Object value,Type destinationType) -> Object
+CanConvertFrom(ITypeDescriptorContext context,Type sourceType) -> Boolean
+CanConvertTo(ITypeDescriptorContext context,Type destinationType) -> Boolean
+```
+
+### `Artech.Packages.HelpGenerator.Options.Resolvers.HelpGeneratorLanguageTypeDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Packages.HelpGenerator.Options.Types.HelpGeneratorLanguageType`
+
+```
+ToString() -> String
+```
+
+### `Artech.Packages.HelpGenerator.Resolvers.HelpGeneratorTypeDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `Artech.Packages.KnowledgeManager`
+
+### `Artech.Packages.KnowledgeManager.Helpers.ImportItemHelper`
+
+```
+static GetLocalEnvironment(KBModel model,ImportOptions options,IExportItem item) -> KBModel
+```
+
+### `Artech.Packages.KnowledgeManager.Services.ItemResolver`
+
+```
+GetAttributeFromName(KBModel model,String attName) -> Int32
+GetKBObject(KBModel model,Module fromModule,Guid objType,String objName) -> KBObject
+GetAttribute(KBModel model,String attName) -> KBObject
+```
+
+### `Artech.Packages.KnowledgeManager.Services.KnowledgeManagerService`
+
+```
+static GetParentKey(KBModel model,Guid parentType,QualifiedName parentName,Guid parentGuid,ImportOptions options,OutputMessages output) -> EntityKey
+static PreserveParentKey(KBModel model,EntityKey key) -> Void
+CancelOperation(KBModel model) -> Void
+RegisterImportTask(Func`2<ImportOptions,Boolean> handleImport,Func`2<KnowledgeManagerVirtualImport,KnowledgeManagerVirtualImport> factory) -> Void
+RegisterAction(IKmwAction kmwAction) -> Void
+IsActionDefined(IKmwAction kmwAction) -> Boolean
+GetAction(String actionName) -> IKmwAction
+GetAction(String actionName,Guid packageGuid) -> IKmwAction
+```
+
+## `Artech.Packages.Language`
+
+### `Artech.Packages.Language.Services.LanguageService`
+
+```
+CreateEngine() -> IParserEngine
+CreateManager(KBModel model) -> ILanguageManager
+```
+
+## `Artech.Packages.Nemo.Generator`
+
+### `Artech.Packages.Nemo.Generator.Common.GeneratedFiles`
+
+```
+static Get(String specFullPath) -> GeneratedFiles
+```
+
+### `Artech.Packages.Nemo.Generator.GeneratorService`
+
+```
+Generate(NemoGenerationData data) -> Boolean
+Cancel() -> Void
+```
+
+### `Artech.Packages.Nemo.Generator.SpecificatorService`
+
+```
+Specify(BuildArgs buildArgs,ICollection`1<EntityKey> objsToSpecify,SpecificationListHelper specHelper) -> Boolean
+OnObjectSaved(Object sender,KBObjectEventArgs args) -> Void
+OnObjectDeleted(Object sender,KBObjectEventArgs args) -> Void
+```
+
+## `Artech.Packages.Patterns`
+
+### `Artech.Packages.Patterns.ApplyPatternEventArgs`
+
+```
+
+```
+
+### `Artech.Packages.Patterns.CodeGen.CodeGeneratorHelper`
+
+```
+static GetInstanceParentObject(SpecificationRoot specification) -> String
+static GetTypeName(SpecificationType type) -> String
+static GetCollectionTypeName(SpecificationType type,Boolean useConcreteType) -> String
+static IsSimpleCollection(SpecificationType type) -> Boolean
+static IsMixedCollection(SpecificationType type) -> Boolean
+static IsMixedCollection(SpecificationType type,IList`1& collections) -> Boolean
+static GetCollectionChildren(SpecificationType type) -> IList`1<SpecificationChildElement>
+static MethodQualifier(SpecificationType type) -> String
+```
+
+### `Artech.Packages.Patterns.Custom.BaseEditorHelper`
+
+```
+static MoveElementUp(PatternInstanceElement element) -> Boolean
+static MoveElementDown(PatternInstanceElement element) -> Boolean
+static MoveElementTo(PatternInstanceElement element,PatternInstanceElement dest) -> Boolean
+static CanMoveElementTo(PatternInstanceElement element,PatternInstanceElement dest) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.DefaultInstanceGenerator`
+
+```
+Generate(PatternInstance instance) -> Void
+Generate(KBObject baseObject,PatternInstance instance) -> Void
+GetDependencies(IList`1<KBObjectDescriptor> dependencies) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.ICodeEditorHelper`
+
+```
+GetVariablesProvider() -> IVariablesProvider
+```
+
+### `Artech.Packages.Patterns.Custom.IDefaultInstanceGenerator`
+
+```
+Generate(PatternInstance instance) -> Void
+GetDependencies(IList`1<KBObjectDescriptor> dependencies) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternBuildProcess`
+
+```
+ShouldBuild(PatternInstance instance) -> Nullable`1<Boolean>
+BeforeStartBuild(PatternInstance instance) -> Void
+AfterImportResources(PatternInstance instance) -> Void
+BeforeGenerateObjects(PatternInstance instance,IBaseCollection`1<PatternObject> buildObjects) -> Void
+BeforeGenerateObject(PatternInstance instance,InstanceObject instanceObject) -> Void
+BeforeSaveObjects(PatternInstance instance,InstanceObjects instanceObjects) -> Void
+UpdateParentObject(KBObject parent,PatternInstance instance) -> Void
+AfterSaveObjects(PatternInstance instance,InstanceObjects instanceObjects) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternCustomBuildProcess`
+
+```
+WriteMetadata(PatternInstance instance,String location,IDictionary`2<String,Object> outputData) -> Boolean
+GetMetadataDependencies(KBObject obj) -> IEnumerable`1<KBObject>
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternDeleteProcess`
+
+```
+UpdateParentObject(KBObject parent,PatternInstance instance) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternEditorHelper`
+
+```
+InitializeElement(PatternInstanceElement element) -> Void
+InitializeElement(PatternInstanceElement element,KBObject sourceObject) -> Void
+GetCommands(PatternInstanceElement onElement) -> IEnumerable`1<IPatternEditorCommand>
+CustomShowElement(PatternInstanceElement element,String& caption,Icon& icon) -> Boolean
+GetPartName() -> String
+GetPartDescription() -> String
+GetPartIcon() -> Icon
+CreateEditors() -> IEnumerable`1<IPatternEditor>
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternImportHelper`
+
+```
+RequiresParameters(PropDefinitionCollection& parameterDefinition) -> Boolean
+IsStandaloneInstance(KBModel model,Module baseModule,OldInstanceFile instanceFile,QualifiedName& instanceName) -> Boolean
+GetParentObject(KBModel model,Module baseModule,OldInstanceFile instanceFile) -> KBObjectNameKey
+ConvertDocument(OldInstanceFile instanceFile) -> Void
+PostConvertInstance(PatternInstance instance,OldInstanceFile instanceFile) -> Void
+GetObsoleteObjects(PatternInstance instance,OldInstanceFile instanceFile) -> IEnumerable`1<KBObjectNameKey>
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternReferenceHelper`
+
+```
+GetThemeClassBaseClasses(PatternInstanceElement element,SpecificationAttribute attribute) -> IEnumerable`1<String>
+GetReferencedVariables(PatternInstanceElement rootElement) -> IEnumerable`1<VariableReference>
+GetEntityReferences(PatternInstanceElement rootElement) -> IEnumerable`1<EntityReference>
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternReferenceHelper2`
+
+```
+GetStyleObject(PatternInstanceElement element,SpecificationAttribute specAttr) -> KBObject
+IsWebElement(PatternInstanceElement element) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternTemplateHelper`
+
+```
+SetParameters(GeneratorParameters parameters,PatternInstance instance,PatternInstanceElement element) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.IPatternUpdateProcess`
+
+```
+UpdateObject(PatternBase patternObj) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.IPropertiesMergerHelper`
+
+```
+PropertyMergeAvailable(String name) -> Boolean
+MergeProperty(String propertyName,Object sourceValue,Object leftValue,Object rightValue,Object& result) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.PatternBuildProcess`
+
+```
+ShouldBuild(PatternInstance instance) -> Nullable`1<Boolean>
+BeforeStartBuild(PatternInstance instance) -> Void
+AfterImportResources(PatternInstance instance) -> Void
+BeforeGenerateObjects(PatternInstance instance,IBaseCollection`1<PatternObject> buildObjects) -> Void
+BeforeGenerateObject(PatternInstance instance,InstanceObject instanceObject) -> Void
+BeforeSaveObjects(PatternInstance instance,InstanceObjects instanceObjects) -> Void
+UpdateParentObject(KBObject parent,PatternInstance instance) -> Void
+AfterSaveObjects(PatternInstance instance,InstanceObjects instanceObjects) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.PatternDeleteProcess`
+
+```
+UpdateParentObject(KBObject parent,PatternInstance instance) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.PatternEditorHelper`
+
+```
+InitializeElement(PatternInstanceElement element) -> Void
+InitializeElement(PatternInstanceElement element,KBObject sourceObject) -> Void
+GetCommands(PatternInstanceElement onElement) -> IEnumerable`1<IPatternEditorCommand>
+CustomShowElement(PatternInstanceElement element,String& caption,Icon& icon) -> Boolean
+GetPartIcon() -> Icon
+GetPartName() -> String
+GetPartDescription() -> String
+CreateEditors() -> IEnumerable`1<IPatternEditor>
+```
+
+### `Artech.Packages.Patterns.Custom.PatternImportHelper`
+
+```
+RequiresParameters(PropDefinitionCollection& parameterDefinition) -> Boolean
+IsStandaloneInstance(KBModel model,Module baseModule,OldInstanceFile instanceFile,QualifiedName& instanceName) -> Boolean
+GetParentObject(KBModel model,Module baseModule,OldInstanceFile instanceFile) -> KBObjectNameKey
+ConvertDocument(OldInstanceFile instanceFile) -> Void
+PostConvertInstance(PatternInstance instance,OldInstanceFile instanceFile) -> Void
+GetObsoleteObjects(PatternInstance instance,OldInstanceFile instanceFile) -> IEnumerable`1<KBObjectNameKey>
+```
+
+### `Artech.Packages.Patterns.Custom.PatternReferenceHelper`
+
+```
+GetThemeClassBaseClasses(PatternInstanceElement element,SpecificationAttribute attribute) -> IEnumerable`1<String>
+GetReferencedVariables(PatternInstanceElement rootElement) -> IEnumerable`1<VariableReference>
+GetEntityReferences(PatternInstanceElement rootElement) -> IEnumerable`1<EntityReference>
+GetStyleObject(PatternInstanceElement element,SpecificationAttribute attribute) -> KBObject
+IsWebElement(PatternInstanceElement element) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Custom.PatternTemplateHelper`
+
+```
+SetParameters(GeneratorParameters parameters,PatternInstance instance,PatternInstanceElement element) -> Void
+```
+
+### `Artech.Packages.Patterns.Custom.PropertiesMergerHelper`
+
+```
+PropertyMergeAvailable(String name) -> Boolean
+MergeProperty(String propertyName,Object sourceValue,Object leftValue,Object rightValue,Object& result) -> Boolean
+```
+
+### `Artech.Packages.Patterns.Engine.ApplyPatternContext`
+
+```
+
+```
+
+### `Artech.Packages.Patterns.Engine.ApplyResults`
+
+```
+
+```
+
+### `Artech.Packages.Patterns.Engine.ApplySettings`
+
+```
+
+```
+
+### `Artech.Packages.Patterns.Engine.ITranslationResolver`
+
+```
+GetTexts(PatternInstanceElement panelElement,String messageText) -> IEnumerable`1<String>
+GetTransationFor(PatternInstanceElement panelElement,Int32 languageId,String messageText) -> String
+```
+
+### `Artech.Packages.Patterns.PatternEngine`
+
+```
+static GetPatternDefinition(Guid id) -> PatternDefinition
+static GetPatternDefinition(String name) -> PatternDefinition
+static AddPatternDefinition(String definitionPath) -> PatternDefinition
+static GetPatternDefinitionBySettingsGuid(Guid id,String name) -> PatternDefinition
+static ApplyPattern(PatternInstance instance,ApplySettings settings) -> Boolean
+static ApplyPattern(KBObject parentObject,PatternDefinition pattern) -> Void
+static UpdateDynamicMenu(IDynamicMenuList dynamicMenu,DynamicMenuData data) -> Boolean
+```
+
+## `Artech.Packages.RestServiceDL.Generator`
+
+### `Artech.Packages.RestServiceDL.Generator.GeneratorService`
+
+```
+Generate(KBModel model,KBVersion version,IEnumerable`1<String> objects,List`1<String> configFlags) -> Boolean
+Generate(KBModel model,KBVersion version,IEnumerable`1<String> objects,List`1<String> configFlags,String outputFile) -> Boolean
+```
+
+### `Artech.Packages.RestServiceDL.Generator.ODataService`
+
+```
+Generate(KBModel model,KBVersion version) -> Boolean
+Generate(KBModel model,KBVersion version,String outputFile) -> Boolean
+GenerateAll(KBModel model,KBVersion version,String outputFile) -> Boolean
+```
+
+### `Artech.Packages.RestServiceDL.Generator.ProtocolBufferService`
+
+```
+Generate(KBModel model,KBVersion version) -> Boolean
+compileProtoFiles(KBModel model,String outputpath) -> Void
+ReplaceAnnotation(String sourcesPath,String protofilename,String ext,Boolean useboth) -> Void
+Generate(KBModel model,KBVersion version,String outputFile) -> Boolean
+static WriteProtoObject(FileInfo gen,HostInfo hostInfo,FormatInfo formatInfo,IEnumerable`1<RestEntry> sdts,TemplateGroupFile grp,RestEntry obj,GxModel gxModel) -> Void
+```
+
+### `Artech.Packages.RestServiceDL.Generator.RestServiceDLPackage`
+
+```
+
+```
+
+### `Artech.Packages.RestServiceDL.Generator.SpecificatorService`
+
+```
+Specify(KBModel targetModel,IEnumerable`1<EntityKey> objsToSpecify) -> Boolean
+OnObjectSaved(Object sender,KBObjectEventArgs args) -> Void
+OnObjectDeleted(Object sender,KBObjectEventArgs args) -> Void
+KBObjectToRestObject(KBModel model,KBObject obj) -> RestEntry
+GetEPMethods(API apiObj,KBModel model,IEnumerable`1<Signature> signatures,Boolean openApi,Boolean odata) -> List`1<RestMethod>
+GetParameters(KBModel model,IEnumerable`1<Signature> signatures,Boolean openApi,Boolean odata) -> List`1<RestParm>
+GetParameters(API apiObj,KBModel model,IEnumerable`1<Signature> signatures,Boolean openApi,Boolean odata) -> List`1<RestParm>
+GetFullNameWithModule(SDTLevel level) -> String
+```
+
+## `Artech.Packages.Specifier`
+
+### `Artech.Packages.Specifier.Services.PrologService`
+
+```
+CreateInstance() -> IReftypeStructureWrapper
+Assert(String line) -> Boolean
+ConvertToPrologList(String[] items) -> String
+ConvertToProlog(String text) -> String
+ConvertToPrologString(String text) -> String
+```
+
+### `Artech.Packages.Specifier.Services.SpecifierService`
+
+```
+StartDaemon(KnowledgeBase kb,Int32 genId,String segmentName,String mutexBaseName,Int32 gxProcessId) -> Boolean
+StartDaemon(KnowledgeBase kb,String segmentName,String mutexBaseName,Int32 gxProcessId) -> Boolean
+SpecifyAll(KBModel model,BuildOptions options) -> Boolean
+SpecifyObjects(KBModel model,IEnumerable`1<EntityKey> objects,BuildOptions options) -> Boolean
+SpecifyObjects(KBModel modelInfo,KBModel model,IEnumerable`1<EntityKey> objects,BuildOptions options) -> Boolean
+SpecifyObjects(KBModel modelInfo,KBModel model,IEnumerable`1<EntityKey> objects,BuildOptions options,BuildOption option) -> Boolean
+RebuildArtifacts(KBModel model,Artifacts artifacts,BuildOptions options) -> Boolean
+CreateDatabase(KBModel toModel) -> AnalysisResult
+```
+
+## `Artech.Packages.Specifier.Common`
+
+### `Artech.Packages.Specifier.Common.AbstractSpecifierService`
+
+```
+DoBeforeSpecify(String sectionName,KBModel model) -> Boolean
+DoAfterSpecify(KBModel model) -> Boolean
+Initialize(KnowledgeBase kb) -> Boolean
+Cancel() -> Void
+EvaluateInitialValue(KBModel model,EvaluationQuery query) -> EvaluationResult
+```
+
+## `Artech.Packages.TeamDevClient.BL`
+
+### `Artech.Packages.TeamDevClient.BL.Clients.TeamWorkService2Client`
+
+```
+GetVersionMetadata(VersionMetadataData data) -> VersionMetadata
+Update(UpdateData data) -> String
+PartialUpdate(PartialUpdateData data) -> String
+Commit(CommitData data) -> DateTime
+GetCommitFile(GetCommitData data) -> Void
+GetRevisionChanges(TeamDevelopmentData data,Int32 remoteVersionId,String remoteVersionName,Nullable`1& revisionTimestamp,Nullable`1& fromRevisionTimestamp) -> String
+GetRevisionChanges(TeamDevelopmentData data,Int32 remoteVersionId,String remoteVersionName,Nullable`1& revisionTimestamp,Nullable`1& fromRevisionTimestamp,Int32& fromRevisionId,Nullable`1& toRevisionId) -> String
+GetObjectRevision(TeamDevelopmentData data,Int32 remoteVersionId,String remoteVersionName,Nullable`1& revisionTimestamp,Nullable`1& toRevisionId,Guid objectGuid) -> String
+```
+
+### `Artech.Packages.TeamDevClient.BL.Clients.TeamWorkServiceClient`
+
+```
+CancelServerOperation(ProxyData data) -> Void
+GetKBVersions(ProxyData data) -> List`1<KBVersionData>
+HostedKBs(ProxyData data) -> List`1<String>
+GetTemplateData(ProxyData data) -> List`1<ModelTemplateData>
+GetServerVersionId(ProxyData data) -> Int32
+GetRevisions(ProxyData data) -> List`1<KBRevisionData>
+CheckConectivitySecure(ProxyData data) -> Boolean
+HasPermissionToPublish(ProxyData data) -> Boolean
+```
+
+### `Artech.Packages.TeamDevClient.BL.Connectivity.ClientHelper`
+
+```
+static GetSecureUrl(String url) -> String
+```
+
+### `Artech.Packages.TeamDevClient.BL.Connectivity.ConnectivityHelper`
+
+```
+IsKBHosted(ProxyData data) -> Boolean
+AuthenticationTypes(ProxyData data) -> List`1<String>
+```
+
+### `Artech.Packages.TeamDevClient.BL.Connectivity.IServerHelperChannel`
+
+```
+
+```
+
+### `Artech.Packages.TeamDevClient.BL.Connectivity.ServerHelperProxy`
+
+```
+IsServerAlive(String version) -> Boolean
+IsKBHosted(String kbName) -> Boolean
+IsServerSecure() -> Boolean
+AuthenticationTypes() -> List`1<String>
+ServerInfo(SimpleTransfer request) -> SimpleTransfer
+ServerUTCTime() -> DateTime
+Dispose() -> Void
+```
+
+### `Artech.Packages.TeamDevClient.BL.Data.PartialUpdateData`
+
+```
+
+```
+
+### `Artech.Packages.TeamDevClient.BL.Data.UpdateData`
+
+```
+
+```
+
+### `Artech.Packages.TeamDevClient.BL.Helpers.KBObjectIsTransferableHelper`
+
+```
+static LoadOutput(KBModel model,EntityKey key,DateTime& timestamp,Byte[]& data) -> Boolean
+static SaveOutput(KBModel model,EntityKey key,Byte[] data) -> Void
+static IsTransferable(KBModel model,EntityHistory history) -> Boolean
+```
+
+### `Artech.Packages.TeamDevClient.BL.Helpers.TableVersioningHelper`
+
+```
+static GetVersionDate(Table table) -> DateTime
+static SaveTableDates(KBModel model,KBObjectHistory history,DateTime versionDate,DateTime commitDate) -> Boolean
+```
+
+### `Artech.Packages.TeamDevClient.BL.Services.TeamDevClientService`
+
+```
+GetPipelineRuns(TeamDevelopmentData data,String pipelineName) -> ContinuousIntegrationPipelineRunsData
+GetPipelineRunInfo(TeamDevelopmentData data,String pipelineName,Int32 runId) -> ContinuousIntegrationPipelineRunInfoData
+GetPipelineRunOutput(TeamDevelopmentData data,String pipelineName,Int32 runId) -> String
+RunPipeline(TeamDevelopmentData data,String pipelineName,Boolean isRebuild,Boolean runTests) -> Void
+EditPipeline(TeamDevelopmentData data,ContinuousIntegrationPipelineJson pipeline) -> Void
+AbortRunPipeline(TeamDevelopmentData data,String pipelineName) -> Void
+RemovePipeline(TeamDevelopmentData data,String pipelineName) -> Void
+GetPipelineInitializationParameters(TeamDevelopmentData data) -> ContinuousIntegrationPipelineInitializationData
+```
+
+## `Artech.Patterns.Dashboard`
+
+### `Artech.Patterns.Dashboard.Custom.DashboardReferenceHelper`
+
+```
+GetThemeClassBaseClasses(PatternInstanceElement element,SpecificationAttribute attribute) -> IEnumerable`1<String>
+GetStyleObject(PatternInstanceElement element,SpecificationAttribute attribute) -> KBObject
+```
+
+### `Artech.Patterns.Dashboard.Helpers.DashboardEditorHelper`
+
+```
+GetPartDescription() -> String
+GetPartIcon() -> Icon
+InitializeElement(PatternInstanceElement element,KBObject sourceObject) -> Void
+GetCommands(PatternInstanceElement onElement) -> IEnumerable`1<IPatternEditorCommand>
+static ItemEventName(PatternInstanceElement element) -> String
+```
+
+### `Artech.Patterns.Dashboard.Helpers.DashboardTypedObjectResolver`
+
+```
+Get(ParserInfo info,KBObject obj) -> ITypedObjectInfo
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.ApplicationBarsClassResolver`
+
+```
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.ClassResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.PATTERNPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.Properties+PATTERN+AutomaticRefresh_Enum`
+
+```
+
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.Properties+PATTERN+AutomaticRefresh_Values`
+
+```
+
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.Properties+PATTERN+GenerateOpenAPIInterface_Enum`
+
+```
+
+```
+
+### `Artech.Patterns.Dashboard.Resolvers.Properties+PATTERN+GenerateOpenAPIInterface_Values`
+
+```
+
+```
+
+## `Artech.Patterns.QueryDashboard`
+
+### `Artech.Patterns.QueryDashboard.Helpers.InstanceHelper`
+
+```
+static WriteNewDashboardsInXMLs(KBModel model,Boolean isRebuildAll) -> Void
+static UpdateDashboardViewerObjectsXML(List`1<KBObject> kbObjects,String xmlFile) -> Void
+static UpdateDashboardTranslations(TranslationContext translationContext,KBObject kbObject) -> Void
+static UpdateFilterQueriesInXml(List`1<KBObject> dashboards) -> Void
+static SerializeFilterQueries(PatternInstance dashboard,List`1<QueryObject> queries) -> Void
+static DeleteCalculatedSentencesAllDashboards(KBModel designModel) -> Void
+static CreateFilterQueries(PatternBase instance,Boolean restoreSQLSentencesCache) -> List`1<QueryObject>
+static UpdateFilterQuery(PatternInstanceElement filter,QueryObject query) -> Boolean
+```
+
+### `Artech.Patterns.QueryDashboard.Helpers.JsonHelper`
+
+```
+static DashboardToJson(TranslationContext translationContext,PatternInstanceElement element,Dictionary`2<IStyleClassReference,Boolean> themeClassReferences,Boolean editMode) -> String
+```
+
+### `Artech.Patterns.QueryDashboard.Helpers.WidgetHelper`
+
+```
+static GetVariableNamesFromText(PatternBase instance,String text) -> List`1<String>
+static CorrectVariableNamesInText(PatternBase instance,String text) -> String
+```
+
+### `Artech.Patterns.QueryDashboard.Resolvers.DASHBOARDPropertyResolverFactory`
+
+```
+
+```
+
+## `Artech.Patterns.SmartDevices.Common`
+
+### `Artech.Patterns.SmartDevices.Common.ActionSerializationHelper`
+
+```
+static GetGeneratorType(String targetPlatform) -> String
+static RemoveEvent(Object objData,String name) -> Void
+static GetEventNames(Object objData) -> IEnumerable`1<String>
+static GetSubroutineNames(Object objData) -> IEnumerable`1<String>
+static GetActionList(Object objData,String eventName,OutputMessages output,String targetPlatform) -> ActionList
+static GetSubroutineActionList(Object objData,String name,OutputMessages output,String targetPlatform) -> ActionList
+static GetCaseSensitiveEventName(Object objData,String name) -> String
+static GetCaseSensitiveSubroutineName(Object objData,String name) -> String
+```
+
+### `Artech.Patterns.SmartDevices.Common.BuildHelper`
+
+```
+static AddGenerator(KBModel model) -> Void
+static SetCalledProceduresAsRest(KBModel model,IEnumerable`1<EntityKey> keys,List`1<Int32> alreadyProcessedProc,List`1<Int32> alreadyProcessedDPrv) -> Void
+static SetCalledProceduresAsRest(PatternInstance instance,String eventsCode,ParserInfo parserInfo,List`1<Int32> alreadyProcessedProc,List`1<Int32> alreadyProcessedDPrv) -> Void
+static SetPropertyValue(KBObject kbObject,String propertyName,Object propertyValue) -> Void
+static AddFrontendGenerators(GeneratorsPart generators) -> Boolean
+static AddGeneratorIfNeeded(GeneratorsPart generators,String name,GeneratorType genType) -> Boolean
+```
+
+### `Artech.Patterns.SmartDevices.Common.DataSerializationHelper`
+
+```
+static GenerateVariablesXml(VariablesPart varPart,XmlDocument xmlDocument,HashSet`1<String> usedVariables,HashSet`1<String> definedVariables) -> XmlElement
+```
+
+### `Artech.Patterns.SmartDevices.Common.SDSerializationHelper`
+
+```
+GetPropertiesObjects(PatternBase instance) -> IEnumerable`1<PropertiesObject>
+```
+
+### `Artech.Patterns.SmartDevices.Common.SmartDevicesHelper`
+
+```
+static GetMatchingBCLevel(PatternInstanceElement levelElement) -> TransactionLevel
+static GetMatchingBCLevel(PatternInstance instance,String elementLevelName) -> TransactionLevel
+```
+
+## `Artech.Patterns.WorkWith`
+
+### `Artech.Patterns.WorkWith.Helpers.AutoLinkGenerator`
+
+```
+GenerateLink(AttributeElement att) -> Void
+```
+
+### `Artech.Patterns.WorkWith.ModesElement+UpdateValue`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWith.Resolvers.WebFormDefaultResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWith.SettingsTemplateElement+AfterUpdateValue`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWith.SettingsTemplateElement+UpdateTransactionValue`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWith.TransactionElement+GenerateNoPromptRuleValue`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWith.WorkWithInstance+AfterUpdateValue`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWith.WorkWithInstance+UpdateTransactionValue`
+
+```
+
+```
+
+## `Artech.Patterns.WorkWithDevices`
+
+### `Artech.Generators.Metadata.WWSD.AfterServiceDefinition`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.AttributeVariableHelper`
+
+```
+static SelectAttVarDomDialog(PatternInstanceElement element,String title,String action,TypedObjectKind filter,IEnumerable& typedObjects) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolver`
+
+```
+IsApplicable(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverBottom`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverH`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverHeight`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverLeft`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverRH`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverRight`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverRW`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverRX`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverRY`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverTop`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverW`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverWidth`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverX`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AbsolutePositionResolverY`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionAccessibleNameCustomResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionCaptionResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionClassResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionClickEventResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionControlTypeResolvers`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ActionGroupCaptionResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AdditionalThemesResolver`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AdvancedAbsolutePositionResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.AplicationBarsHeaderRowResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+IsApplicable(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.BaseControlResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ClassResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ColumnStyleResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ControlInfoBaseProperties+DataItemControlTypeResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ControlInfoBaseProperties+DataItemDataSourceFromResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ControlNameResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ControlTypeResolvers`
+
+```
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.DataAccessibleNameCustomResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.DefaultActionObjectResolver`
+
+```
+IsApplicable(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.DefaultLayoutOrientationResolver`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ElementControlTypeResolvers`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.EmptyDataSetBackgroundClassResolver`
+
+```
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.EmptyDataSetTextClassResolver`
+
+```
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.EnableAlphaIndexerResolvers`
+
+```
+IsFirstAttributeOfTypeCharacter(IPropertyBag properties) -> Boolean
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+IsReadOnly(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ExpandBoundsDirectionResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ExpandBoundsResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ExpressionResolvers`
+
+```
+GetTexts(PatternInstanceElement panelElement,String messageText) -> IEnumerable`1<String>
+GetTransationFor(PatternInstanceElement panelElement,Int32 languageId,String messageText) -> String
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.FilterDescriptionResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.FilterExpressionResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+static GetVariableName(String attName) -> String
+static GetVariableNameRangeStart(String attName) -> String
+static GetVariableNameRangeEnd(String attName) -> String
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.FilterNameResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.FormClassResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+IsApplicable(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.GridControlTypeResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.GridRowsResolver`
+
+```
+IsApplicable(IPropertyBag properties) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.HorizontalAlignResolvers`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LabelPositionResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemControlNameResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+IsReadOnly(IPropertyBag properties) -> Boolean
+IsVisible(IPropertyBag properties) -> Boolean
+static NeedControlName(PatternInstanceElement control) -> Boolean
+static GetControlName(PatternInstanceElement control) -> String
+static SetControlName(PatternInstanceElement control,String controlName) -> Void
+static GetBaseName(PatternInstanceElement control) -> String
+static GetDefaultControlName(PatternInstanceElement control,Func`2<String,Boolean> nameExists) -> String
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemFieldSpecifierResolver`
+
+```
+static GetLayoutElement(IPropertyBag properties) -> PatternInstanceElement
+IsApplicable(IPropertyBag properties) -> Boolean
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemFormatResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemInviteMessageResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemReadonlyResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag properties,Object value) -> Boolean
+IsReadOnly(IPropertyBag properties) -> Boolean
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemReturnOnClickResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+IsReadOnly(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutDataItemTimeInviteMessageResolvers`
+
+```
+IsApplicable(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutSimpleGridItemTitleResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutTableControlNameResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+IsReadOnly(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutTableExpandBoundsDirectionResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutTableExpandBoundsResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LayoutTypeReferenceResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.LinkClassResolver`
+
+```
+GetSpecificationAttribute(PatternInstanceElement element) -> SpecificationAttribute
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NavigationStyleResolver`
+
+```
+GetValues(IPropertyBag properties) -> IEnumerable`1<ValuesItem>
+GetValueFromName(String name) -> Object
+GetNameFromValue(Object value) -> String
+GetNonExclusiveValuesSupported() -> Boolean
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NotSDTBasedGridFromGridDataResolver`
+
+```
+GetDependencies() -> String[]
+IsApplicable(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NotSDTBasedGridFromLayoutGridResolver`
+
+```
+GetDependencies() -> String[]
+IsApplicable(IPropertyBag properties) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NumberFloatResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NumberOrEmptyResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.NumberPercentageOrEmptyResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.OSResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.PatternResolverHelper`
+
+```
+static GetElement(IPropertyBag properties) -> PatternInstanceElement
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.PlatformParentDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.RowHeightResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.RowHeightsWebResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+static GetRowHeights(IPropertyBag properties) -> IEnumerable`1<String>
+static GetRowHeights(PatternInstanceElement tableElement) -> IEnumerable`1<String>
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.RowHeightWebResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.RowStyleResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+static GetRowHeights(IPropertyBag properties) -> IEnumerable`1<ElementStyle>
+static GetRowHeights(PatternInstanceElement tableElement) -> IEnumerable`1<ElementStyle>
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.SelectedClassResolvers`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ShowAsReadOnlyResolvers`
+
+```
+IsReadOnly(IPropertyBag properties) -> Boolean
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ShowInDebugResolvers`
+
+```
+IsReadOnly(IPropertyBag properties) -> Boolean
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TableCellControlNameResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TableColSpanResolvers`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TableHeightResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+static GetTableHeight(IEnumerable`1<ElementStyle> rowHeights,Int32[] heightPlatformDefaults) -> ElementStyle
+GetDependencies() -> String[]
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TableRowSpanResolvers`
+
+```
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TableWidthResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.TabPageClassResolvers`
+
+```
+static GetDefaultFromTheme(IPropertyBag properties,String tabElementType,String tabClassPropName,String pageClassPropName) -> Object
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.ThemeResolver`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.UnselectedClassResolvers`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.UserAbsolutePositionResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.VerticalAlignResolvers`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Custom.WorkWithDevicesPanelResolvers`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.CanvasLayoutEngine`
+
+```
+Layout(Object container,LayoutEventArgs layoutEventArgs) -> Boolean
+static GetPositionX(PatternInstanceElement cell,Int32 canvasWidth) -> Int32
+static GetPositionY(PatternInstanceElement cell,Int32 canvasHeight) -> Int32
+static GetPositionWidth(PatternInstanceElement cell,Int32 canvasWidth) -> Int32
+static GetPositionHeight(PatternInstanceElement cell,Int32 canvasHeight) -> Int32
+GetAutoSize(Object container) -> Size
+GetCellPositionAt(Point pt) -> TableLayoutPanelCellPosition
+CellPosition(Control c) -> TableLayoutPanelCellPosition
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.CanvasTableLayoutEngine`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.Comparer.ComparerHelper`
+
+```
+static GetVariablesFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static GetConditionsFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static GetRulesFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static GetEventsFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static GetPropertiesFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static GetLayoutFrame(PatternInstanceElement leftElement,PatternInstanceElement rightElement) -> ComparerPartFrame
+static HasDifferences(IComparerPartFrame frame) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.DragControlsHelper`
+
+```
+static IsReadOnly(Control control) -> Boolean
+static GetDragComponents(Object behaviorDataObject) -> ICollection
+static DoDrop(DragEventArgs e,Control control,IDragLayoutEngine layoutEngine,Action`2<Control,InsertPosition> dropControl) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.Html.OldHtmlLayoutEditor+MyBrowserLayoutEditor+MyJavascriptManager+RenderWidgetDelegate`
+
+```
+Invoke(String elementId) -> Void
+BeginInvoke(String elementId,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.IDragLayoutEngine`
+
+```
+GetDropCellRectangle(Object container,Point pt,IEnumerable`1<Control> dragControls) -> Rectangle
+GetDropPosition(Object container,Point pt,IEnumerable`1<Control> dragControls) -> InsertPosition
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.InstanceEditorHelper`
+
+```
+CreateEditors() -> IEnumerable`1<IPatternEditor>
+GetPartDescription() -> String
+GetPartIcon() -> Icon
+InitializeCommandManager(IMultipleEditorCommandManager commandManager) -> Void
+static ConvertNavigationPosition(IPosition pos) -> IPosition
+RedirectPosition(IPosition position) -> IPosition
+InitializeElement(PatternInstanceElement element,KBObject sourceObject) -> Void
+static NewGuids(PatternInstanceElement element) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.Layout.Controls.Table+ILayoutEngine`
+
+```
+GetAutoSize(Object container) -> Size
+GetCellPositionAt(Point pt) -> TableLayoutPanelCellPosition
+CellPosition(Control c) -> TableLayoutPanelCellPosition
+SetRowColumnCount(PatternInstanceElement table) -> Void
+GetColumnCount() -> Int32
+GetRowCount() -> Int32
+SameControls(Control parent) -> Boolean
+Insert(Control control,Int32 col,Int32 row) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.MenuCommandService`
+
+```
+AddCommand(MenuCommand command) -> Void
+AddVerb(DesignerVerb verb) -> Void
+FindCommand(CommandID commandID) -> MenuCommand
+GlobalInvoke(CommandID commandID) -> Boolean
+RemoveCommand(MenuCommand command) -> Void
+RemoveVerb(DesignerVerb verb) -> Void
+ShowContextMenu(CommandID menuID,Int32 x,Int32 y) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.MyDesignerOptionService`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.PatternDataItemHelper`
+
+```
+static AddVariables(PatternInstanceElement panelElement,IEnumerable`1<Variable> vars) -> Void
+static CreatePasteCell(Object data) -> IEnumerable`1<PatternInstanceElement>
+static InsertAttribute(LayoutEditorContext context,PatternInstanceElement table,InsertPosition pos) -> Boolean
+static InsertVariable(LayoutEditorContext context,PatternInstanceElement table,InsertPosition pos) -> Boolean
+static InsertAttributeVariable(LayoutEditorContext context,PatternInstanceElement table,InsertPosition pos,Boolean asGrid) -> Boolean
+static InsertVariables(LayoutEditorContext context,PatternInstanceElement parent,IEnumerable`1<Variable> variables) -> Boolean
+static InsertGrid(LayoutEditorContext context,PatternInstanceElement table,InsertPosition pos) -> Void
+static InsertSimpleGrid(LayoutEditorContext context,PatternInstanceElement table,InsertPosition pos) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.PatternTableHelper`
+
+```
+static IsValidContainer(PatternInstanceElement table) -> Boolean
+static GetFreePatternCell(IPatternElementFactory factory,PatternInstanceElement table,InsertPosition pos) -> PatternInstanceElement
+static IsFreePatternCell(PatternInstanceElement table,InsertPosition pos) -> Boolean
+static InsertPatternCell(IPatternElementFactory factory,PatternInstanceElement oldCell) -> PatternInstanceElement
+static InsertRow(IPatternElementFactory factory,PatternInstanceElement table,Int32 insertRowIndex) -> Void
+static InsertColumn(IPatternElementFactory factory,PatternInstanceElement table,Int32 insertColumnIndex) -> Void
+static InsertResponsiveCell(IPatternElementFactory factory,PatternInstanceElement table,Int32 row,Int32 column) -> Void
+static DeleteRow(IPatternElementFactory factory,PatternInstanceElement table,Int32 deleteRowIndex) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.PatternTreeEditor+UpdateSelectionDelegate`
+
+```
+Invoke(Object item) -> Void
+BeginInvoke(Object item,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.ResponsiveLayoutEngine`
+
+```
+Layout(Object container,LayoutEventArgs layoutEventArgs) -> Boolean
+GetRows() -> IEnumerable`1<Int32>
+GetColumns(Int32 nRow) -> IEnumerable`1<Int32>
+GetCellPositionAt(Point pt) -> TableLayoutPanelCellPosition
+GetAutoSize(Object container) -> Size
+GetAutoSize(Object container,IList`1<Size> rowSizes) -> Size
+ApplyRowColumnChanges(PatternInstanceElement table) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.SDLayoutEditorConfiguration+UpdateCategory_Context`
+
+```
+Add(String name,Func`1<ToolboxItem> getToolboxItem,String instanceTypeName) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.SDRender`
+
+```
+GetContainerName(Int32 index) -> String
+SetProperties(PropertiesObject properties) -> Void
+SetContainer(Int32 index,Control control) -> Void
+LayoutContainers() -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.SectionLayoutEngine`
+
+```
+Layout(Object container,LayoutEventArgs layoutEventArgs) -> Boolean
+GetAutoSize(Object container) -> Size
+GetCellPositionAt(Object container,Point pt) -> TableLayoutPanelCellPosition
+CellPosition(Object container,Control c) -> TableLayoutPanelCellPosition
+GetDropCellRectangle(Object container,Point pt,IEnumerable`1<Control> dragControls) -> Rectangle
+GetDropPosition(Object container,Point pt,IEnumerable`1<Control> dragControls) -> InsertPosition
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.SimpleGridLayoutEngine`
+
+```
+Layout(Object container,LayoutEventArgs layoutEventArgs) -> Boolean
+GetAutoSize(Object container) -> Size
+GetCellPositionAt(Object container,Point pt) -> TableLayoutPanelCellPosition
+CellPosition(Object container,Control c) -> TableLayoutPanelCellPosition
+GetDropCellRectangle(Object container,Point pt,IEnumerable`1<Control> dragControls) -> Rectangle
+GetDropPosition(Object container,Point pt,IEnumerable`1<Control> dragControls) -> InsertPosition
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.TableLayoutEngine`
+
+```
+Insert(Control control,Int32 col,Int32 row) -> Void
+ClearAt(TableLayoutPanelCellPosition pos) -> Void
+MoveRow(Int32 oldRow,Int32 newRow) -> Void
+MoveColumn(Int32 oldColumn,Int32 newColumn) -> Void
+MoveCell(Int32 rowIndex,Int32 oldColumn,Int32 newColumn) -> Void
+GetRowCellCount(Int32 row) -> Int32
+GetColumnCellCount(Int32 column) -> Int32
+RemoveRowIfEmpty(TableLayoutPanelCellPosition pos) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.TabPositionHelper`
+
+```
+static Get(T current,IEnumerable allTabs,Func`2<T,String> getTabName,Func`2<T,Object> getTabControl) -> TabPosition
+static Set(TabPosition pos,IEnumerable allTabs,Func`2<T,String> getTabName,Func`2<T,Object> getTabControl,Action`1<T> setSelected) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.TabularLayoutEngine`
+
+```
+SetCellSpan(Control control,Int32 colSpan,Int32 rowSpan) -> Void
+Layout(Object container,LayoutEventArgs layoutEventArgs) -> Boolean
+GetRows() -> IEnumerable`1<Int32>
+GetColumns(Int32 nRow) -> IEnumerable`1<Int32>
+GetCellPositionAt(Point pt) -> TableLayoutPanelCellPosition
+GetAutoSize(Object container) -> Size
+GetAutoSize(Object container,IList`1<Int32> rowHeights,IList`1<Int32> columnWidths) -> Size
+ApplyRowColumnChanges(PatternInstanceElement table) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Editor.WebLayoutRender`
+
+```
+static GetXml(KBObject kbObj,XmlElement formElem,GetXmlOptions options) -> String
+```
+
+### `Artech.Patterns.WorkWithDevices.EventReferenceHelper`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.Metadata.Controlservice`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.PathHelper`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.PropertiesMergeHelper`
+
+```
+PropertyMergeAvailable(String name) -> Boolean
+MergeProperty(String propertyName,Object sourceValue,Object leftValue,Object rightValue,Object& result) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.RulesSerializationHelper`
+
+```
+static AddRules(PatternInstanceElement element,XmlElement xmlElement,HashSet`1<String> usedVariables,IEnumerable`1<XmlDocument> dataProviderInfoList) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.WorkWithDevicesReferenceHelper`
+
+```
+GetThemeClassBaseClasses(PatternInstanceElement element,SpecificationAttribute attribute) -> IEnumerable`1<String>
+GetReferencedVariables(PatternInstanceElement rootElement) -> IEnumerable`1<VariableReference>
+static GetBaseClass(PatternInstanceElement element,SpecificationAttribute attribute) -> String
+GetEntityReferences(PatternInstanceElement rootElement) -> IEnumerable`1<EntityReference>
+GetStyleObject(PatternInstanceElement element,SpecificationAttribute attribute) -> KBObject
+IsWebElement(PatternInstanceElement element) -> Boolean
+Check(KBModel model,KBObjectDependency dep,String& message) -> Boolean
+```
+
+### `Artech.Patterns.WorkWithDevices.Helpers.WorkWithDevicesTypedObjectResolver`
+
+```
+Get(ParserInfo info,KBObject obj) -> ITypedObjectInfo
+```
+
+### `Artech.Patterns.WorkWithDevices.Objects.InstanceUpdateProcess`
+
+```
+UpdateObject(PatternBase instance) -> Void
+```
+
+### `Artech.Patterns.WorkWithDevices.Resolvers.PATTERNPropertyResolverFactory`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Resolvers.Properties+PATTERN+AutomaticRefresh_Enum`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Resolvers.Properties+PATTERN+AutomaticRefresh_Values`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Resolvers.Properties+PATTERN+GenerateOpenAPIInterface_Enum`
+
+```
+
+```
+
+### `Artech.Patterns.WorkWithDevices.Resolvers.Properties+PATTERN+GenerateOpenAPIInterface_Values`
+
+```
+
+```
+
 ## `Artech.Template.Base`
 
 ### `Artech.TemplateEngine.DefaultTemplateEngineResolver`
@@ -10872,6 +16617,512 @@ CleanLast(String text) -> String
 CleanFirst(String text) -> String
 ```
 
+## `Artech.uc.FileUpload`
+
+### `Artech.uc.FileUpload.CustomFileTypesVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.uc.FileUpload.FileUploadResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.uc.FileUpload.HideAdditionalButtonsVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `Artech.UC.gxui.GridExtension.PropertiesResolvers`
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.DragDropGroupResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.DragDropTextResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.GridHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.GroupFieldResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.GroupingResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.GroupTemplateResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.HideGroupFieldResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.GridExtension.PropertiesResolvers.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+## `Artech.UC.gxui.Panel.PropertiesResolvers`
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.AnimateCollapseResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.CollapsedResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.DraggableResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.HandlesResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.HeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.MaxHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.MaxWidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.MinHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.MinWidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.ModalResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.PinnedResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.ShowAsWindowResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.ToolbarDataResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.Panel.PropertiesResolvers.WidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `Artech.UC.gxui.PropertiesResolvers`
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.DragDropGroupResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.DragDropTextResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.GridHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.GroupFieldResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.GroupingResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.GroupTemplateResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.HideGroupFieldResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.GridExtension.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.AnimateCollapseResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.CollapseDirectionDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.CollapseDirectionResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.CollapsedResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.HandlesResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.HeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.MaxHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.MaxWidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.MinHeightResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.MinWidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.ModalResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.ShowAsWindowResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.ToolbarDataResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Panel.WidthResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.TabPanel.DesignTimeTabsResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.TabPanel.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.AppendOnlyResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.CheckedNodesResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.DragDropGroupResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.DropDataResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.ResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.RootClsResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.RootIconClsResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.RootIconResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.RootTextResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.UC.gxui.PropertiesResolvers.Treeview.UncheckedNodesResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `Artech.uc.HorizontalGrid`
+
+### `Artech.uc.HorizontalGrid.AutoPlaySpeedResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Artech.uc.HorizontalGrid.HorizontalGridResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.uc.HorizontalGrid.MultipleRowsDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
 ## `Artech.Udm.Architecture.Common`
 
 ### `Artech.Udm.Architecture.Common.IUdmCommandEngine`
@@ -10890,6 +17141,74 @@ CopyEntities(Int32 modelIdSource,Int32 modelIdTarget,IEnumerable`1<UdmEntityKey>
 ## `Artech.Udm.Framework`
 
 ### `Artech.Udm.Framework.SavePreferences`
+
+```
+
+```
+
+## `Artech.UserControls.Chronometer.PropertiesResolvers`
+
+### `Artech.UserControls.Chronometer.PropertiesResolvers.ChronometerResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `Artech.UserControls.Chronometer.PropertiesResolvers.TickIntervalValidResolver`
+
+```
+IsValid(IPropertyBag propertyBag,Object value) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `Artech.UserControls.MagazineViewer.PropertiesResolvers`
+
+### `Artech.UserControls.MagazineViewer.PropertiesResolvers.SDMagazineViewerResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+## `Artech.UserControls.SDCharts.PropertiesResolvers`
+
+### `Artech.UserControls.SDCharts.PropertiesResolvers.SDChartsResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+## `Artech.UserControls.SDImageGallery.PropertiesResolvers`
+
+### `Artech.UserControls.SDImageGallery.PropertiesResolvers.SDImageGalleryResolverFactory`
+
+```
+
+```
+
+## `Artech.UserControls.SDMaps.PropertiesResolvers`
+
+### `Artech.UserControls.SDMaps.PropertiesResolvers.SDMapsResolverFactory`
 
 ```
 
@@ -11048,6 +17367,1340 @@ GetCurrentVersion(GxWikiServer server,Int32 id,DateTime& timestamp,String& user,
 InsertFile(GxWikiServer server,GxWikiPage page,IStatus[]& status) -> Int32
 InsertPage(GxWikiServer server,GxWikiPage page,IStatus[]& status) -> Int32
 GetPageById(GxWikiServer server,Int32 id,IStatus[]& status) -> GxWikiPage
+```
+
+## `DVelop.Extensions.UserControls`
+
+### `DVelop.Extensions.UserControls.CustomRenders.BaseRender`
+
+```
+Dispose() -> Void
+```
+
+### `DVelop.Extensions.UserControls.CustomRenders.ConfirmPanelRender`
+
+```
+Render() -> String
+```
+
+### `DVelop.Extensions.UserControls.CustomRenders.PanelRender`
+
+```
+Render() -> String
+```
+
+## `DVelop.Extensions.WWPPackagesCommon`
+
+### `DVelop.Extensions.WWPPackagesCommon.ObjectProperties.DataImplServiceLayerPermissionValues`
+
+```
+
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.PropertiesResolvers.AttributeEnableSecurityDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.PropertiesResolvers.AttributeSecurityFuncionalityDefaultResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.UCResolvers.BaseResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.UCResolvers.DropDownOptionsResolvers`
+
+```
+GetVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.UCResolvers.DVPaginationBarResolvers`
+
+```
+GetVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `DVelop.Extensions.WWPPackagesCommon.UCResolvers.DVProgressIndicatorResolvers`
+
+```
+GetVisibleResolver(String propName) -> IVisibleResolver
+```
+
+## `DVelop.Patterns.WorkWithPlus`
+
+### `DVelop.Extensions.WWPPackagesCommon.ObjectProperties.DataImplServiceLayerPermissionValues`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.AssociationElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.Forms.WebForms.UpdateTemplatePreviewScriptManager`
+
+```
+thumbnailPreviewGenerated(String imageBase64,Int32 templateIndex) -> Void
+PanelPreview_UpdateAttributeClassDefinition(String allDSMergedFile,String attClass,String cssDefinition) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.GeneratedObject_Data`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.GridTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.GXtest.FileHelper`
+
+```
+static GenerateCRUDMaster(KBObject o,KBObjectPart p,PatternInstance i) -> Void
+static GenerateCRUDFile(KBObject o,KBObjectPart p,WorkWithPlusInstance myI,WebFormBasicElements bE,String templatePath,SelectionGeneralElement selection,String name) -> Void
+static GenerateDataPool(KBObject o,KBObjectPart p,WorkWithPlusInstance myInstance,WebFormBasicElements basicElements) -> Void
+static GenerateLevelTestCase(KBObject o,KBObjectPart p,KBModel model,WorkWithPlusInstance myInstance,TransactionLevel level,String levelName,String gridLevelName,String index,String firstLevelAttributeName,WebFormBasicElements basicElements,String templateName) -> String
+static GenerateSearchTestCase(KBObject o,KBObjectPart p,KBModel model,WorkWithPlusInstance myInstance,KBObject wwObject,String wwName,SelectionGeneralElement selection,String filtervalue,WebFormBasicElements basicElements,String templateName) -> String
+static GenerateCompleteTestCase(KBObject o,KBObjectPart p,KBModel model,String innerOutput) -> String
+static GenerateTestCaseInFile(KBObject o,KBModel model,WorkWithPlusInstance myInstance,String output,String testCaseName) -> Void
+static GenerateFile(String testCaseName,String templatePath,String outputFile,GeneratorParameters parameters) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.GXtest.GenericHelper`
+
+```
+static GetURL(KBModel model,String name) -> String
+static GetBaseURL() -> String
+static ObjectNameForGenerator(KBModel model,String name) -> String
+static GetTranslationText(KBModel model,String msg) -> String
+static getLanguageId(KBModel model,String langName) -> Int32
+```
+
+### `DVelop.Patterns.WorkWithPlus.GXtest.TransactionHelper`
+
+```
+static GetFirstAttributeNameFromLevel(TransactionLevel level) -> String
+static GetFullLevelName(TransactionLevel level,String baseName) -> String
+static GetControlType(SelectionGeneralElement mySelection,KBModel model,KBObject obj,String ctrlName) -> RuntimeControlType
+static GetVariableControlType(SelectionGeneralElement mySelection,KBModel model,KBObject obj,String ctrlName) -> RuntimeControlType
+static AttributeInFilter(String name,WorkWithPlusInstance myInstance) -> Boolean
+static FiltersNotInTrn(WorkWithPlusInstance myInstance,List`1<String> added) -> List`1<String>
+static GetAttributeType(KBObject obj) -> eDBType
+static GetComboValues(FilterAttributeGeneralElement filtro,WorkWithPlusInstance myInstance) -> List`1<String>
+```
+
+### `DVelop.Patterns.WorkWithPlus.GXtest.WebFormHelper`
+
+```
+static IsAttributeUsedInGridLevel(String trnAttName,WebFormBasicElements basicElements) -> Boolean
+static GetLevelControlTypeName(KBObject obj,String ctrlName,WebFormBasicElements basicElements) -> String
+static GetWWReference(KBObject obj) -> PatternInstance
+static IsWWActionEnabled(WorkWithPlusInstance myInstance,SelectionGeneralElement selection,String actionName) -> Boolean
+static IsWWActionInGrid(SelectionGeneralElement selection,String actionName) -> Boolean
+static GetWWObject(KBModel model,KBObject obj,String name) -> KBObject
+static IsControlComboListBox(RuntimeControlType type) -> Boolean
+static IsControlComboListRadioBox(RuntimeControlType type) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.GXTestElement+GenerateTestCasesValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.AIIntegrationHelper`
+
+```
+static GetDetailRedirectLink(WorkWithPlusInstance instance,IGridObject iGridObj,String& viewObjName) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.AuditHelper`
+
+```
+static GetAttributeDescription(WorkWithPlusInstance instance,TransactionAttribute trnAtt) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.AutoLinkGeneratorEventSubscriptions`
+
+```
+MessageBox_Show(String text,String caption,MessageBoxButtons buttons,MessageBoxIcon icon) -> DialogResult
+BeforeSaveModel(Object sender,KBModelCancelEventArgs args) -> Void
+AfterCloseKB(Object sender,EventArgs args) -> Void
+AfterOpenKB(Object sender,KBEventArgs args) -> Void
+UIDocumentEvents_BeforeSaveDocument(Object sender,DocumentCancelEventArgs args) -> Void
+AfterSaveKBObject(Object sender,KBObjectEventArgs args) -> Void
+AfterDeleteKBObject(Object sender,KBObjectEventArgs args) -> Void
+BeforeSaveKBObject(Object sender,KBObjectCancelEventArgs args) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.DataSelectorHelper`
+
+```
+static GenerateDataSelector(IGridObject GridObj,WorkWithPlusSettings settings) -> Boolean
+static GetParameters(IGridObject gridObj,IGrid iGrid,String breakLineStr) -> String
+static GetSDTBasedGridObjectExampleConditions(IGridObject gridObject,WorkWithPlusSettings settings) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.DateRangePickerHelper`
+
+```
+static IsIAttributeItemDateRange(IAttributesItem att) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.ElementTagHelper`
+
+```
+static Get(IElementWithTag item,String key) -> T
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.GridGroupByHelper`
+
+```
+static GetGroupByExpandColumnIndex(GridGeneralElement grid,IGridObject gridObject) -> Int32
+static HasTotalizers(GridGeneralElement grid) -> Boolean
+static GetGroupCaptionLoadCode(GridGeneralElement grid) -> String
+static GetFixedGroupItem(GridGeneralElement grid) -> ISortableByTitle
+static GetSaveGridStateGroupByEmpty(GridGeneralElement grid,Boolean needsOrderChoice) -> String
+static IsFixedGroupNumericBaseOnEnumerated(GridGeneralElement grid,String groupField) -> Boolean
+static GetItemByGroupField(GridGeneralElement grid,IAttributesItem item) -> IAttributesItem
+static GetKey(IGridObject iGridObj,GridGeneralElement grid,Boolean& hasMultiplePK) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.InLineActionHelper`
+
+```
+static HasInlineResetMode(Boolean isSmooth) -> Boolean
+static GetInsertEventCode(IStandardActionElement insertAction,Boolean isSmooth,String trnModePrefix,String trnModeSuffix,String editableGrid_ModeAuxName,String gridNameToHide,String gridInsertNameToHide,IGrid grid,List`1<String> inLineActionPK,IGridObject GridObject,WorkWithPlusSettings settings,ISettingsAdvanceSecurity advSec) -> String
+static GetUpdateDeleteEventCode(IStandardActionElement standardAction,Boolean isSmooth,String trnModePrefix,String trnModeSuffix,String editableGrid_ModeAuxName,List`1<String> inLineActionPK,IGridObject GridObject,Transaction gridTrn,WorkWithPlusSettings settings,ISettingsAdvanceSecurity advSec) -> String
+static GetConfirmEventCode(IStandardActionElement insertAction,IStandardActionElement updateAction,IStandardActionElement deleteAction,ParametersElement parameters,Boolean isSmooth,String trnModePrefix,String trnModeSuffix,String editableGrid_ModeAuxName,List`1<String> inLineActionPK,IGridObject GridObject,Transaction gridTrn,WorkWithPlusSettings settings,ISettingsAdvanceSecurity advSec) -> String
+static GetInsertGridConfirmEventCode(IStandardActionElement standardAction,ParametersElement parameters,Boolean isSmooth,String trnModePrefix,String trnModeSuffix,String editableGrid_ModeAuxName,String gridInsertNameToHide,String gridNameToHide,List`1<String> inLineActionPK,IGridObject GridObject,Transaction gridTrn,WorkWithPlusSettings settings,ISettingsAdvanceSecurity advSec) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.LanguageHelper`
+
+```
+static GetTranslatedText(KBModel model,String msg) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.LayoutHelper`
+
+```
+static GetPaperSize(String size,String orientation,Int32& width,Int32& height) -> String
+static GetDefaultTextBlockFont(KBModel model) -> String
+static GetDefaultTextBlockFontHeight(KBModel model) -> Int32
+static GetDefaultAttributeFontHeight(KBModel model) -> Int32
+static GetTitle(String titlePattern,String settingsTitlePattern,IGridObject grid) -> String
+static Label(Int32 id,String text,Int32 x,Int32 y,Nullable`1<Int32> width,String alignment,Int32 widthToInvert) -> String
+static Label(KBModel model,Int32 id,String text,Int32 x,Int32 y,Nullable`1<Int32> width,Nullable`1<Int32> height,Nullable`1<Boolean> bold,String alignment,Nullable`1<Single> fontSize,PBTextBlockElement filtersTemplateLabel,Int32 widthToInvert) -> String
+static Rectangle(KBModel model,Int32 id,Int32 x,Int32 y,Int32 width,Int32 height,ApplyBorders borders,Int32 borderWidth,Color borderColor,Color backColor) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.LoadDVComboProcedureHelper`
+
+```
+static GetAttributesWithDVCombo(WorkWithPlusInstance instance,Boolean onlyForLoadProc) -> List`1<IWorkWithPlusInstanceElement>
+static GetAttributesWithDVCombo(IWorkWithPlusInstanceElement rootelement,Boolean onlyForLoadProc) -> List`1<IWorkWithPlusInstanceElement>
+static ControlInputCatValueIsPartOfKey(Transaction trn,Attribute controlInputCatValue) -> Boolean
+static GetComboOptionsLoadVariableInitialValueCode(IItemWithControlInfo attItem) -> String
+static HasDescription(IItemWithControlInfo attItem) -> Boolean
+static GetComboOptionsLoadCode(WorkWithPlusInstance instance,IItemWithControlInfo attItem,Boolean& isDPDefault,eDBType& itemType,eDBType& titleType,Nullable`1& dsc2Type,Nullable`1& dsc3Type) -> String
+static GetLoadDPDescription(IItemWithControlInfo attItem,String comboName,Boolean isDPDefault,eDBType dpItemType,eDBType dpTitleType,Nullable`1<eDBType> dpDsc2Type,Nullable`1<eDBType> dpDsc3Type) -> String
+static GetProcedureCall(WorkWithPlusInstance wwInstance,IItemWithControlInfo attItem,String mode,String search,String comboSelectedTextVarName) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.LogHelper`
+
+```
+static WriteErrorLog(String message,String[] parms) -> Void
+static WriteWarningLog(String message,String[] parms) -> Void
+static WriteLog(String message,String[] parms) -> Void
+static StartSection(String message) -> Void
+static EndSection(String message,Boolean success) -> Void
+static WriteText(String message) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.MultitenantHelper`
+
+```
+static ObjectsHasAllMutitenantsView(IGeneratedObject iGenObj) -> Boolean
+static ObjectsHasAllMutitenantsView(IGridObject iGenObj) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.SeparateLayerHelper`
+
+```
+static GetPKParmsForRequest(Transaction trn,String prefix) -> String
+static GetItemControlName(WorkWithPlusInstance instance,IAttributesItem item) -> String
+static GetItemValueAskingIfSeparateLayer(WorkWithPlusInstance instance,IAttributesItem attItem) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.TitleFilterProcedureHelper`
+
+```
+static IsSearchBoxTypeDate(IAttributesItem item) -> Boolean
+static GetSearchBoxType(IAttributesItem item) -> String
+static GetSearchBoxType(FilterAttributeMultipleGeneralElement item) -> String
+static GetEDBType(FilterAttributeMultipleGeneralElement item) -> eDBType
+static GetSearchBoxType(IAttributesItem item,Boolean& isDateTime) -> String
+static GetSearchBoxType(eDBType type,Boolean& isDateTime) -> String
+static IsSelectedItemTypeCharacter(IAttributesItem item) -> Boolean
+static GetTrnAttFromDynamicComboBoxDscAtt(Transaction selTrn,Attribute gridAtt,Attribute dscAtt) -> Attribute
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.TotalizersHelper`
+
+```
+static GetOperationCaption(WorkWithPlusSettings settings,String operation) -> String
+static InitializeTotalizers(WorkWithPlusInstance instance,List`1<IAttributesItem> attributesWithTotalizer,IGrid grid) -> String
+static GetTotalizersInForEachCode(WorkWithPlusInstance instance,List`1<IAttributesItem> attributesAndVariablesWithTotalizer,String isFirstExpression,String gridNameForTotVar,Boolean addLoadCode,Boolean isGridCountService,Boolean isCalcGroupTotilizer) -> String
+static HasMinMaxTotalizer(List`1<IAttributesItem> attributesAndVariablesWithTotalizer) -> Boolean
+static NeedCount(List`1<IAttributesItem> attributesAndVariablesWithTotalizer) -> Boolean
+static GetNoCountUsedTotalizers(List`1<IAttributesItem> attsAndVarsWithTotalizers) -> String[]
+static HasNoCountTotalizer(List`1<IAttributesItem> attributesAndVariablesWithTotalizer) -> Boolean
+static GetTotalizersSDTCode(WorkWithPlusInstance instance,List`1<IAttributesItem> attributesAndVariablesWithTotalizer,IGrid grid,String pageSize) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.Helpers.WizardHelper`
+
+```
+static GetWizardFirstPreviousEvent(IStandardActionElement wizardPreviousAction,SettingsTemplateElement template) -> String
+```
+
+### `DVelop.Patterns.WorkWithPlus.IGeneratedObject`
+
+```
+GetObjectID() -> String
+GetRootTable() -> GeneralTableElement
+GetTabEditorTitle() -> String
+IsWebUserExperienceUseModelProperty() -> Boolean
+IsWebUserExperienceSmooth() -> Boolean
+IsWebUserExperiencePreviousVersionsCompatible() -> Boolean
+HasAL() -> Boolean
+AppendWebFormHtmlBottomControls(StringBuilder str,Boolean addHiddenVars) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.IGeneratedPanelObject`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_ApplyAllInstances`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_ApplyAllProcTemplates`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_ApplyAllWPTemplates`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_ApplyTemplate`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_CleanOldGeneratedKBs`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_GenerateSecurityProgramsAction`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_MarkAllInstancesAsUpdated`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_UpdateAllInstances`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.MSBuildTasks.WWP_UpdateInstance`
+
+```
+Execute() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.NativeMobile.NativeMobileHelper`
+
+```
+static IsApplied(KBModel model) -> Boolean
+static PrepareSettingsInitialization(KBModel model) -> Boolean
+static RevertSettingsInitialization(KBModel model) -> Void
+static ImportBaseSettingsObject(KBModel model,Boolean overwiteIfExist,Boolean includeEmptyPanel,Boolean automaticBackup,ResourceManager translations) -> Boolean
+static GetSettings(KBModel model) -> WorkWithPlusSettings
+static SaveSettings(WorkWithPlusSettings settings) -> Boolean
+static SetSettingsActionFontIcon(SettingsActionElement action,String fi,String imageClass) -> Void
+static SetSettingsActionImage(SettingsActionElement action,KBModel model,String image,String imageClass) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.Object_Utilities.LanguageCultureHelper`
+
+```
+static IsJapaneseIDE() -> Boolean
+static IsChineseIDE() -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Object_Utilities.VariablesGenerator`
+
+```
+static AddBasedOnVariable(VariablesPart variablesPart,String name,Attribute baseAttribute,Boolean isCollection,Dictionary`2<String,Object> extraProps) -> Void
+static IsVariablesBasedOnEnum(Variable v) -> Boolean
+static AddBasedOnVariable(VariablesPart variablesPart,String name,Attribute baseAttribute,Boolean isCollection) -> Void
+static AddBasedOnAttVariable(VariablesPart variablesPart,String name,String attName) -> Void
+static AddBasedOnAttVariable(VariablesPart variablesPart,String name,String attName,Boolean isCollection) -> Void
+static AddBasedOnDomVariable(VariablesPart variablesPart,String name,String domName) -> Void
+static AddBasedOnDomVariable(VariablesPart variablesPart,String name,String domName,Boolean isCollection) -> Void
+static AddBasedOnVariable(VariablesPart variablesPart,String name,Attribute baseAttribute) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.Object_Utilities.VersionsHelper`
+
+```
+static IsSmooth(IGeneratedObject iGenObj) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionGroupActionControlTypeResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionGroupActionFontIconResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionGroupActionImageResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionGroupActionImageTypeResolver`
+
+```
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionGroupShowDescriptionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ActionInLineResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ButtonActionOrMFResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ButtonActionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ButtonClassResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.CellVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.CellWidth_E_Resolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.CellWidth_L_Resolver`
+
+```
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.CellWidth_M_Resolver`
+
+```
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.CellWidth_S_Resolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ControlInputValueAttributeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ControlInputValueVariableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DescriptionCellThemeClassResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DescriptionThemeClassResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DescriptionWidthResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DisableButtonClassActionResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DVCStyleDPDsc2Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DVCStyleDPDsc3Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DVCStyleDsc2Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DVCStyleDsc3Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.DVCStyleDscResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.EventBlockBaseIncludeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSColumnsResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSColumnsWidthResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSNotInALResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeAllowMultipleSelectionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeDataListDynamicResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeDataListFixedValuesResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeFilterConditionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeSelFilterConditionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeSortableByTitleResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeTitleFilterDefinitionCustomResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.FSTableAttributeTitleFilterDefinitionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.GAMObjectPermissionPrefixResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.GridGroupTypeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.HasDataAccessServiceLayerResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.HasMPSearchResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.HierarchyResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.HorizontalAlignmentResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ImageActionOrMFResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ImageActionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ImagePositionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ImageTypeFIActionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.ImageTypeImageActionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.InAbstractLayoutResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.InFlexTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.InRegularOrResponsiveTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.InRegularTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.InResponsiveTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsALGXActionGroupResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsBasedOnTransactionTemplateResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsDateFilterResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsDVelopBootstrapGroupAndImageTypeIconResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsDVelopBootstrapGroupAndImageTypeImageResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsDVelopBootstrapGroupResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsGXActionGroupResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsRegularTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsRequiredConditionTrnAttResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsRequiredInitialValueResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsRequiredResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsResponsiveTableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsSDPanelResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsShowDescriptionActionGroupResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsSuggestEnabledAttributeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsSuggestEnabledVariableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsTableVisibleInitialValueResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsTransactionInstanceOrCustomWebPanelResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsTransactionInstanceResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsVisibleInitialValueResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.IsWCPopUpResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MantainSelectedRowsWhenPageChangesResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MPSearchDsc2Resolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MPSearchDsc3Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MPSearchEnabledResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MultiRowSelectAllResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MultiRowSelectionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.MultiTenantSupportResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NotInAbstractLayoutResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NotIsSDPanelResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NumberOfColumns_E_Resolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NumberOfColumns_L_Resolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NumberOfColumns_M_Resolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.NumberOfColumns_S_Resolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.OptimizaitionNumberNot9Resolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.PopoverWCLoadResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SdtItemResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SdtRangeItemResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SecFunctionalityKeyAttributeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SecFunctionalityKeyObjectResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SecFunctionalityKeyResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SectionSizeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SettingsNotificationLinkDefaultResolver`
+
+```
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SortDescriptionsAttributeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SortDescriptionsVariableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.StandardActionRefreshAfterPopupResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.StepConditionResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SuggestAttributeResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.SuggestVariableResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.TableAttributesTemplateResolver`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.TableCellPaddingResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.TableColumnsWidthResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.TableRowHeightResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.TagsResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.Resolvers.VerticalAlignmentResolver`
+
+```
+GetDependencies() -> String[]
+IsVisible(IPropertyBag properties) -> Boolean
+```
+
+### `DVelop.Patterns.WorkWithPlus.SaveDefaultPropertiesAction`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SelectionGeneralElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsAssociationElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsGridElement+SaveGridStateInTabsValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsGridElement+SaveGridStateValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsGridTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsParallelTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsSelectionGeneralElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsStandardActionsElement+GenerateGridActionsAsLinksValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsStepElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsTabularTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsTemplateElement+AfterUpdateValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsTemplateElement+UpdateInstancesValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsTrnSuborLevelsTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.SettingsViewElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.StepElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.TabularTabElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.UCRenders.GXUIGridRender`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.ViewElement+UpdateObjectValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.WorkWithPlusInstance+AfterUpdateValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.WorkWithPlusInstance+UpdateInstancesValue`
+
+```
+
+```
+
+### `DVelop.Patterns.WorkWithPlus.WorkWithPlusInstance+UpdateTransactionValue`
+
+```
+
+```
+
+## `GeneXus.Architecture.Resolvers`
+
+### `Genexus.Architecture.Resolvers.EXPORTPropertyResolverFactory`
+
+```
+
+```
+
+### `Genexus.Architecture.Resolvers.IMPORTPropertyResolverFactory`
+
+```
+
+```
+
+### `Genexus.Architecture.Resolvers.MODULE_OBJPropertyResolverFactory`
+
+```
+
 ```
 
 ## `GeneXus.Design.Grammars`
@@ -11464,5 +19117,468 @@ Pct() -> ITerminalNode[]
 Pct(Int32 i) -> ITerminalNode
 Ws_Signficant() -> ITerminalNode
 Gtp() -> ITerminalNode
+```
+
+## `Genexus.Packages.BotGenerator`
+
+### `Genexus.Packages.BotGenerator.BotGeneratorPackage`
+
+```
+PostInitialize() -> Void
+```
+
+### `Genexus.Packages.BotGenerator.BotGeneratorService`
+
+```
+Generate(KBModel model,KBObject obj,Boolean forceGeneration) -> Boolean
+Synchronize(KBModel model,KBObject obj) -> Boolean
+GenerateAndSynchronize(KBModel model,KBObject obj,Boolean forceGeneration) -> Boolean
+GenerateAsync(KBModel model,KBObject obj,Boolean forceGeneration) -> Task`1<Boolean>
+SynchronizeAsync(KBModel model,KBObject obj) -> Task`1<Boolean>
+GenerateAndSynchronizeAsync(KBModel model,KBObject obj,Boolean forceGeneration) -> Task`1<Boolean>
+GetDialogflowCredentials(String googleCloudProject,String serviceAccountCredentials,String botName) -> Object
+GenerateConfig(KBObject obj) -> Void
+```
+
+### `Genexus.Packages.BotGenerator.BotGeneratorService+TriggerSaveDelegate`
+
+```
+Invoke(KeyValuePair`2<Object,KBObject> obj) -> Void
+BeginInvoke(KeyValuePair`2<Object,KBObject> obj,AsyncCallback callback,Object object) -> IAsyncResult
+EndInvoke(IAsyncResult result) -> Void
+```
+
+### `Genexus.Packages.BotGenerator.ChatbotsGeneratorTask`
+
+```
+GetEntity() -> EntityKey
+Generate(Boolean& success) -> Void
+static Generate() -> Void
+static StartSection(KBObject obj,GenerationOptions options) -> Void
+static EndSection(KBObject obj,GenerationOptions options,Boolean success) -> Void
+static MergeTriggers(KBModel model,KBObject obj) -> KeyValuePair`2<Object,Boolean>
+Equals(Object obj) -> Boolean
+GetHashCode() -> Int32
+```
+
+### `Genexus.Packages.BotGenerator.ChatbotsGeneratorTaskManager`
+
+```
+static SetCurrent(ChatbotsGeneratorTask task) -> Void
+static GetInstance() -> ChatbotsGeneratorTaskManager
+AddTask(ChatbotsGeneratorTask task) -> Task
+IsExecuting(KBObject obj,Boolean upload) -> Boolean
+static CancelTask() -> Void
+```
+
+### `Genexus.Packages.BotGenerator.Generators.GenerateFunction`
+
+```
+
+```
+
+### `Genexus.Packages.BotGenerator.GxBot.FieldElementHelper`
+
+```
+static SetUserInputForRedirections(List`1<InputRedirectionElement> redirections,String userInput) -> List`1<InputRedirectionElement>
+```
+
+## `Genexus.Packages.BuildEvents`
+
+### `Genexus.Packages.BuildEvents.BuildEventsService`
+
+```
+OnBeforeBuild(Object sender,BuildEventArgs args) -> Void
+OnAfterCompile(Object sender,KBObjectCollectionStatusEventArgs args) -> Void
+OnAfterBuild(Object sender,BuildResultEventArgs args) -> Void
+```
+
+### `Genexus.Packages.BuildEvents.DebugVisibleResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Genexus.Packages.BuildEvents.EnvironmentApplyResolver`
+
+```
+IsApplicable(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+## `GeneXus.Packages.ModuleManager`
+
+### `GeneXus.Packages.ModuleManager.ListModule.ExecuteRequest`
+
+```
+
+```
+
+### `GeneXus.Packages.ModuleManager.ListModule.ExecuteResponse`
+
+```
+
+```
+
+### `GeneXus.Packages.ModuleManager.ListModule.ListModuleServiceSoapPort`
+
+```
+Execute(ExecuteRequest request) -> ExecuteResponse
+ExecuteAsync(ExecuteRequest request) -> Task`1<ExecuteResponse>
+```
+
+### `GeneXus.Packages.ModuleManager.ListModule.ListModuleServiceSoapPortChannel`
+
+```
+
+```
+
+### `GeneXus.Packages.ModuleManager.ListModule.ListModuleServiceSoapPortClient`
+
+```
+Execute() -> String
+ExecuteAsync() -> Task`1<ExecuteResponse>
+```
+
+### `GeneXus.Packages.ModuleManager.Services.ModuleManagerService`
+
+```
+GetReferencesFromPackagableObjects(Module module) -> IEnumerable`1<PackagedModuleDependency>
+ClearCache() -> Boolean
+RemoveServer(IModuleManagerServer server) -> Void
+Install(KBModel model,ModulePackage modulePackage) -> Boolean
+Install(KBModel model,IModuleManagerServer server,ModulePackage modulePackage) -> Boolean
+Install(KBModel model,String opcFile) -> Boolean
+InstallAndOverwrite(KBModel model,IModuleManagerServer server,ModulePackage modulePackage) -> Boolean
+InstallByName(KBModel model,String name,String version) -> Boolean
+```
+
+## `GeneXus.Packages.SecurityScanner.BL`
+
+### `GeneXus.Packages.SecurityScanner.BL.SecurityService`
+
+```
+Initialize() -> Void
+RegisterSecurityCommand(ISecurityCommand command) -> Void
+GetCommand(Int32 code) -> ISecurityCommand
+Scan(KBObjectQuery query,SecurityScanPlan plan,IScannerOuput output) -> Void
+```
+
+## `Genexus.Patterns.Conversational`
+
+### `Genexus.Patterns.Conversational.ConversationalSettings+KeepResourcesUpdatedValue`
+
+```
+
+```
+
+### `Genexus.Patterns.Conversational.Resolvers.ConversationalObjectResolver`
+
+```
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+static SetConversationalObject(PatternInstanceElement conversationalObjectElement,KBObject kbObject,KBObject oldKbObject) -> Void
+static SetConversationalObject(FlowElement& flow,PatternInstance& instance,ConversationalInstance cInstance,KBObject kbObject,KBObject oldKbObject) -> ConversationalInstance
+```
+
+### `Genexus.Patterns.Conversational.Resolvers.ValidationProcedureResolver`
+
+```
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+static ValidateValidationProcedure(String dataType,KBObject kbObject) -> Boolean
+```
+
+### `Genexus.Patterns.Conversational.Resolvers.WebFormDefaultResolvers`
+
+```
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `Genexus.Patterns.Conversational.SettingsAttributes+UpdateTriggerMessages`
+
+```
+
+```
+
+### `Genexus.Patterns.Conversational.SettingsUpdateTriggerMessagesElement`
+
+```
+Initialize() -> Void
+SetPropertyValue(String name,Object val) -> Void
+TryGetPropertyValue(String name,Object& val) -> Boolean
+Clone() -> SettingsUpdateTriggerMessagesElement
+ToString() -> String
+```
+
+## `GeneXus.SecurityScanner.Common`
+
+### `GeneXus.SecurityScanner.Common.Services.ISecurityScannerService`
+
+```
+RegisterSecurityCommand(ISecurityCommand command) -> Void
+GetCommand(Int32 code) -> ISecurityCommand
+Scan(KBObjectQuery query,SecurityScanPlan plan,IScannerOuput output) -> Void
+```
+
+### `GeneXus.SecurityScanner.Common.Services.SecurityScannerService`
+
+```
+Initialize(String commandsFolder) -> Void
+GetCommand(Int32 code) -> ISecurityCommand
+RegisterSecurityCommand(ISecurityCommand command) -> Void
+Scan(KBObjectQuery query,SecurityScanPlan plan,IScannerOuput output) -> Void
+static CompareStrings(String one,String two) -> Boolean
+```
+
+## `GeneXus.Server.Contracts`
+
+### `GeneXus.Server.Contracts.ContractsHelper`
+
+```
+
+```
+
+### `GeneXus.Server.Contracts.Helpers.VersionMetadataHelper`
+
+```
+static FromString(String metadata) -> VersionMetadata
+static ToString(VersionMetadata metadata) -> String
+```
+
+### `GeneXus.Server.Contracts.IKBModelObjectsService`
+
+```
+Get(String kbName,Int32 modelId,Guid type,Int32 id) -> KBObjectData
+GetKeys(String kbName,Int32 modelId) -> IEnumerable`1<EntityKeyData>
+GetByPropertyValue(String kbName,Int32 modelId,String propName,Object propValue) -> IEnumerable`1<KBObjectData>
+GetChildren(String kbName,Int32 modelId,KBObjectData parent) -> IEnumerable`1<KBObjectData>
+GetChangesStartingAt(String kbName,Int32 modelId,DateTime date) -> IEnumerable`1<EntityHistoryData>
+```
+
+### `GeneXus.Server.Contracts.IServerHelper`
+
+```
+IsServerAlive(String clientVersion) -> Boolean
+IsKBHosted(String kbName) -> Boolean
+IsServerSecure() -> Boolean
+AuthenticationTypes() -> List`1<String>
+ServerInfo(SimpleTransfer request) -> SimpleTransfer
+ServerUTCTime() -> DateTime
+```
+
+### `GeneXus.Server.Contracts.ISyndicationService`
+
+```
+GetRevisions(String kbName,String versionName) -> Rss20FeedFormatter
+```
+
+### `GeneXus.Server.Contracts.ITeamWorkService`
+
+```
+GetKBVersions(String kbName) -> List`1<KBVersionData>
+HostedKBs() -> List`1<String>
+GetTemplateData(String kbName,Int32 versionId) -> List`1<ModelTemplateData>
+GetTDataVersionName(String kbName,String versionName) -> List`1<ModelTemplateData>
+GetServerVersionId(String kbName,String versionName) -> Int32
+Cancel(Guid guid) -> Void
+GetRevisions(String kbName,Int32 versionId) -> List`1<KBRevisionData>
+CheckConectivitySecure() -> Boolean
+```
+
+### `GeneXus.Server.Contracts.ITeamWorkService2`
+
+```
+Update(SimpleTransfer request) -> FileTransfer
+Commit(FileTransfer request) -> SimpleTransfer
+Update2(FileTransfer request) -> FileTransfer
+Commit2(FileTransfer request) -> FileTransfer
+CheckOut(SimpleTransfer request) -> FileTransfer
+PublishKB(FileTransfer request) -> SimpleTransfer
+WhatsUp(SimpleTransfer request) -> SimpleTransfer
+GetServerVersion(SimpleTransfer request) -> FileTransfer
+```
+
+### `GeneXus.Server.Contracts.Resources.UriHelper`
+
+```
+static GetXName(String name) -> XName
+```
+
+### `GeneXus.Server.Contracts.ServiceHelper`
+
+```
+static GetStringEnvironments(KBEnvironment env) -> String
+static GetKBInfo(KnowledgeBaseRequest request,String fileName) -> KnowledgeBaseInfo
+static WriteStream(Stream inputStream,String filePath) -> Void
+static IsRemoteVersionCompatible(String remoteVersion,String supportedVersion) -> Boolean
+```
+
+## `GeneXus.TeamDevClient.Architecture.BL`
+
+### `GeneXus.TeamDevClient.Architecture.BL.Data.ContinuousIntegrationProjectBuildData`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Data.ContinuousIntegrationProjectBuildsData`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Data.ContinuousIntegrationProjectData`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Data.ContinuousIntegrationProjectsData`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Events.UpdateEventArgs`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Helpers.UpdateMode`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Helpers.UpdateModeDescription`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Helpers.UpdateSuggestSelection`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Services.BLServices`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Services.BLServicesGuid`
+
+```
+
+```
+
+### `GeneXus.TeamDevClient.Architecture.BL.Services.IContinuousIntegrationService`
+
+```
+GetPipelines(TeamDevelopmentData data) -> ContinuousIntegrationPipelinesData
+GetPipelineRuns(TeamDevelopmentData data,String projectName) -> ContinuousIntegrationPipelineRunsData
+GetPipelineRunInfo(TeamDevelopmentData data,String projectName,Int32 buildId) -> ContinuousIntegrationPipelineRunInfoData
+GetPipelineRunOutput(TeamDevelopmentData data,String projectName,Int32 buildId) -> String
+RunPipeline(TeamDevelopmentData data,String projectName,Boolean isRebuild,Boolean runTests) -> Void
+AbortRunPipeline(TeamDevelopmentData data,String projectName) -> Void
+EditPipeline(TeamDevelopmentData data,ContinuousIntegrationPipelineJson project) -> Void
+RemovePipeline(TeamDevelopmentData data,String projectName) -> Void
+```
+
+## `GeneXus.uc.DashboardViewer`
+
+### `GeneXus.uc.DashboardViewer.Helpers.DashboardHelper`
+
+```
+static GetQueryDashboardInstance(IPropertyBag properties) -> PatternInstance
+```
+
+### `GeneXus.uc.DashboardViewer.Resolvers.DashboardResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+## `GeneXus.uc.QueryViewer`
+
+### `GeneXus.uc.QueryViewer.Resolvers.ObjectIdResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.ObjectNameResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.ObjectResolver`
+
+```
+OnAfterSetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+OnAfterResetValueHandler(IPropertyBag properties,PropertyValueChangedArgs e) -> Void
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.ObjectTypeResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.QueryViewerResolverFactory`
+
+```
+GetApplyResolver(String propName) -> IApplyResolver
+GetContextResolver() -> IContextResolver
+GetCustomApplyResolver(String propName) -> IApplyResolver
+GetCustomDefaultResolver(String propName) -> IDefaultResolver
+GetCustomReadOnlyResolver(String propName) -> IReadOnlyResolver
+GetCustomValidResolver(String propName) -> IValidResolver
+GetCustomValuesResolver(String propName) -> IValuesResolver
+GetCustomVisibleResolver(String propName) -> IVisibleResolver
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.QueryViewerVersionResolver`
+
+```
+IsVisible(IPropertyBag properties) -> Boolean
+GetDependencies() -> String[]
+IsReadOnly(IPropertyBag properties) -> Boolean
+GetDefaultValue(IPropertyBag properties,Object& value) -> Boolean
+```
+
+### `GeneXus.uc.QueryViewer.Resolvers.ResolverHelper`
+
+```
+static GetDefaultOutputFormat(IPropertyBag properties) -> QueryOutputFormat
+static GetPropertyValue(IPropertyBag properties,String propertyName) -> T
+static SetPropertyValue(IPropertyBag properties,String propertyName,String propertyValue) -> Void
+static IsSDPlatform(IPropertyBag properties) -> Boolean
+static IsExternalQuery(IPropertyBag properties) -> Boolean
+static GetType(IPropertyBag properties) -> String
+static GetChartType(IPropertyBag properties) -> String
+static GetMapType(IPropertyBag properties) -> String
 ```
 

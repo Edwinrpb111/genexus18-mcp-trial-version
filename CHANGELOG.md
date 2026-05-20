@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.6.4 — 2026-05-20
+
+Two passes driven by live audits against KB `AcademicoHomolog1`: a usability sweep that caught nine concrete friction points the LLM was hitting on first use, then a UX pass focused on the "agent burns 3-8k tokens exploring before doing real work" failure mode (reported on apply_pattern flows). Validated end-to-end with happy-path apply on a disposable Transaction + WebPanel (11/11 assertions) and a focused UX probe (20/20).
+
+### Fixed
+
+- **`analyze mode=explain` was a stub returning hardcoded `"Code analysis simulation"`** regardless of input — agents treated the fake response as real. Mode removed from the public schema (`tool_definitions.json`); legacy callers receive an explicit `NotImplemented` envelope pointing to valid modes.
+- **`genexus_query` ranking pulled `Index` objects with no name/path match into the top-20** via vector similarity. Fast literal query for "Country" returned 15 unrelated `IBls*` indexes. Index/Folder/Module are now filtered out of default results unless explicitly requested via `typeFilter`. New `_meta.match_quality` field (exact|prefix|substring|vector|none) lets the caller branch reliably; `suggested_next` is only emitted for `exact`/`prefix` to stop misdirecting agents.
+- **`genexus_read` error envelope for invalid parts didn't list valid parts.** Agents were guessing part names through trial-and-error. Now includes `availableParts` (same list `genexus_inspect include=['parts']` returns) plus a `hint` line: `Valid parts for Procedure: Documentation, Help, Layout, Source, Variables.`
+- **`analyze pattern_metadata` took 12.3s to error on non-WWP-eligible objects** because `ResolveWWPInstance` walked `model.Objects.GetAll()` on the full KB before falling through. Upfront type guard now rejects in ~30ms (~430× faster) when the parent isn't `WorkWithPlus` / `Transaction` / `WebPanel`.
+- **`analyze mode=navigation` returned `{levels:[], warnings:[]}` silently** when an object had no `For Each` blocks — indistinguishable from analysis failure. Empty envelopes now carry `status: "NoNavigationBlocks"` + `hint` pointing to alternative modes.
+- **`genexus_whoami` cold-path latency was 1.7s** because `BuildWhoamiPayloadAsync` always blocked on a worker round-trip for fresh index state. Now skips the round-trip when the cached snapshot is < 15s old, and tightens the remaining timeout from 1500ms → 400ms. 1676ms → 7ms baseline (≈240× faster).
+- **`genexus_properties action=get` cold-call on a Domain was 3s** due to lazy SDK property-definition reflection. Added a per-GUID TTL cache (30s, invalidated on `set`) so repeat reads are sub-millisecond. The first hit still pays the SDK warm-up but subsequent agent introspection on the same object is free.
+- **`genexus_query` `_meta.partial` flag was inconsistent.** Direct-lookup hits during cold-start didn't surface partial-state info, so agents didn't know to re-query once indexing finished. `match_quality` + `partial` now appear uniformly across direct-lookup and index-search paths.
+- **Inner-payload errors didn't set `result.isError: true`.** `genexus_read` returning `{error: "Part 'X' not found..."}` was sent with `isError=false`, breaking MCP clients that branch on the flag. The gateway now mirrors inner-payload error/status (Error/NotFound/NotImplemented) into the outer envelope. Affects `read`, `analyze`, and any tool that returns errors via the result-body shape.
+
+### Added
+
+- **`apply_pattern` parent-type gate.** Reported by user: applying WorkWithPlus to a WebPanel created the host but bound it as a Transaction, producing IDE compile errors. The fix is two-fold:
+  1. **Upfront type-routing.** Object type is checked before any SDK churn. `Transaction` → family-generation path (no template required). `WebPanel`/`SDPanel` → direct-attach path (template required or auto-discovered). Anything else (`Procedure`, `SDT`, `Domain`, …) is rejected in <500ms with `validParentTypes` + a routing hint, instead of churning through a no-op and returning a misleading "WorkWithPlus instance not found".
+  2. **`settings.template` validated against the live catalog.** Bad template returns `availableTemplates` synchronously. Previously the validation walked `model.Objects.GetAll()` on every call (~10s on a 50k-object KB); now consults the search index with a 60s TTL cache, so the check is subsecond after the first hit.
+  3. **Response envelope surfaces `parentType` + `bindingMode`** (`transaction-family` | `webpanel-direct-attach` | `sdpanel-direct-attach`) so the agent can verify which lifecycle ran without inspecting the IDE.
+
+- **`genexus_whoami` returns inline playbooks.** First-turn whoami response now carries a `playbooks` block routing the LLM to the right tool for the most common flows (WWP on transaction, WWP on webpanel, edit pattern instance, create popup, read object structure). Eliminates the "agent explores for 3-8k tokens before acting" pattern observed in real sessions. The playbooks are 1-line redirects; full step-by-step recipes are in the new `genexus_recipe` tool.
+
+- **`genexus_recipe { name }` — new gateway-served tool for named playbooks.** Returns `{goal, prereq, steps, pitfalls}` for `wwp_on_transaction`, `wwp_on_webpanel`, `create_popup`, `edit_pattern_instance`, `add_custom_button`. `name='list'` enumerates available recipes. Catalog lives in `RecipeCatalog.cs` for easy extension. Tool descriptions across `genexus_apply_pattern` / `genexus_create_object` / `genexus_edit` now point at the relevant recipes so the LLM discovers the routing layer from `tools/list` without exploration.
+
+### Performance
+
+- **`SdkSurfaceProbe.Run` was firing on EVERY `apply_pattern`** — full reflection sweep over loaded SDK assemblies plus a multi-MB `raw.json` write to disk. 5-15s of pure debugging-tool overhead in production calls. Gated behind `GX_MCP_SDK_PROBE=1`; the same diagnostic is available on demand via the `genexus_sdk_probe` tool when investigating SDK surface. NoOp diagnostic path (the `sdkProbePath` / `sdkSurfaceProbe` envelope fields) gated identically.
+- **Per-phase Stopwatch instrumentation logged as `[ApplyPattern-PERF]`** captures `sdkProbeGated / engineApply / lookupFamily / indexUpdate / tailEnvelope` per call. Remaining time on a real apply (~50s on Transaction, ~30s on WebPanel) is the SDK doing actual generation/persist work and cannot be shortcut without losing the WWP lifecycle guarantees.
+- **`ListWwpWebTemplates()` walks the search index instead of `model.Objects.GetAll()`** with a 60s TTL cache keyed by KB location. 10s → ~5ms on cached hits.
+
+### Internal
+
+- Probes used for the audit live under `scratch/`: `usability_probe.js` + `usability_probe2.js` (initial audit), `validation_probe.js` (25/25 assertions on the 9 fixes), `ux_probe.js` (20/20 on the new UX features), `apply_happy_path.js` (11/11 on real apply with disposable objects).
+- `RecipeCatalog.cs` is `internal static` with a `Dictionary<string, Func<JObject>>` registry — adding a recipe is one entry. Routes through the same `gateway-served meta-tool` path as `genexus_whoami` (no worker involvement, no JSON-RPC round-trip).
+
 ## v2.6.3 — 2026-05-20
 
 Bug-fix pass uncovered by live-testing v2.6.2. Two gateway-side gaps prevented `lifecycle cancel` / `lifecycle status` from resolving when callers used the canonical `target=op:<jobId>` shape — exactly the call pattern documented in the tool help. Both close now.
