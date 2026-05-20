@@ -1013,12 +1013,22 @@ namespace GxMcp.Gateway
         internal static string? ResolveJobId(JObject? args)
         {
             var v = args?["job_id"]?.ToString();
-            if (!string.IsNullOrWhiteSpace(v)) return v;
+            if (!string.IsNullOrWhiteSpace(v)) return StripOpPrefix(v);
             v = args?["jobId"]?.ToString();
-            if (!string.IsNullOrWhiteSpace(v)) return v;
+            if (!string.IsNullOrWhiteSpace(v)) return StripOpPrefix(v);
             v = args?["target"]?.ToString();
-            if (!string.IsNullOrWhiteSpace(v)) return v;
+            if (!string.IsNullOrWhiteSpace(v)) return StripOpPrefix(v);
             return null;
+        }
+
+        // v2.6.2 (Item B follow-up): callers pass `target=op:<jobId>` to lifecycle cancel,
+        // but JobRegistry keys are the raw GUID. Without stripping here, Cancel falls
+        // through to the OperationTracker path and returns NotFound even when the job
+        // is registered.
+        private static string StripOpPrefix(string s)
+        {
+            if (s == null) return null;
+            return s.StartsWith("op:", StringComparison.OrdinalIgnoreCase) ? s.Substring(3) : s;
         }
 
         /// <summary>

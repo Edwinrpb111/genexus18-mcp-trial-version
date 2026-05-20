@@ -165,6 +165,30 @@ public class LongPollTests
     }
 
     [Fact]
+    public void ResolveJobId_StripsOpPrefix_FromTarget()
+    {
+        // lifecycle action=cancel target=op:<jobId> is the canonical cancel call shape.
+        // Without prefix stripping the JobRegistry lookup returns null and cancel falls
+        // through to the OperationTracker path that always reports NotFound.
+        var args = new Newtonsoft.Json.Linq.JObject
+        {
+            ["action"] = "cancel",
+            ["target"] = "op:abc123"
+        };
+
+        string? resolved = McpRouter.ResolveJobId(args);
+
+        Assert.Equal("abc123", resolved);
+    }
+
+    [Fact]
+    public void ResolveJobId_StripsOpPrefix_FromJobId()
+    {
+        var args = new Newtonsoft.Json.Linq.JObject { ["job_id"] = "op:xyz789" };
+        Assert.Equal("xyz789", McpRouter.ResolveJobId(args));
+    }
+
+    [Fact]
     public void ResolveJobId_ReturnsNull_WhenAllAbsent()
     {
         var args = new Newtonsoft.Json.Linq.JObject
