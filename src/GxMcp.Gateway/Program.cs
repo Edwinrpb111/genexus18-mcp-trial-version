@@ -558,6 +558,11 @@ namespace GxMcp.Gateway
                 // v2.3.8 Task 1.2: surface index readiness so agents know whether to
                 // call `lifecycle action=index` before relying on search/analyze.
                 ["index"] = BuildIndexBlock(),
+                // Compact tool-call health summary. Full per-tool breakdown remains at
+                // `genexus_lifecycle status target=gateway:metrics`; whoami carries only
+                // the roll-up so first-turn cost stays minimal while still surfacing red
+                // flags (high error/timeout ratio, a tool with a >10s p95).
+                ["metricsSummary"] = _operationTracker?.BuildMetricsSummary() ?? new JObject(),
                 // Inline playbooks for the flows that drove the largest token spend
                 // in real sessions (LLMs were exploring WWP/popup structure before
                 // every change). Embedding the routing here means the agent sees it

@@ -232,6 +232,39 @@ namespace GxMcp.Gateway
             };
         }
 
+        // Compact roll-up for whoami: total calls/errors/timeouts across all tools and the
+        // single slowest tool by p95. Keeps the whoami payload tiny (one short object) so the
+        // first-turn cost stays low while still giving the agent / operator a health snapshot.
+        public JObject BuildMetricsSummary()
+        {
+            long totalCalls = 0, totalErrors = 0, totalTimeouts = 0;
+            string? slowestTool = null;
+            long slowestP95 = 0;
+            foreach (var metric in _toolMetrics.Values)
+            {
+                var j = metric.ToJObject();
+                totalCalls += (long)(j["count"] ?? 0L);
+                totalErrors += (long)(j["errors"] ?? 0L);
+                totalTimeouts += (long)(j["timeouts"] ?? 0L);
+                long p95 = (long)(j["p95Ms"] ?? 0L);
+                if (p95 > slowestP95)
+                {
+                    slowestP95 = p95;
+                    slowestTool = metric.ToolName;
+                }
+            }
+            return new JObject
+            {
+                ["totalCalls"] = totalCalls,
+                ["totalErrors"] = totalErrors,
+                ["totalTimeouts"] = totalTimeouts,
+                ["distinctTools"] = _toolMetrics.Count,
+                ["slowestToolByP95"] = slowestTool != null
+                    ? (JToken)new JObject { ["name"] = slowestTool, ["p95Ms"] = slowestP95 }
+                    : JValue.CreateNull()
+            };
+        }
+
         public void CleanupExpired()
         {
             DateTime cutoff = DateTime.UtcNow - _retention;
