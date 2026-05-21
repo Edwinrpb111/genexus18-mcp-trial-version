@@ -276,7 +276,16 @@ namespace GxMcp.Worker.Services
                                     ? (JToken)st.LastIndexedAt.Value.ToUniversalTime().ToString("o")
                                     : JValue.CreateNull(),
                                 ["progress"] = st.Progress.HasValue ? (JToken)st.Progress.Value : JValue.CreateNull(),
-                                ["etaMs"] = st.EtaMs.HasValue ? (JToken)st.EtaMs.Value : JValue.CreateNull()
+                                ["etaMs"] = st.EtaMs.HasValue ? (JToken)st.EtaMs.Value : JValue.CreateNull(),
+                                // PERFORMANCE (W-M2): expose flush-failure telemetry so a silently
+                                // failing snapshot (disk full / permission) is visible via whoami.
+                                ["flushFailuresConsecutive"] = IndexCacheService.ConsecutiveFlushFailures,
+                                ["flushLastSuccessUtc"] = IndexCacheService.LastFlushSuccessUtc == DateTime.MinValue
+                                    ? JValue.CreateNull()
+                                    : (JToken)IndexCacheService.LastFlushSuccessUtc.ToString("o"),
+                                ["flushLastError"] = IndexCacheService.LastFlushErrorMessage != null
+                                    ? (JToken)IndexCacheService.LastFlushErrorMessage
+                                    : JValue.CreateNull()
                             };
                             return j.ToString();
                         }

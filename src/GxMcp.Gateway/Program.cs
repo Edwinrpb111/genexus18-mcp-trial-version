@@ -352,11 +352,17 @@ namespace GxMcp.Gateway
             public double? Progress;
             public int? EtaMs;
             public DateTime RefreshedAtUtc = DateTime.MinValue;
+            // PERFORMANCE (W-M2): mirror the worker's flush-failure telemetry so whoami
+            // surfaces silent snapshot persistence failures (disk full / permission).
+            public int FlushFailuresConsecutive;
+            public DateTime? FlushLastSuccessUtc;
+            public string? FlushLastError;
         }
         private static IndexStateSnapshot _lastKnownIndexState = new IndexStateSnapshot();
         private static readonly object _lastKnownIndexStateLock = new object();
 
-        internal static void UpdateLastKnownIndexState(string status, int totalObjects, DateTime? lastIndexedAt, double? progress, int? etaMs)
+        internal static void UpdateLastKnownIndexState(string status, int totalObjects, DateTime? lastIndexedAt, double? progress, int? etaMs,
+            int flushFailuresConsecutive = 0, DateTime? flushLastSuccessUtc = null, string? flushLastError = null)
         {
             lock (_lastKnownIndexStateLock)
             {
@@ -367,7 +373,10 @@ namespace GxMcp.Gateway
                     LastIndexedAt = lastIndexedAt,
                     Progress = progress,
                     EtaMs = etaMs,
-                    RefreshedAtUtc = DateTime.UtcNow
+                    RefreshedAtUtc = DateTime.UtcNow,
+                    FlushFailuresConsecutive = flushFailuresConsecutive,
+                    FlushLastSuccessUtc = flushLastSuccessUtc,
+                    FlushLastError = flushLastError
                 };
             }
         }
@@ -384,7 +393,17 @@ namespace GxMcp.Gateway
                     ? (JToken)snap.LastIndexedAt.Value.ToUniversalTime().ToString("o")
                     : JValue.CreateNull(),
                 ["progress"] = snap.Progress.HasValue ? (JToken)snap.Progress.Value : JValue.CreateNull(),
-                ["etaMs"] = snap.EtaMs.HasValue ? (JToken)snap.EtaMs.Value : JValue.CreateNull()
+                ["etaMs"] = snap.EtaMs.HasValue ? (JToken)snap.EtaMs.Value : JValue.CreateNull(),
+                // PERFORMANCE (W-M2): expose flush health so a degraded snapshot is
+                // visible without combing through worker_debug.log.
+                ["flushHealth"] = new JObject
+                {
+                    ["consecutiveFailures"] = snap.FlushFailuresConsecutive,
+                    ["lastSuccessUtc"] = snap.FlushLastSuccessUtc.HasValue
+                        ? (JToken)snap.FlushLastSuccessUtc.Value.ToUniversalTime().ToString("o")
+                        : JValue.CreateNull(),
+                    ["lastError"] = snap.FlushLastError != null ? (JToken)snap.FlushLastError : JValue.CreateNull()
+                }
             };
         }
 
@@ -438,8 +457,18 @@ namespace GxMcp.Gateway
                 }
                 double? progress = state["progress"]?.ToObject<double?>();
                 int? etaMs = state["etaMs"]?.ToObject<int?>();
+                int flushFailuresConsecutive = state["flushFailuresConsecutive"]?.ToObject<int?>() ?? 0;
+                DateTime? flushLastSuccessUtc = null;
+                var fls = state["flushLastSuccessUtc"];
+                if (fls != null && fls.Type != JTokenType.Null &&
+                    DateTime.TryParse(fls.ToString(), null, System.Globalization.DateTimeStyles.RoundtripKind, out var flsParsed))
+                {
+                    flushLastSuccessUtc = flsParsed;
+                }
+                string? flushLastError = state["flushLastError"]?.Type == JTokenType.Null ? null : state["flushLastError"]?.ToString();
 
-                UpdateLastKnownIndexState(status, totalObjects, lastIndexedAt, progress, etaMs);
+                UpdateLastKnownIndexState(status, totalObjects, lastIndexedAt, progress, etaMs,
+                    flushFailuresConsecutive, flushLastSuccessUtc, flushLastError);
                 return true;
             }
             catch (Exception ex)

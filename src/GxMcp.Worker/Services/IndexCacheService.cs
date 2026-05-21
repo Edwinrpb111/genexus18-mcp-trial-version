@@ -31,6 +31,15 @@ namespace GxMcp.Worker.Services
         private readonly object _lock = new object();
         private DateTime _lastFlushTime = DateTime.MinValue;
         private bool _savingInProgress = false;
+        // PERFORMANCE (W-M2): track consecutive flush failures so a silently failing
+        // disk (full / locked / permission) surfaces through whoami instead of going
+        // unnoticed until the next cold start finds a stale snapshot.
+        private static int _consecutiveFlushFailures = 0;
+        private static DateTime _lastFlushSuccessUtc = DateTime.MinValue;
+        private static string _lastFlushErrorMessage = null;
+        public static int ConsecutiveFlushFailures => System.Threading.Volatile.Read(ref _consecutiveFlushFailures);
+        public static DateTime LastFlushSuccessUtc => _lastFlushSuccessUtc;
+        public static string LastFlushErrorMessage => _lastFlushErrorMessage;
         private readonly VectorService _vectorService = new VectorService();
 
         // PERFORMANCE (W-M5): cache resolved hierarchy by object Guid to avoid re-walking
@@ -593,8 +602,15 @@ namespace GxMcp.Worker.Services
 
                 long sizeKb = new FileInfo(_indexPathGz).Length / 1024;
                 Logger.Info($"[INDEX-SAVE] Index flushed (gz): {sizeKb} KB on disk, {json.Length / 1024} KB raw.");
+                System.Threading.Interlocked.Exchange(ref _consecutiveFlushFailures, 0);
+                _lastFlushSuccessUtc = DateTime.UtcNow;
+                _lastFlushErrorMessage = null;
             }
-            catch (Exception ex) { Logger.Error("Flush Error: " + ex.Message); }
+            catch (Exception ex) {
+                int n = System.Threading.Interlocked.Increment(ref _consecutiveFlushFailures);
+                _lastFlushErrorMessage = ex.Message;
+                Logger.Error($"Flush Error (consecutive={n}): {ex.Message}");
+            }
             finally {
                 _savingInProgress = false;
                 _lastFlushTime = DateTime.Now;
