@@ -489,21 +489,28 @@ namespace GxMcp.Worker.Services
                 sb.AppendLine("<Project DefaultTargets=\"Execute\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">");
                 sb.AppendLine("  <Import Project=\"" + importPath + "\" />");
                 sb.AppendLine("  <Target Name=\"Execute\">");
-                sb.AppendLine("    <OpenKnowledgeBase Directory=\"" + kbPathEsc + "\" />");
+                // Open with Output="IDE" — same flag the GeneXus IDE passes. Without it
+                // the standalone msbuild later hits opaque Win32 ERROR_FILE_NOT_FOUND
+                // inside the deploy/IIS step ("Atualização de configuração da web").
+                sb.AppendLine("    <OpenKnowledgeBase Directory=\"" + kbPathEsc + "\" Output=\"IDE\" />");
 
                 if (action.Equals("Build", StringComparison.OrdinalIgnoreCase) && targets != null && targets.Count > 0)
                 {
                     status.TargetsTotal = targets.Count;
                     status.TargetsDone = 0;
-                    // Multiple BuildOne tasks within the same KB-open cycle (mimics IDE "Build With These Only").
-                    // ForceRebuild=true is required: without it GeneXus skips regenerating the .cs files when
-                    // it thinks "nothing changed", which leaves callers compiled against stale signatures and
-                    // produces phantom CS1501 / CS0246 errors. The IDE's "Build With These Only" uses force=true.
-                    foreach (var t in targets)
-                    {
-                        string esc = SecurityElement.Escape(t);
-                        sb.AppendLine("    <BuildOne BuildCalled=\"false\" ObjectName=\"" + esc + "\" ForceRebuild=\"true\" />");
-                    }
+                    // IDE-style "Build With This Only": SpecifyOneOnly + GenerateOnly,
+                    // NOT <BuildOne>. <BuildOne> bundles spec+gen+deploy+IIS-update in a
+                    // single monolithic task and the IIS-update sub-step explodes with
+                    // an opaque "O sistema não pode encontrar o arquivo especificado"
+                    // when run from a standalone msbuild process (the IDE hosts the
+                    // task in-process so its AppDomain resolves Artech.* + IIS COM
+                    // wrappers; standalone msbuild does not). The IDE itself composes
+                    // Specify + Generate (see Genexus.msbuild template in the install
+                    // dir) so we mirror that — deploy of artifacts to the web folder
+                    // happens transparently as part of generate.
+                    string joined = string.Join(";", targets.Select(t => SecurityElement.Escape(t)));
+                    sb.AppendLine("    <SpecifyOneOnly ObjectNames=\"" + joined + "\" />");
+                    sb.AppendLine("    <GenerateOnly />");
                 }
                 else if (action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <RebuildAll />");
@@ -512,9 +519,15 @@ namespace GxMcp.Worker.Services
                 else if (action.Equals("Validate", StringComparison.OrdinalIgnoreCase) || action.Equals("Check", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <CheckKnowledgeBase />");
                 else if (action.Equals("Sync", StringComparison.OrdinalIgnoreCase))
-                    sb.AppendLine("    <BuildAll />");
+                {
+                    sb.AppendLine("    <SpecifyAll />");
+                    sb.AppendLine("    <GenerateOnly />");
+                }
                 else
-                    sb.AppendLine("    <BuildAll />");
+                {
+                    sb.AppendLine("    <SpecifyAll />");
+                    sb.AppendLine("    <GenerateOnly />");
+                }
 
                 sb.AppendLine("    <CloseKnowledgeBase />");
                 sb.AppendLine("  </Target></Project>");

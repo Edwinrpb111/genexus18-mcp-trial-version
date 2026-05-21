@@ -40,13 +40,41 @@ namespace GxMcp.Worker.Services
         {
             public CliResult Run(string fileName, string arguments, int timeoutMs)
             {
-                var psi = new ProcessStartInfo(fileName, arguments)
+                // On Windows, only true PE images (.exe/.com) can be launched directly
+                // with UseShellExecute=false. npm CLI shims arrive as .cmd, .bat, .ps1
+                // or an extensionless shell script — CreateProcess fails with
+                // ERROR_BAD_EXE_FORMAT for all of these. Route anything that is not
+                // a native executable through cmd.exe (which honours PATHEXT and
+                // executes .cmd/.bat directly).
+                ProcessStartInfo psi;
+                var ext = Path.GetExtension(fileName);
+                bool isNativeExe = string.Equals(ext, ".exe", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(ext, ".com", StringComparison.OrdinalIgnoreCase);
+                if (!isNativeExe)
                 {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
+                    psi = new ProcessStartInfo("cmd.exe", "/c \"\"" + fileName + "\" " + arguments + "\"");
+                }
+                else
+                {
+                    psi = new ProcessStartInfo(fileName, arguments);
+                }
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+
+                // Skip the ~30s `npx -y chrome-devtools-mcp@latest` cold-start when a
+                // globally installed copy of chrome-devtools-mcp is available. The CLI
+                // honours CHROME_DEVTOOLS_AXI_MCP_PATH and spawns `node <path>` directly.
+                if (string.IsNullOrEmpty(psi.EnvironmentVariables["CHROME_DEVTOOLS_AXI_MCP_PATH"]))
+                {
+                    var mcpPath = ResolveChromeDevtoolsMcpPath();
+                    if (!string.IsNullOrEmpty(mcpPath))
+                    {
+                        psi.EnvironmentVariables["CHROME_DEVTOOLS_AXI_MCP_PATH"] = mcpPath;
+                    }
+                }
+
                 using (var p = Process.Start(psi))
                 {
                     string so = p.StandardOutput.ReadToEnd();
@@ -57,6 +85,64 @@ namespace GxMcp.Worker.Services
                         return new CliResult { ExitCode = -1, StdOut = so, StdErr = se, TimedOut = true };
                     }
                     return new CliResult { ExitCode = p.ExitCode, StdOut = so, StdErr = se };
+                }
+            }
+
+            // Cached discovery of `chrome-devtools-mcp`'s entry script — global npm
+            // install path. Avoids the ~30s npx bootstrap.
+            private static readonly object _mcpPathLock = new object();
+            private static string _cachedMcpPath;
+            private static bool _mcpPathResolved;
+            internal static string ResolveChromeDevtoolsMcpPath()
+            {
+                if (_mcpPathResolved) return _cachedMcpPath;
+                lock (_mcpPathLock)
+                {
+                    if (_mcpPathResolved) return _cachedMcpPath;
+                    string resolved = null;
+                    try
+                    {
+                        var envOverride = Environment.GetEnvironmentVariable("CHROME_DEVTOOLS_AXI_MCP_PATH");
+                        if (!string.IsNullOrEmpty(envOverride) && File.Exists(envOverride))
+                        {
+                            resolved = envOverride;
+                        }
+                        else
+                        {
+                            string prefix = null;
+                            try
+                            {
+                                var psi = new ProcessStartInfo("cmd.exe", "/c npm prefix -g")
+                                {
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true
+                                };
+                                using (var p = Process.Start(psi))
+                                {
+                                    string so = p.StandardOutput.ReadToEnd();
+                                    p.WaitForExit(5000);
+                                    if (p.ExitCode == 0)
+                                    {
+                                        prefix = so.Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim();
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            if (!string.IsNullOrEmpty(prefix))
+                            {
+                                var candidate = Path.Combine(prefix,
+                                    "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js");
+                                if (File.Exists(candidate)) resolved = candidate;
+                            }
+                        }
+                    }
+                    catch { }
+                    _cachedMcpPath = resolved;
+                    _mcpPathResolved = true;
+                    return _cachedMcpPath;
                 }
             }
 
@@ -95,7 +181,10 @@ namespace GxMcp.Worker.Services
         private JObject _cachedConfig;
         private string _cachedCliPath;
 
-        private const int DefaultCliTimeoutMs = 30000;
+        // Cold-start of chrome-devtools-axi's bridge (which spawns chrome-devtools-mcp
+        // via npx by default) commonly takes 25-60 s on Windows. 30 s leaves no head
+        // room; 90 s safely covers the warm-up plus a few snapshot/eval calls.
+        private const int DefaultCliTimeoutMs = 90000;
 
         public PreviewService(ObjectService objectService, BuildService buildService)
             : this(objectService, buildService, new DefaultCliRunner(), null, null) { }
