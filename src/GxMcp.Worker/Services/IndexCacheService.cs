@@ -695,6 +695,19 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // v2.6.8: defensive reads for KBObject SDK accessors that can throw on
+        // partially-loaded objects. Callers want a sentinel ("unknown") rather than
+        // a crashed indexer.
+        private static DateTime SafeReadDate(Func<DateTime> read)
+        {
+            try { return read(); } catch { return DateTime.MinValue; }
+        }
+
+        private static string SafeReadString(Func<string> read)
+        {
+            try { return read(); } catch { return null; }
+        }
+
         public void UpdateEntry(global::Artech.Architecture.Common.Objects.KBObject obj)
         {
             var index = GetIndex();
@@ -710,7 +723,10 @@ namespace GxMcp.Worker.Services
                 ParentPath = hierarchy.ParentPath,
                 ParentFolderPath = ComposeParentFolderPath(hierarchy.ParentPath),
                 Path = hierarchy.Path,
-                Module = hierarchy.ModuleName
+                Module = hierarchy.ModuleName,
+                LastUpdate = SafeReadDate(() => obj.LastUpdate),
+                CreatedAt = SafeReadDate(() => obj.VersionDate),
+                LastModifiedBy = SafeReadString(() => obj.UserName)
             };
 
             if (obj is global::Artech.Genexus.Common.Objects.Attribute attr)

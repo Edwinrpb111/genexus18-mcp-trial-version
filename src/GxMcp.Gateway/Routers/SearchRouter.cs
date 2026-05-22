@@ -22,6 +22,11 @@ namespace GxMcp.Gateway.Routers
                         domainFilter = args?["domainFilter"]?.ToString(),
                         exactMatch = args?["exactMatch"]?.ToObject<bool?>() ?? false,
                         inline_read_top = args?["inline_read_top"]?.ToObject<int?>() ?? 0,
+                        // v2.6.8: temporal sort + bounds + stable cursor for query.
+                        sort = args?["sort"]?.ToString(),
+                        since = args?["since"]?.ToString(),
+                        modifiedBefore = args?["modifiedBefore"]?.ToString(),
+                        cursor = args?["cursor"]?.ToString(),
                     };
                 case "genexus_search_source":
                     return new
@@ -55,6 +60,11 @@ namespace GxMcp.Gateway.Routers
                         nameFilter = args?["nameFilter"]?.ToString(),
                         descriptionFilter = args?["descriptionFilter"]?.ToString(),
                         pathPrefix = args?["pathPrefix"]?.ToString(),
+                        // v2.6.8: lifecycle sort + temporal filters + stable cursor.
+                        sort = args?["sort"]?.ToString(),
+                        since = args?["since"]?.ToString(),
+                        modifiedBefore = args?["modifiedBefore"]?.ToString(),
+                        cursor = args?["cursor"]?.ToString(),
                     };
                 default:
                     return null;

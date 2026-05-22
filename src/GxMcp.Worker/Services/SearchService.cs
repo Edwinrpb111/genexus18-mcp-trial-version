@@ -24,7 +24,8 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
-        public string Search(string query, string typeFilter = null, string domainFilter = null, int limit = 50, bool exactMatch = false)
+        public string Search(string query, string typeFilter = null, string domainFilter = null, int limit = 50, bool exactMatch = false,
+            string sort = null, DateTime since = default(DateTime), DateTime modifiedBefore = default(DateTime), string cursor = null)
         {
             // PERFORMANCE (W-M3): instrument the search hot path so regressions surface in logs.
             // Threshold 50ms keeps noise low while catching any real degradation.
@@ -70,7 +71,13 @@ namespace GxMcp.Worker.Services
                     query = Regex.Replace(query, @"\s*@quick\b", "", RegexOptions.IgnoreCase).Trim();
                 }
 
-                string cacheKey = string.Format("{0}|{1}|{2}|{3}|{4}|{5}", query ?? "", typeFilter ?? "", domainFilter ?? "", limit, isQuick ? "quick" : "full", exactMatch ? "exact" : "fuzzy");
+                // v2.6.8: temporal/sort/cursor controls participate in the cache key
+                // so callers paging by cursor or filtering by date don't collide with
+                // the cached relevance-sorted page.
+                string cacheKey = string.Format("{0}|{1}|{2}|{3}|{4}|{5}|s={6}|sn={7}|mb={8}|cu={9}",
+                    query ?? "", typeFilter ?? "", domainFilter ?? "", limit,
+                    isQuick ? "quick" : "full", exactMatch ? "exact" : "fuzzy",
+                    sort ?? "", since.Ticks, modifiedBefore.Ticks, cursor ?? "");
                 if (_queryCache.TryGetValue(cacheKey, out var cached)) return cached;
 
                 var criteria = ParseQuery(query);
@@ -167,6 +174,14 @@ namespace GxMcp.Worker.Services
                 if (!string.IsNullOrEmpty(criteria.ParentFilter) && (sourceSet == index.Objects.Values))
                     queryResults = queryResults.Where(e => string.Equals(e.Parent, criteria.ParentFilter, StringComparison.OrdinalIgnoreCase));
 
+                // v2.6.8: temporal bounds. Same semantics as list_objects — Since
+                // inclusive, ModifiedBefore exclusive. Applied before ranking so
+                // the score budget doesn't get spent on out-of-window items.
+                if (since > DateTime.MinValue)
+                    queryResults = queryResults.Where(e => e.LastUpdate >= since);
+                if (modifiedBefore > DateTime.MinValue)
+                    queryResults = queryResults.Where(e => e.LastUpdate > DateTime.MinValue && e.LastUpdate < modifiedBefore);
+
                 if (!string.IsNullOrEmpty(criteria.UsedByFilter))
                 {
                     // Build the set of objects that reference the target via the inverted CalledBy index.
@@ -238,16 +253,66 @@ namespace GxMcp.Worker.Services
                     })
                     .Where(r => r != null) // Safety check
                     .Where(r => r.Score > 0)
-                    .OrderByDescending(r => r.Score)
-                    .ThenBy(r => r.Entry.Name)
                     .ToList();
 
+                // v2.6.8: sort selector. "lastUpdate" bypasses relevance ranking and
+                // returns newest-first — the agent explicitly opted out of score
+                // ordering in favor of recency.
+                bool sortByLastUpdate = !string.IsNullOrEmpty(sort) &&
+                    string.Equals(sort, "lastUpdate", StringComparison.OrdinalIgnoreCase);
+                if (sortByLastUpdate)
+                {
+                    rankedAll = rankedAll
+                        .OrderByDescending(r => r.Entry.LastUpdate)
+                        .ThenBy(r => r.Entry.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(r => r.Entry.Guid ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                else
+                {
+                    rankedAll = rankedAll
+                        .OrderByDescending(r => r.Score)
+                        .ThenBy(r => r.Entry.Name)
+                        .ToList();
+                }
+
                 int total = rankedAll.Count;
+
+                // v2.6.8: stable cursor (only honored with sort=lastUpdate, same as list_objects).
+                int startIndex = 0;
+                if (sortByLastUpdate && !string.IsNullOrEmpty(cursor))
+                {
+                    var decoded = ListService.DecodeCursor(cursor);
+                    if (decoded.HasValue)
+                    {
+                        var (cursorTs, cursorName, cursorGuid) = decoded.Value;
+                        // v2.6.8 (review C1): predicate mirrors the sort tuple
+                        // (LastUpdate desc, Name asc, Guid asc) — see ListService
+                        // for the rationale.
+                        int resumeAt = rankedAll.FindIndex(r =>
+                        {
+                            if (r.Entry.LastUpdate < cursorTs) return true;
+                            if (r.Entry.LastUpdate != cursorTs) return false;
+                            int byName = string.Compare(r.Entry.Name ?? string.Empty, cursorName ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                            if (byName > 0) return true;
+                            if (byName < 0) return false;
+                            return string.Compare(r.Entry.Guid ?? string.Empty, cursorGuid ?? string.Empty, StringComparison.OrdinalIgnoreCase) > 0;
+                        });
+                        if (resumeAt >= 0) startIndex = resumeAt;
+                        else startIndex = total;
+                    }
+                }
+
                 var effectiveLimit = limit <= 0 ? total : limit;
-                var scoredResults = rankedAll.Take(effectiveLimit).ToList();
-                bool hasMore = total > scoredResults.Count;
+                var scoredResults = rankedAll.Skip(startIndex).Take(effectiveLimit).ToList();
+                bool hasMore = (startIndex + scoredResults.Count) < total;
 
                 JObject responseObj;
+                // v2.6.8: stringify lastUpdate once per row; null when unknown so the
+                // gateway projector can detect "no lifecycle data" cleanly.
+                string FormatLu(SearchIndex.IndexEntry e) =>
+                    e.LastUpdate > DateTime.MinValue ? e.LastUpdate.ToUniversalTime().ToString("o") : null;
+
                 if (isQuick)
                 {
                     responseObj = JObject.FromObject(new {
@@ -261,7 +326,8 @@ namespace GxMcp.Worker.Services
                             parent = r.Entry.Parent,
                             module = r.Entry.Module,
                             path = r.Entry.Path,
-                            parentPath = r.Entry.ParentPath
+                            parentPath = r.Entry.ParentPath,
+                            lastUpdate = FormatLu(r.Entry)
                         })
                     });
                 }
@@ -286,9 +352,18 @@ namespace GxMcp.Worker.Services
                             length = r.Entry.Length,
                             decimals = r.Entry.Decimals,
                             table = r.Entry.RootTable,
-                            similarity = r.VectorSimilarity
+                            similarity = r.VectorSimilarity,
+                            lastUpdate = FormatLu(r.Entry)
                         })
                     });
+                }
+
+                // v2.6.8: nextCursor for stable temporal paging. Mirrors list_objects.
+                if (sortByLastUpdate && hasMore && scoredResults.Count > 0)
+                {
+                    var last = scoredResults[scoredResults.Count - 1].Entry;
+                    var token = ListService.EncodeCursor(last.LastUpdate, last.Name, last.Guid);
+                    if (!string.IsNullOrEmpty(token)) responseObj["nextCursor"] = token;
                 }
 
                 // Only surface a "suggested_next" when the top result is a confident

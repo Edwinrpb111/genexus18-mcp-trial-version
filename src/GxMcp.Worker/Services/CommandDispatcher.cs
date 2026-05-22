@@ -307,6 +307,40 @@ namespace GxMcp.Worker.Services
                                     ? (JToken)IndexCacheService.LastFlushErrorMessage
                                     : JValue.CreateNull()
                             };
+
+                            // v2.6.8: top-5 recently-changed projection. Cheap O(n) scan
+                            // over the in-memory index; gateway forwards this into the
+                            // `whoami.index.recentlyChanged` block so the agent gets a
+                            // "what's hot" hint on the first call.
+                            try
+                            {
+                                var idx = _indexCacheService.GetIndex();
+                                if (idx != null && idx.Objects.Count > 0)
+                                {
+                                    var top = idx.Objects.Values
+                                        .Where(e => e.LastUpdate > DateTime.MinValue)
+                                        .OrderByDescending(e => e.LastUpdate)
+                                        .Take(5)
+                                        .ToList();
+                                    if (top.Count > 0)
+                                    {
+                                        var arr = new JArray();
+                                        foreach (var e in top)
+                                        {
+                                            arr.Add(new JObject
+                                            {
+                                                ["name"] = e.Name,
+                                                ["type"] = e.Type,
+                                                ["lastUpdate"] = e.LastUpdate.ToUniversalTime().ToString("o"),
+                                                ["lastModifiedBy"] = e.LastModifiedBy ?? string.Empty
+                                            });
+                                        }
+                                        j["recentlyChanged"] = arr;
+                                    }
+                                }
+                            }
+                            catch (Exception ex) { Logger.Debug("[GetIndexState] recentlyChanged failed: " + ex.Message); }
+
                             return j.ToString();
                         }
                         if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
@@ -322,12 +356,25 @@ namespace GxMcp.Worker.Services
                     case "search":
                         if (action == "Query")
                         {
+                            DateTime sinceArgQ = default(DateTime);
+                            DateTime modifiedBeforeArgQ = default(DateTime);
+                            string sinceTokQ = args?["since"]?.ToString();
+                            string mbTokQ = args?["modifiedBefore"]?.ToString();
+                            if (!string.IsNullOrEmpty(sinceTokQ))
+                                DateTime.TryParse(sinceTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArgQ);
+                            if (!string.IsNullOrEmpty(mbTokQ))
+                                DateTime.TryParse(mbTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArgQ);
+
                             string searchResult = _searchService.Search(
                                 target,
                                 args?["typeFilter"]?.ToString(),
                                 args?["domainFilter"]?.ToString(),
                                 args?["limit"]?.ToObject<int?>() ?? 50,
-                                args?["exactMatch"]?.ToObject<bool?>() ?? false
+                                args?["exactMatch"]?.ToObject<bool?>() ?? false,
+                                args?["sort"]?.ToString(),
+                                sinceArgQ,
+                                modifiedBeforeArgQ,
+                                args?["cursor"]?.ToString()
                             );
                             int inlineTopSearch = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
                             return inlineTopSearch > 0
@@ -374,6 +421,15 @@ namespace GxMcp.Worker.Services
                     case "list":
                         if (action == "Objects")
                         {
+                            DateTime sinceArg = default(DateTime);
+                            DateTime modifiedBeforeArg = default(DateTime);
+                            string sinceTok = args?["since"]?.ToString();
+                            string mbTok = args?["modifiedBefore"]?.ToString();
+                            if (!string.IsNullOrEmpty(sinceTok))
+                                DateTime.TryParse(sinceTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArg);
+                            if (!string.IsNullOrEmpty(mbTok))
+                                DateTime.TryParse(mbTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArg);
+
                             string listResult = _listService.ListObjects(
                                 target,
                                 args?["limit"]?.ToObject<int?>() ?? 5000,
@@ -384,7 +440,11 @@ namespace GxMcp.Worker.Services
                                 args?["verbose"]?.ToObject<bool?>() ?? false,
                                 args?["nameFilter"]?.ToString(),
                                 args?["descriptionFilter"]?.ToString(),
-                                args?["pathPrefix"]?.ToString()
+                                args?["pathPrefix"]?.ToString(),
+                                args?["sort"]?.ToString(),
+                                sinceArg,
+                                modifiedBeforeArg,
+                                args?["cursor"]?.ToString()
                             );
                             int inlineTopList = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
                             return inlineTopList > 0
@@ -432,7 +492,8 @@ namespace GxMcp.Worker.Services
                         if (action == "ReadLogs") return _objectService.ReadLogs(
                             args?["lines"]?.ToObject<int?>() ?? 50,
                             args?["filterCorrelation"]?.ToString(),
-                            args?["grep"]?.ToString());
+                            args?["grep"]?.ToString(),
+                            args?["since"]?.ToString());
                         if (action == "ExportText")
                         {
                             return _objectService.ExportObjectToText(

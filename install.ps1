@@ -6,7 +6,8 @@ param(
     [string]$GeneXusPath,
     [switch]$SkipExtensionInstall,
     [switch]$SkipClaudeConfig,
-    [switch]$SkipCodexConfig
+    [switch]$SkipCodexConfig,
+    [switch]$SkipVsCodeMcp
 )
 
 $progressPreference = "SilentlyContinue"
@@ -21,6 +22,11 @@ $claudeConfigPath = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
 $codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
 $antigravityConfigPath = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
 $cursorConfigPath = Join-Path $env:APPDATA "Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json"
+# v2.6.8: VS Code's native MCP profile lives in User\mcp.json (stable + Insiders).
+# Distinct from settings.json (commented JSONC, riskier to mutate) and from the
+# Cursor/Cline path above.
+$vscodeMcpPath = Join-Path $env:APPDATA "Code\User\mcp.json"
+$vscodeInsidersMcpPath = Join-Path $env:APPDATA "Code - Insiders\User\mcp.json"
 
 function Write-Step([string]$message) {
     Write-Host ""
@@ -213,6 +219,48 @@ function Set-AntigravityConfig([string]$path, [string]$commandPath) {
     }
 
     Save-JsonFile $path $config
+}
+
+function Set-VsCodeMcpConfig([string]$path, [string]$commandPath, [string]$label) {
+    # v2.6.8: writes/merges the genexus18 entry into VS Code's User\mcp.json.
+    # Skipped silently when the VS Code variant isn't installed (no User dir).
+    $configDir = Split-Path $path
+    $vsCodeUserDir = Split-Path $configDir -ErrorAction SilentlyContinue
+    if (-not (Test-Path $vsCodeUserDir)) {
+        return $false # VS Code variant not installed
+    }
+    if (-not (Test-Path $configDir)) {
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+
+    if (Test-Path $path) {
+        Backup-File $path
+        try {
+            $config = Get-Content $path -Raw | ConvertFrom-Json
+        } catch {
+            Write-Warn "$label mcp.json exists but is invalid JSON. Overwriting."
+            $config = [pscustomobject]@{}
+        }
+    } else {
+        $config = [pscustomobject]@{}
+    }
+
+    if ($null -eq $config.servers) {
+        $config | Add-Member -MemberType NoteProperty -Name "servers" -Value ([pscustomobject]@{})
+    }
+
+    $entry = [pscustomobject]@{
+        command = $commandPath
+        args = @()
+    }
+    if ($null -eq $config.servers.genexus18) {
+        $config.servers | Add-Member -MemberType NoteProperty -Name "genexus18" -Value $entry
+    } else {
+        $config.servers.genexus18 = $entry
+    }
+
+    Save-JsonFile $path $config
+    return $true
 }
 
 function Set-CursorClineConfig([string]$path, [string]$commandPath) {
@@ -494,6 +542,33 @@ try {
     }
 } catch {
     Write-Warn "Failed to update Cursor (Cline) config: $($_.Exception.Message)"
+}
+
+# v2.6.8: VS Code native MCP (User\mcp.json) — both stable and Insiders.
+# Each variant is independent; silently skipped when the install isn't present.
+if ($SkipVsCodeMcp) {
+    Write-Step "Skipping VS Code native MCP registration"
+} else {
+try {
+    $vscodeConfigured = Set-VsCodeMcpConfig -path $vscodeMcpPath -commandPath $startMcpBatPath -label "VS Code"
+    if ($vscodeConfigured) {
+        Write-Ok "VS Code (native MCP) configured at $vscodeMcpPath"
+    } else {
+        Write-Warn "VS Code was not detected. Skipping native MCP registration."
+    }
+} catch {
+    Write-Warn "Failed to update VS Code MCP config: $($_.Exception.Message)"
+}
+try {
+    $vscodeInsidersConfigured = Set-VsCodeMcpConfig -path $vscodeInsidersMcpPath -commandPath $startMcpBatPath -label "VS Code Insiders"
+    if ($vscodeInsidersConfigured) {
+        Write-Ok "VS Code Insiders (native MCP) configured at $vscodeInsidersMcpPath"
+    } else {
+        Write-Warn "VS Code Insiders was not detected. Skipping native MCP registration."
+    }
+} catch {
+    Write-Warn "Failed to update VS Code Insiders MCP config: $($_.Exception.Message)"
+}
 }
 
 Write-Host ""

@@ -70,6 +70,22 @@ namespace GxMcp.Gateway
         internal static BackgroundJobRegistry JobRegistry = new BackgroundJobRegistry(600);
         private static int _workerWarmupStarted;
         private static int _indexBootstrapStarted;
+        // v2.6.8 (review C6): incremented before any planned worker exit
+        // (worker_reload, KB switch, shutdown) so OnWorkerExited can skip the
+        // eager respawn — RestartWorker is already orchestrating a fresh spawn.
+        // Refcounted so concurrent planned exits don't race.
+        private static int _plannedExitSuppression = 0;
+        private sealed class RespawnSuppressionScope : IDisposable
+        {
+            public void Dispose() => System.Threading.Interlocked.Decrement(ref _plannedExitSuppression);
+        }
+        internal static IDisposable SuppressEagerRespawn()
+        {
+            System.Threading.Interlocked.Increment(ref _plannedExitSuppression);
+            return new RespawnSuppressionScope();
+        }
+        private static bool IsEagerRespawnSuppressed() =>
+            System.Threading.Volatile.Read(ref _plannedExitSuppression) > 0;
         private static bool _stdioActive;
         private static readonly TimeSpan _pendingRequestRetention = TimeSpan.FromMinutes(65);
         private static readonly string _logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gateway_debug.log");
@@ -357,12 +373,17 @@ namespace GxMcp.Gateway
             public int FlushFailuresConsecutive;
             public DateTime? FlushLastSuccessUtc;
             public string? FlushLastError;
+            // v2.6.8: top-5 recently-changed projection from the worker's
+            // in-memory index. Cached so subsequent whoami calls don't pay
+            // another round-trip — refreshed every TryRefreshIndexStateFromWorkerAsync.
+            public JArray? RecentlyChanged;
         }
         private static IndexStateSnapshot _lastKnownIndexState = new IndexStateSnapshot();
         private static readonly object _lastKnownIndexStateLock = new object();
 
         internal static void UpdateLastKnownIndexState(string status, int totalObjects, DateTime? lastIndexedAt, double? progress, int? etaMs,
-            int flushFailuresConsecutive = 0, DateTime? flushLastSuccessUtc = null, string? flushLastError = null)
+            int flushFailuresConsecutive = 0, DateTime? flushLastSuccessUtc = null, string? flushLastError = null,
+            JArray? recentlyChanged = null)
         {
             lock (_lastKnownIndexStateLock)
             {
@@ -376,7 +397,10 @@ namespace GxMcp.Gateway
                     RefreshedAtUtc = DateTime.UtcNow,
                     FlushFailuresConsecutive = flushFailuresConsecutive,
                     FlushLastSuccessUtc = flushLastSuccessUtc,
-                    FlushLastError = flushLastError
+                    FlushLastError = flushLastError,
+                    // Preserve prior recentlyChanged when the caller doesn't pass a fresh
+                    // value — search/lifecycle pushes update telemetry without it.
+                    RecentlyChanged = recentlyChanged ?? _lastKnownIndexState?.RecentlyChanged
                 };
             }
         }
@@ -403,7 +427,13 @@ namespace GxMcp.Gateway
                         ? (JToken)snap.FlushLastSuccessUtc.Value.ToUniversalTime().ToString("o")
                         : JValue.CreateNull(),
                     ["lastError"] = snap.FlushLastError != null ? (JToken)snap.FlushLastError : JValue.CreateNull()
-                }
+                },
+                // v2.6.8: top-5 recently-changed objects — set only when the worker
+                // had populated lifecycle data to surface. Omitted otherwise so the
+                // whoami payload stays tight for cold/legacy KBs.
+                ["recentlyChanged"] = snap.RecentlyChanged != null
+                    ? (JToken)snap.RecentlyChanged.DeepClone()
+                    : JValue.CreateNull()
             };
         }
 
@@ -467,8 +497,9 @@ namespace GxMcp.Gateway
                 }
                 string? flushLastError = state["flushLastError"]?.Type == JTokenType.Null ? null : state["flushLastError"]?.ToString();
 
+                JArray? recentlyChanged = state["recentlyChanged"] as JArray;
                 UpdateLastKnownIndexState(status, totalObjects, lastIndexedAt, progress, etaMs,
-                    flushFailuresConsecutive, flushLastSuccessUtc, flushLastError);
+                    flushFailuresConsecutive, flushLastSuccessUtc, flushLastError, recentlyChanged);
                 return true;
             }
             catch (Exception ex)
@@ -492,13 +523,69 @@ namespace GxMcp.Gateway
             lock (_lastKnownIndexStateLock) { snap = _lastKnownIndexState; }
             bool cacheFresh = snap.RefreshedAtUtc != DateTime.MinValue
                 && (DateTime.UtcNow - snap.RefreshedAtUtc).TotalSeconds < 15;
-            if (!cacheFresh)
+
+            // v2.6.8: degraded mode. If the worker process is dead or still booting,
+            // don't even attempt the round-trip — clients with tight timeouts (VS
+            // Code Codex closes the transport after a few seconds) will get a
+            // structured "Booting" answer instantly instead of a hang.
+            bool workerHealthy = IsActiveWorkerHealthy();
+            if (!cacheFresh && workerHealthy)
             {
                 // Aggressive timeout: whoami must feel instant. If the worker is
                 // genuinely slow, returning a slightly stale snapshot beats blocking.
                 await TryRefreshIndexStateFromWorkerAsync(timeoutMs: 400).ConfigureAwait(false);
             }
-            return BuildWhoamiPayload();
+            var payload = BuildWhoamiPayload();
+            if (!workerHealthy)
+            {
+                // v2.6.8 (review C7): workerHealth is purely additive — emit it
+                // whenever the worker is down, regardless of cache freshness, so
+                // the agent always has a signal that tool calls may transient-fail.
+                // The index.status downgrade stays gated on !cacheFresh because the
+                // last-good snapshot is still useful when it's recent.
+                if (!cacheFresh && payload["index"] is JObject idx)
+                {
+                    idx["status"] = "Booting";
+                }
+                payload["workerHealth"] = new JObject
+                {
+                    ["status"] = "respawning",
+                    ["hint"] = "Worker process is starting (cold load ~10–15s). Retry whoami in a few seconds; tool calls during this window may return a 'crashed/exited' error and should be retried."
+                };
+            }
+            return payload;
+        }
+
+        // v2.6.8: cheap health check used by whoami's degraded-mode path. Returns
+        // true only when a worker process exists and HasExited is false; any error
+        // looking at the pool is treated as "not healthy" so we err on the side of
+        // skipping the round-trip.
+        private static bool IsActiveWorkerHealthy()
+        {
+            try
+            {
+                if (_workerPool == null) return false;
+                // v2.6.8 (review C3): prefer the AsyncLocal-bound KB if present;
+                // otherwise probe every open worker — healthy if at least one is
+                // alive. This avoids KbResolver.Resolve(null, ...) throwing on
+                // multi-KB or no-default-KB setups (which the outer catch would
+                // turn into a false 'respawning' signal).
+                KbHandle? kb = _currentKb.Value;
+                if (kb != null)
+                {
+                    var worker = _workerPool.TryGet(kb.NormalizedAlias);
+                    return worker != null && worker.Pid.HasValue;
+                }
+                var open = _workerPool.ListOpen();
+                if (open == null || open.Count == 0) return false;
+                foreach (var handle in open)
+                {
+                    var w = _workerPool.TryGet(handle.NormalizedAlias);
+                    if (w != null && w.Pid.HasValue) return true;
+                }
+                return false;
+            }
+            catch { return false; }
         }
 
         internal static JObject BuildWhoamiPayload()
@@ -1081,6 +1168,37 @@ namespace GxMcp.Gateway
                     }
                 }
                 Log($"Worker for KB '{kb.Alias}' exited. Aborted {aborted} pending request(s) bound to it.");
+
+                // v2.6.8: eager respawn. Without this, the next tool call paid the
+                // ~10–15s cold-start latency inline — long enough for short-timeout
+                // MCP clients (VS Code Codex) to close the transport entirely.
+                // Fire-and-forget: failures are logged but don't propagate; the
+                // lazy path in WorkerPool.AcquireAsync still works as a fallback.
+                if (IsEagerRespawnSuppressed())
+                {
+                    Log($"[Respawn] Skipped eager respawn for KB '{kb.Alias}' — planned exit in progress.");
+                    return;
+                }
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        var ctSrc = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                        // v2.6.8 (review C4): close the dead entry so AcquireAsync's fast path
+                        // can't return the just-exited WorkerProcess if WorkerPool's own
+                        // entry-removal subscriber hasn't run yet.
+                        try { _workerPool!.Close(kb.NormalizedAlias); } catch { }
+                        await _workerPool!.AcquireAsync(kb, ctSrc.Token).ConfigureAwait(false);
+                        // v2.6.8 (review C5): no Booting stamp here — the freshly-spawned
+                        // worker will push its own state via GetIndexState; clobbering it
+                        // would silence real progress info for the 15s cache window.
+                        Log($"[Respawn] Replacement worker spawned for KB '{kb.Alias}'.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[Respawn] Failed to eagerly respawn worker for KB '{kb.Alias}': {ex.Message}. Lazy spawn will retry on next call.");
+                    }
+                });
             };
         }
 
@@ -1088,7 +1206,10 @@ namespace GxMcp.Gateway
         {
             if (_workerPool != null)
             {
-                try { _workerPool.StopAll(); } catch { }
+                using (SuppressEagerRespawn())
+                {
+                    try { _workerPool.StopAll(); } catch { }
+                }
             }
             // Clear cache on KB change
             _semanticCache.Clear();
@@ -1491,7 +1612,13 @@ namespace GxMcp.Gateway
                     }
                     try
                     {
-                        if (_workerPool != null) _workerPool.StopAll();
+                        if (_workerPool != null)
+                        {
+                            using (SuppressEagerRespawn())
+                            {
+                                _workerPool.StopAll();
+                            }
+                        }
                         _semanticCache.Clear();
                         StartWorker(_activeConfig);
                         BroadcastToolsListChanged("worker_reloaded_force");
@@ -3143,12 +3270,17 @@ namespace GxMcp.Gateway
         {
             if (string.Equals(toolName, "genexus_query", StringComparison.OrdinalIgnoreCase))
             {
-                return new HashSet<string>(new[] { "name", "type", "path" }, StringComparer.OrdinalIgnoreCase);
+                // v2.6.8: lastUpdate is part of the compact projection — same
+                // rationale as list_objects (small, answers "what changed").
+                return new HashSet<string>(new[] { "name", "type", "path", "lastUpdate" }, StringComparer.OrdinalIgnoreCase);
             }
 
             if (string.Equals(toolName, "genexus_list_objects", StringComparison.OrdinalIgnoreCase))
             {
-                return new HashSet<string>(new[] { "name", "type", "path", "parentPath" }, StringComparer.OrdinalIgnoreCase);
+                // v2.6.8: keep lastUpdate in the compact projection — it's the
+                // signal that powers "what changed?" workflows and is cheap (~30b).
+                // createdAt/lastModifiedBy stay verbose-only at the worker.
+                return new HashSet<string>(new[] { "name", "type", "path", "parentPath", "lastUpdate" }, StringComparer.OrdinalIgnoreCase);
             }
 
             return null;

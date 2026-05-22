@@ -1,5 +1,50 @@
 # Changelog
 
+## v2.6.8 — 2026-05-22
+
+Two streams in one release: lifecycle metadata on `genexus_list_objects` / `genexus_query` (the agent finally has a "what changed?" view without round-tripping the filesystem) and a crash-resilience pass for the gateway↔worker pipe after a user's VS Code Codex session lost its MCP transport on a single bad `lifecycle` call. A post-implementation code review found 8 correctness bugs — all fixed in this same release.
+
+### Lifecycle metadata on discovery tools
+
+- **`lastUpdate`, `createdAt`, `lastModifiedBy` per object** — populated from `KBObject.LastUpdate` / `VersionDate` / `UserName` during both the lite-pass and incremental `UpdateEntry`. `lastUpdate` ships in the default compact projection (ISO-8601 UTC, ~30 bytes); `createdAt` + `lastModifiedBy` are verbose-only to keep the default shape tight.
+- **`sort=name|lastUpdate` on `genexus_list_objects` and `genexus_query`.** `lastUpdate` returns newest first; on `query` it also bypasses the relevance scorer so callers asking for recency aren't fighting the score ranking. Default stays `name` (list) / `relevance` (query).
+- **`since` / `modifiedBefore` filters.** ISO-8601 UTC bounds; `since` inclusive, `modifiedBefore` exclusive. Items with no recorded lifecycle stamp are excluded once any bound is set — "modified before X" is meaningless for items with `LastUpdate=MinValue`.
+- **Stable `cursor` pagination.** Opaque base64url token `(ts, name, guid)` matches the full sort tuple — the resume predicate replays the same `LastUpdate desc, Name asc, Guid asc` order the OrderBy used, so paging across a mutating KB no longer skips or duplicates items. `nextCursor` is emitted alongside `nextOffset` so callers can opt in. Legacy 2-part `(ts, guid)` tokens still decode for back-compat. Cursor also handles the "Untouched" (MinValue) tail without truncating.
+- **`_meta.aggregates.lastUpdate.min/max`** and **`modified_last_7d`** — per-page lifecycle window so the agent can decide whether to drill deeper or page on.
+- **`_meta.aggregates.by_author`** — per-page lastModifiedBy counts (highest first). Surfaces "who's been touching this area" for free when items carry author data.
+- **`_meta.alternative_views.recently_changed`** — emitted whenever the page carries any lifecycle data, pointing the agent at `{ sort:"lastUpdate", limit:20 }` as a one-call switch to the temporal view.
+- **`genexus_inspect` lifecycle block.** Same `lastUpdate` / `createdAt` / `lastModifiedBy` triplet attached to the `metadata` projection so a single inspect tells you when the object was touched and by whom — no extra round-trip.
+- **`whoami.index.recentlyChanged`** — top-5 most-recently-modified IndexEntry objects projected by the worker on every `GetIndexState` push. First-turn "what's hot in this KB" hint for the agent.
+
+### Crash resilience (gateway↔worker)
+
+- **Eager worker respawn on `OnWorkerExited`.** Gateway fires a background `AcquireAsync` immediately when a worker dies instead of lazy-spawning on the next call. Short-timeout MCP clients (VS Code Codex closes the transport after a few seconds of silence) no longer see the worker boot's ~10–15 s cold-start as a transport hang. Eager respawn first calls `WorkerPool.Close(alias)` so the AcquireAsync fast-path can't return the just-exited handle if `WorkerPool`'s own entry-removal subscriber hasn't fired yet.
+- **`SuppressEagerRespawn()` scope.** Refcounted IDisposable wired around `RestartWorker.StopAll()` and the `worker_reload force=true` kill path so planned restarts don't race the eager respawn that orchestrates its own fresh spawn.
+- **`whoami` degraded mode.** When the active worker is dead or booting, `whoami` returns instantly with `workerHealth: { status:"respawning", hint:"…" }` (always, regardless of cache freshness) and stamps `index.status="Booting"` when the cached snapshot is also stale. Multi-KB / no-default-KB setups now probe every open worker via `ListOpen()` instead of routing through `KbResolver.Resolve(null,…)` (which throws `KB_AMBIGUOUS` on 2+ open KBs and was being swallowed as "not healthy"). The 400 ms RPC refresh is skipped entirely when no worker is alive, so the call stays sub-100 ms in the degraded case.
+- **`genexus_logs since=crash`.** Slices the worker log from the most recent `[ERROR]` / `[CRITICAL]` / `CRITICAL Init|Error|Failure|Exception` / `Unhandled exception` marker (precompiled regex with anchored bracket/word boundaries — bare "critical section" in a debug line no longer trips it) + 5 lines of leading context. Includes `crashLineIndex` and a `hint` block when no markers exist. Users reporting a crash get a focused, paste-ready snippet.
+
+### Installer
+
+- **VS Code (stable) + VS Code Insiders native MCP registration.** `install.ps1` writes to `%APPDATA%\Code\User\mcp.json` and `Code - Insiders\User\mcp.json` in addition to the existing Claude / Codex / Cursor (Cline) / Antigravity hooks. Each variant is independent — silently skipped when not installed. New `-SkipVsCodeMcp` switch for parity with `-SkipClaudeConfig` etc. Extension VSIX push via `code` / `code-insiders` CLI was already wired; this closes the loop so VS Code agents can discover the MCP server without manual `mcp.json` editing.
+
+### Post-implementation review caught 8 correctness bugs (all fixed in this release):
+
+- **Cursor predicate missed the Name tiebreak.** Sort was `LastUpdate desc, Name asc, Guid asc` but the resume predicate only checked `(LastUpdate, Guid)`. Two items sharing a LastUpdate but with Names that out-sort the cursor's Name AND Guids that under-sort the cursor's Guid (e.g., A=`(T,'Alpha','g1')`, B=`(T,'Bravo','g0')`) silently dropped B. Cursor now carries `(ts, name, guid)` and the predicate replays the full tuple. Legacy 2-part decoder retained for back-compat.
+- **Eager-respawn handler stamped `Booting` AFTER `AcquireAsync` returned.** Fresh telemetry pushed by the new worker (status=Indexing, totalObjects=5k, progress=0.4) was getting clobbered by the explicit `UpdateLastKnownIndexState("Booting", 0, …)` call. Stamp removed — the new worker pushes its own state.
+- **Eager respawn fired during planned `worker_reload`.** `RestartWorker.StopAll()` raised `OnWorkerExited`, which scheduled an eager respawn that raced with the reload's own spawn (double-spawn or pool-disposed exceptions). New `SuppressEagerRespawn()` refcounted scope wraps both `RestartWorker` and the force-reload path.
+- **`workerHealth` signal silenced for 15 s after every cache refresh.** Original gate `!workerHealthy && !cacheFresh` suppressed the degraded signal during the exact window VS Code Codex's short transport timeout most needed it. Gate split: `workerHealth` block is always emitted when the worker is unhealthy (purely additive); only the `index.status="Booting"` rewrite stays gated on `!cacheFresh`.
+- **`IsActiveWorkerHealthy` threw on multi-KB / no-default-KB setups.** Called `_kbResolver.Resolve(null, _workerPool.ListOpen())`, which throws `KbResolutionException` for both "ambiguous (2+ open)" and "no default + none open". The outer catch returned false → every multi-KB whoami falsely reported `respawning`. Now probes every open worker directly; healthy if any one is alive.
+- **`nextCursor=null` with `hasMore=true` truncated the MinValue tail.** When sort=lastUpdate and a page boundary landed inside the "Untouched" (no-timestamp) tail, `EncodeCursor` returned null but `hasMore=true`. Caller had no token to continue. Encoder now allows MinValue ts when name/guid are present.
+- **Eager-respawn race with `WorkerPool`'s entry-removal subscriber.** Both `Program` and `WorkerPool` subscribed to the same `OnWorkerExited` event; if Program's `Task.Run` reached `AcquireAsync` before `WorkerPool`'s `TryRemove` fired, AcquireAsync's fast path returned the dead worker. Eager respawn now calls `WorkerPool.Close(alias)` first.
+- **`since=crash` matcher matched benign "critical" mentions.** Bare `IndexOf("CRITICAL", OrdinalIgnoreCase)` caught `entering critical section`, `no critical errors`, etc. Replaced with a precompiled regex requiring bracket markers (`[ERROR]`, `[CRITICAL]`, `[FATAL]`), the `CRITICAL Init|Error|Failure|Exception` pattern used by `Logger.Error`, or `Unhandled exception` — all word-anchored.
+
+### Tests
+
+- New `TemporalListTests.cs` (13 tests): cursor encode/decode round-trip incl. legacy 2-part, sort=lastUpdate ordering, since/modifiedBefore inclusivity/exclusivity, cursor resume, cursor-with-sort=name noop, aggregates min/max + 7-day count, by_author ordering, lastUpdate projection (default + verbose + skipped on MinValue), empty-since-window empty_reason.
+- New `TestFixtures.IndexWithLifecycle` — 6-entry fixture spanning 30 days with 4/2 author split + one MinValue "Untouched" entry to exercise the skip-on-emit path.
+- Schema-size budget bumped 6500 → 6700 to accommodate `sort` / `since` / `modifiedBefore` / `cursor` on `genexus_list_objects` and `genexus_query` (~55 tokens net). 140 tokens of headroom for the next small batch.
+- Discovery golden fixture (`tools-list.response.json`) regenerated for the new schema fields on `genexus_list_objects`, `genexus_query`, and `genexus_logs`.
+
 ## v2.6.7 — 2026-05-22
 
 A 22-point friction list against an `AcademicoHomolog1` working session on 2026-05-22 named the highest-impact loss-makers: builds queueing through 12 polls each (5–13 min real time), "Build Failed: 0 errors, 0 warnings" with no actionable signal, HTML-form gotchas surfacing only after the browser smoke-test, parallel `genexus_edit` silently shedding all but the first patch, WIN1252 charset losses, opaque "Visual write failed" errors, and a `genexus_preview` path that pinned Chrome and wedged the worker for the rest of the session. This release closes every implementable item end-to-end and ships unit tests for the parser / charset / concurrency helpers; the build-pipeline shortcut (`skipFullDeploy`) is gated behind an `EXPERIMENTAL` flag pending live validation against a runtime that picks up generated sources directly.

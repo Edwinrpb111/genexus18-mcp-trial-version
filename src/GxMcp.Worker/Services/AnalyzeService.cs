@@ -835,6 +835,28 @@ namespace GxMcp.Worker.Services
                 // 6. Metadata (Sync)
                 if (includeAll || requested.Contains("metadata")) result["wwpMetadata"] = GetWWPMetadata(obj);
 
+                // v2.6.8: lifecycle block. Mirrors list_objects projection so the
+                // agent can answer "when was this last touched / by whom" from a
+                // single inspect call. Defensive reads — partially-loaded objects
+                // can throw on KBObject accessors.
+                if (includeAll || requested.Contains("metadata"))
+                {
+                    try
+                    {
+                        var life = new JObject();
+                        DateTime lu = default, ca = default;
+                        string lub = null;
+                        try { lu = obj.LastUpdate; } catch { }
+                        try { ca = obj.VersionDate; } catch { }
+                        try { lub = obj.UserName; } catch { }
+                        if (lu > DateTime.MinValue) life["lastUpdate"] = lu.ToUniversalTime().ToString("o");
+                        if (ca > DateTime.MinValue) life["createdAt"] = ca.ToUniversalTime().ToString("o");
+                        if (!string.IsNullOrEmpty(lub)) life["lastModifiedBy"] = lub;
+                        if (life.Count > 0) result["lifecycle"] = life;
+                    }
+                    catch (Exception ex) { Logger.Debug("[Inspect] lifecycle block failed: " + ex.Message); }
+                }
+
                 // 6.0 Transaction-specific metadata — surfaces IsBusinessComponent so the agent
                 // can verify BC state without paging through the full property bag.
                 if ((includeAll || requested.Contains("metadata")) && obj is global::Artech.Genexus.Common.Objects.Transaction trnMeta)

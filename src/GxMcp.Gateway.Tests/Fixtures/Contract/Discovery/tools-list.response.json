@@ -1149,6 +1149,10 @@
             "description": "Compact projection (default true).",
             "type": "boolean"
           },
+          "cursor": {
+            "description": "Opaque token from prior nextCursor. Use with sort=lastUpdate for stable paging.",
+            "type": "string"
+          },
           "descriptionFilter": {
             "description": "Substring on description.",
             "type": "string"
@@ -1168,6 +1172,10 @@
           "limit": {
             "type": "integer"
           },
+          "modifiedBefore": {
+            "description": "ISO-8601 UTC. Only items with lastUpdate < modifiedBefore.",
+            "type": "string"
+          },
           "nameFilter": {
             "description": "Substring on name.",
             "type": "string"
@@ -1185,6 +1193,18 @@
             "description": "Folder prefix, e.g. 'Root Module/X/'.",
             "type": "string"
           },
+          "since": {
+            "description": "ISO-8601 UTC. Only items with lastUpdate >= since.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "name (default, type-bucketed) or lastUpdate (newest first).",
+            "enum": [
+              "name",
+              "lastUpdate"
+            ],
+            "type": "string"
+          },
           "typeFilter": {
             "type": "string"
           },
@@ -1198,7 +1218,7 @@
       "name": "genexus_list_objects"
     },
     {
-      "description": "Read worker_debug.log tail for error diagnosis or correlation.",
+      "description": "Read worker_debug.log tail for error diagnosis or correlation. since='crash' slices from the last ERROR/CRITICAL marker.",
       "inputSchema": {
         "properties": {
           "filterCorrelation": {
@@ -1209,6 +1229,13 @@
           },
           "lines": {
             "type": "integer"
+          },
+          "since": {
+            "description": "'crash' = tail from the most recent ERROR/CRITICAL line + 5 lines of context.",
+            "enum": [
+              "crash"
+            ],
+            "type": "string"
           }
         },
         "type": "object"
@@ -1371,6 +1398,10 @@
             "description": "Compact projection (default true).",
             "type": "boolean"
           },
+          "cursor": {
+            "description": "Opaque token from prior nextCursor. Use with sort=lastUpdate for stable paging.",
+            "type": "string"
+          },
           "domainFilter": {
             "type": "string"
           },
@@ -1385,7 +1416,23 @@
           "limit": {
             "type": "integer"
           },
+          "modifiedBefore": {
+            "description": "ISO-8601 UTC. Only items with lastUpdate < modifiedBefore.",
+            "type": "string"
+          },
           "query": {
+            "type": "string"
+          },
+          "since": {
+            "description": "ISO-8601 UTC. Only items with lastUpdate >= since.",
+            "type": "string"
+          },
+          "sort": {
+            "description": "relevance (default) or lastUpdate (newest first; bypasses score ranking).",
+            "enum": [
+              "relevance",
+              "lastUpdate"
+            ],
             "type": "string"
           },
           "typeFilter": {

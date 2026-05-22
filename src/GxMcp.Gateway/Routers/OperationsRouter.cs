@@ -61,7 +61,10 @@ namespace GxMcp.Gateway.Routers
                         target = "_self",
                         lines = args?["lines"]?.ToObject<int?>() ?? 50,
                         filterCorrelation = args?["filterCorrelation"]?.ToString(),
-                        grep = args?["grep"]?.ToString()
+                        grep = args?["grep"]?.ToString(),
+                        // v2.6.8: since=crash slices the log from the most recent
+                        // ERROR/CRITICAL marker so users have a focused snippet to share.
+                        since = args?["since"]?.ToString()
                     };
 
                 case "genexus_refactor":

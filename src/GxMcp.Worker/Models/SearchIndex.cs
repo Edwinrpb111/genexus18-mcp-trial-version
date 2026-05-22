@@ -49,6 +49,14 @@ namespace GxMcp.Worker.Models
             // Table/Transaction specific
             public string RootTable { get; set; }
             
+            // v2.6.8: temporal/author metadata sourced from KBObject.LastUpdate /
+            // VersionDate / UserName. UTC timestamps. Stable for sort=lastUpdate and
+            // since/modifiedBefore filters in genexus_list_objects. DateTime.MinValue
+            // serializes to a sentinel string but callers should treat it as "unknown".
+            public DateTime LastUpdate { get; set; }
+            public DateTime CreatedAt { get; set; }
+            public string LastModifiedBy { get; set; }
+
             public bool IsEnriched { get; set; }
             public string SourceSnippet { get; set; }
             public string FullSource { get; set; }

@@ -47,10 +47,14 @@ namespace GxMcp.Worker.Services
                 verbose: c.Verbose,
                 invokerNameFilter: c.NameFilter,
                 invokerDescriptionFilter: c.DescriptionFilter,
-                invokerPathPrefix: c.PathPrefix);
+                invokerPathPrefix: c.PathPrefix,
+                sort: c.Sort,
+                since: c.Since,
+                modifiedBefore: c.ModifiedBefore,
+                cursor: c.Cursor);
         }
 
-        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null, bool verbose = false, string invokerNameFilter = null, string invokerDescriptionFilter = null, string invokerPathPrefix = null)
+        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null, bool verbose = false, string invokerNameFilter = null, string invokerDescriptionFilter = null, string invokerPathPrefix = null, string sort = null, DateTime since = default(DateTime), DateTime modifiedBefore = default(DateTime), string cursor = null)
         {
             var sw = Stopwatch.StartNew();
             string source = "none";
@@ -169,14 +173,74 @@ namespace GxMcp.Worker.Services
                             (e.ParentFolderPath ?? string.Empty).StartsWith(invokerPathPrefix, StringComparison.OrdinalIgnoreCase));
                     }
 
-                    var orderedIndexEntries = entries
-                        .OrderBy(e => GetTypeSortBucket(e.Type))
-                        .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                        .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
+                    // v2.6.8: temporal filters (Since inclusive, ModifiedBefore exclusive).
+                    // Items with LastUpdate=MinValue (unknown) are excluded once any
+                    // temporal bound is set — "modified before X" is meaningless for
+                    // items with no recorded modification timestamp.
+                    if (since > DateTime.MinValue)
+                    {
+                        entries = entries.Where(e => e.LastUpdate >= since);
+                    }
+                    if (modifiedBefore > DateTime.MinValue)
+                    {
+                        entries = entries.Where(e => e.LastUpdate > DateTime.MinValue && e.LastUpdate < modifiedBefore);
+                    }
+
+                    // v2.6.8: sort selector. "lastUpdate" returns newest-first and skips
+                    // the Folder/Module bucketing — when the agent asks for "what changed",
+                    // grouping by type fights the question.
+                    bool sortByLastUpdate = !string.IsNullOrEmpty(sort) &&
+                        string.Equals(sort, "lastUpdate", StringComparison.OrdinalIgnoreCase);
+
+                    List<SearchIndex.IndexEntry> orderedIndexEntries;
+                    if (sortByLastUpdate)
+                    {
+                        orderedIndexEntries = entries
+                            .OrderByDescending(e => e.LastUpdate)
+                            .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(e => e.Guid ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                    }
+                    else
+                    {
+                        orderedIndexEntries = entries
+                            .OrderBy(e => GetTypeSortBucket(e.Type))
+                            .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                    }
 
                     int totalIndex = orderedIndexEntries.Count;
                     int startIndex = Math.Max(0, offset);
+
+                    // v2.6.8: stable cursor wins over offset when both arrive. Decode
+                    // pulls (lastUpdate, guid); we scan the ordered list to the first
+                    // entry strictly older than that tuple. Cursor is opt-in: callers
+                    // that ignore it still get offset-based paging.
+                    if (!string.IsNullOrEmpty(cursor) && sortByLastUpdate)
+                    {
+                        var decoded = DecodeCursor(cursor);
+                        if (decoded.HasValue)
+                        {
+                            var (cursorTs, cursorName, cursorGuid) = decoded.Value;
+                            // v2.6.8 (review C1): predicate must mirror the OrderBy
+                            // tuple — LastUpdate desc, Name asc, Guid asc — or we
+                            // silently skip items whose Name sorts after the cursor
+                            // but whose Guid sorts before it.
+                            int resumeAt = orderedIndexEntries.FindIndex(e =>
+                            {
+                                if (e.LastUpdate < cursorTs) return true;
+                                if (e.LastUpdate != cursorTs) return false;
+                                int byName = string.Compare(e.Name ?? string.Empty, cursorName ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+                                if (byName > 0) return true;
+                                if (byName < 0) return false;
+                                return string.Compare(e.Guid ?? string.Empty, cursorGuid ?? string.Empty, StringComparison.OrdinalIgnoreCase) > 0;
+                            });
+                            if (resumeAt >= 0) startIndex = resumeAt;
+                            else startIndex = totalIndex; // exhausted
+                        }
+                    }
+
                     int pageSize = limit <= 0 ? int.MaxValue : limit;
                     foreach (var entry in orderedIndexEntries
                         .Skip(startIndex)
@@ -191,11 +255,33 @@ namespace GxMcp.Worker.Services
                             entry.Path ?? string.Empty,
                             entry.ParentPath ?? string.Empty,
                             entry.ParentFolderPath ?? string.Empty,
-                            verbose
+                            verbose,
+                            entry.LastUpdate,
+                            entry.CreatedAt,
+                            entry.LastModifiedBy
                         ));
                     }
 
+                    // v2.6.8: when sorting by lastUpdate, emit a cursor token built
+                    // from the last item of this page so callers can continue without
+                    // an offset that drifts as the KB mutates.
+                    SearchIndex.IndexEntry lastEmitted = null;
+                    if (sortByLastUpdate && array.Count > 0)
+                    {
+                        lastEmitted = orderedIndexEntries.Skip(startIndex).Take(pageSize).LastOrDefault();
+                    }
+
                     var paged = BuildPagedResponseInternal(array, totalIndex, startIndex, pageSize);
+                    if (lastEmitted != null && (startIndex + array.Count) < totalIndex)
+                    {
+                        // v2.6.8 (review C1+C9): encode (ts, name, guid) so the
+                        // resume predicate can replay the full tiebreak chain.
+                        // EncodeCursor allows MinValue ts when name/guid present,
+                        // so the "Untouched" tail no longer truncates pagination.
+                        var token = EncodeCursor(lastEmitted.LastUpdate, lastEmitted.Name, lastEmitted.Guid);
+                        if (!string.IsNullOrEmpty(token))
+                            paged["nextCursor"] = token;
+                    }
                     // Empty typeFilter result: hand back the distinct types present so the agent finds the canonical name.
                     if (array.Count == 0 && filterTypes.Count > 0 && index.Objects.Count > 0)
                     {
@@ -280,11 +366,41 @@ namespace GxMcp.Worker.Services
                     filteredObjects = filteredObjects.Where(x => string.Equals(x.Hierarchy.ParentName, parentFilter, StringComparison.OrdinalIgnoreCase));
                 }
 
-                var orderedRuntime = filteredObjects
-                    .OrderBy(x => GetTypeSortBucket(x.TypeName))
-                    .ThenBy(x => x.Object.Name, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(x => x.TypeName, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                // v2.6.8: temporal filters on the SDK fallback path. Reads can throw
+                // on partially-loaded objects, so we wrap defensively and drop
+                // entries that don't have a usable timestamp when a bound is in play.
+                if (since > DateTime.MinValue || modifiedBefore > DateTime.MinValue)
+                {
+                    filteredObjects = filteredObjects.Where(x =>
+                    {
+                        DateTime lu;
+                        try { lu = x.Object.LastUpdate; } catch { return false; }
+                        if (lu <= DateTime.MinValue) return false; // no usable timestamp
+                        if (since > DateTime.MinValue && lu < since) return false;
+                        if (modifiedBefore > DateTime.MinValue && lu >= modifiedBefore) return false;
+                        return true;
+                    });
+                }
+
+                bool sortByLastUpdateRt = !string.IsNullOrEmpty(sort) &&
+                    string.Equals(sort, "lastUpdate", StringComparison.OrdinalIgnoreCase);
+
+                List<RuntimeListEntry> orderedRuntime;
+                if (sortByLastUpdateRt)
+                {
+                    orderedRuntime = filteredObjects
+                        .OrderByDescending(x => { try { return x.Object.LastUpdate; } catch { return DateTime.MinValue; } })
+                        .ThenBy(x => x.Object.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                else
+                {
+                    orderedRuntime = filteredObjects
+                        .OrderBy(x => GetTypeSortBucket(x.TypeName))
+                        .ThenBy(x => x.Object.Name, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.TypeName, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
 
                 int totalRuntime = orderedRuntime.Count;
                 int startRuntime = Math.Max(0, offset);
@@ -296,6 +412,13 @@ namespace GxMcp.Worker.Services
                     var runtimeParentFolderPath = string.IsNullOrEmpty(item.Hierarchy.ParentPath)
                         ? "Root Module"
                         : "Root Module/" + item.Hierarchy.ParentPath;
+                    DateTime rtLastUpdate = default(DateTime);
+                    DateTime rtCreatedAt = default(DateTime);
+                    string rtLastModifiedBy = null;
+                    try { rtLastUpdate = item.Object.LastUpdate; } catch { }
+                    try { rtCreatedAt = item.Object.VersionDate; } catch { }
+                    try { rtLastModifiedBy = item.Object.UserName; } catch { }
+
                     array.Add(BuildItem(
                         item.Object.Name,
                         item.TypeName,
@@ -305,7 +428,10 @@ namespace GxMcp.Worker.Services
                         item.Hierarchy.Path,
                         item.Hierarchy.ParentPath,
                         runtimeParentFolderPath,
-                        verbose
+                        verbose,
+                        rtLastUpdate,
+                        rtCreatedAt,
+                        rtLastModifiedBy
                     ));
                 }
 
@@ -355,6 +481,27 @@ namespace GxMcp.Worker.Services
                 if (suggestion != null)
                 {
                     meta["suggested_next"] = suggestion;
+                }
+
+                // v2.6.8: nudge the agent toward the "what changed?" view when at
+                // least one item in this page carries lifecycle data. Cheap pointer,
+                // doesn't fight the default sort.
+                bool hasLifecycle = results.Cast<JObject>()
+                    .Any(it => it["lastUpdate"] != null);
+                if (hasLifecycle)
+                {
+                    meta["alternative_views"] = new JObject
+                    {
+                        ["recently_changed"] = new JObject
+                        {
+                            ["tool"] = "genexus_list_objects",
+                            ["args"] = new JObject
+                            {
+                                ["sort"] = "lastUpdate",
+                                ["limit"] = 20
+                            }
+                        }
+                    };
                 }
             }
 
@@ -425,8 +572,50 @@ namespace GxMcp.Worker.Services
             }
             aggregates["by_type"] = byTypeObj;
 
-            // Note: modified_last_7d is skipped because IndexEntry does not have timestamp data
-            // and KBObject does not expose modification time through the public API
+            // v2.6.8: lifecycle aggregates — page-window min/max of lastUpdate and a
+            // count of items modified in the last 7 days. Pulled from the projected
+            // ISO-8601 string on each item so this works for both index and runtime
+            // paths without needing the original IndexEntry.
+            DateTime? minLu = null, maxLu = null;
+            int last7 = 0;
+            DateTime cutoff = DateTime.UtcNow.AddDays(-7);
+            foreach (var item in items.Cast<JObject>())
+            {
+                var luTok = item["lastUpdate"]?.ToString();
+                if (string.IsNullOrEmpty(luTok)) continue;
+                if (!DateTime.TryParse(luTok, null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var lu))
+                    continue;
+                if (minLu == null || lu < minLu) minLu = lu;
+                if (maxLu == null || lu > maxLu) maxLu = lu;
+                if (lu >= cutoff) last7++;
+            }
+            if (minLu.HasValue && maxLu.HasValue)
+            {
+                aggregates["lastUpdate"] = new JObject
+                {
+                    ["min"] = minLu.Value.ToUniversalTime().ToString("o"),
+                    ["max"] = maxLu.Value.ToUniversalTime().ToString("o")
+                };
+                aggregates["modified_last_7d"] = last7;
+            }
+
+            // v2.6.8: per-page authorship counts. Answers "who's been touching this
+            // area" in one round-trip when items carry lastModifiedBy (verbose=true).
+            var byAuthor = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in items.Cast<JObject>())
+            {
+                var who = item["lastModifiedBy"]?.ToString();
+                if (string.IsNullOrEmpty(who)) continue;
+                byAuthor[who] = byAuthor.TryGetValue(who, out var c) ? c + 1 : 1;
+            }
+            if (byAuthor.Count > 0)
+            {
+                var byAuthorObj = new JObject();
+                foreach (var kvp in byAuthor.OrderByDescending(x => x.Value).ThenBy(x => x.Key))
+                    byAuthorObj[kvp.Key] = kvp.Value;
+                aggregates["by_author"] = byAuthorObj;
+            }
 
             return aggregates;
         }
@@ -453,7 +642,15 @@ namespace GxMcp.Worker.Services
 
         public static JObject BuildItemForTest(string name, string type, string description, string parent, string module, string path, string parentPath, bool verbose = false)
         {
-            return BuildItemInternal(name, type, description, parent, module, path, parentPath, null, verbose);
+            return BuildItemInternal(name, type, description, parent, module, path, parentPath, null, verbose, default(DateTime), default(DateTime), null);
+        }
+
+        // v2.6.8: lifecycle metadata projection helper. Returns null when both date
+        // is MinValue (sentinel) and user is empty, so the caller can decide whether
+        // to skip the field entirely vs. emit a sentinel.
+        public static JObject BuildItemForTest(string name, string type, string description, string parent, string module, string path, string parentPath, bool verbose, DateTime lastUpdate, DateTime createdAt, string lastModifiedBy)
+        {
+            return BuildItemInternal(name, type, description, parent, module, path, parentPath, null, verbose, lastUpdate, createdAt, lastModifiedBy);
         }
 
         // Test helper: allows tests to call BuildPagedResponse with mocked data
@@ -464,12 +661,12 @@ namespace GxMcp.Worker.Services
             return svc.BuildPagedResponseInternal(items, total, offset, pageSize);
         }
 
-        private JObject BuildItem(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose = false)
+        private JObject BuildItem(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose = false, DateTime lastUpdate = default(DateTime), DateTime createdAt = default(DateTime), string lastModifiedBy = null)
         {
-            return BuildItemInternal(name, type, description, parent, module, path, parentPath, parentFolderPath, verbose);
+            return BuildItemInternal(name, type, description, parent, module, path, parentPath, parentFolderPath, verbose, lastUpdate, createdAt, lastModifiedBy);
         }
 
-        private static JObject BuildItemInternal(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose = false)
+        private static JObject BuildItemInternal(string name, string type, string description, string parent, string module, string path, string parentPath, string parentFolderPath, bool verbose, DateTime lastUpdate, DateTime createdAt, string lastModifiedBy)
         {
             var item = new JObject();
             item["name"] = name;
@@ -502,6 +699,26 @@ namespace GxMcp.Worker.Services
             if (!string.IsNullOrEmpty(parentFolderPath))
             {
                 item["parentFolderPath"] = parentFolderPath;
+            }
+
+            // v2.6.8: lifecycle metadata.
+            // - lastUpdate is small and answers a real question ("what changed?"),
+            //   so we emit it in default shape when known.
+            // - createdAt / lastModifiedBy are verbose-only to keep default payload tight.
+            if (lastUpdate > DateTime.MinValue)
+            {
+                item["lastUpdate"] = lastUpdate.ToUniversalTime().ToString("o");
+            }
+            if (isLegacyMode || verbose)
+            {
+                if (createdAt > DateTime.MinValue)
+                {
+                    item["createdAt"] = createdAt.ToUniversalTime().ToString("o");
+                }
+                if (!string.IsNullOrEmpty(lastModifiedBy))
+                {
+                    item["lastModifiedBy"] = lastModifiedBy;
+                }
             }
 
             return item;
@@ -627,6 +844,56 @@ namespace GxMcp.Worker.Services
             public string Path { get; set; }
             public string ModuleName { get; set; }
         }
+
+        // v2.6.8: opaque cursor. Layout is intentionally simple —
+        // base64url("ts|name|guid") so it's debuggable in logs but still doesn't
+        // tempt callers to parse it. Stable while sort=lastUpdate; reset when
+        // the sort changes.
+        //
+        // Carrying Name (in addition to Guid) matches the sort tuple
+        // (LastUpdate desc, Name asc, Guid asc) — the resume predicate has to use
+        // the same tiebreaks the OrderBy used, or items can be silently skipped
+        // when multiple entries share the same LastUpdate. See review C1.
+        //
+        // ts=MinValue is allowed: it lets callers paginate across the
+        // "Untouched" tail of items that have no lifecycle timestamp.
+        internal static string EncodeCursor(DateTime ts, string name, string guid)
+        {
+            // Allow null/empty guid + name only when ts is set — without ANY
+            // tiebreaker we couldn't resume safely.
+            if (ts <= DateTime.MinValue && string.IsNullOrEmpty(guid) && string.IsNullOrEmpty(name))
+                return null;
+            string raw = ts.ToUniversalTime().ToString("o") + "|" + (name ?? string.Empty) + "|" + (guid ?? string.Empty);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(raw);
+            return Convert.ToBase64String(bytes)
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+
+        // Back-compat wrapper kept for any out-of-tree callers; emits a cursor
+        // with empty Name (will work for non-tie pages, may misorder under ties).
+        internal static string EncodeCursor(DateTime ts, string guid) =>
+            EncodeCursor(ts, null, guid);
+
+        internal static (DateTime ts, string name, string guid)? DecodeCursor(string cursor)
+        {
+            if (string.IsNullOrEmpty(cursor)) return null;
+            try
+            {
+                string padded = cursor.Replace('-', '+').Replace('_', '/');
+                switch (padded.Length % 4) { case 2: padded += "=="; break; case 3: padded += "="; break; }
+                string raw = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+                var parts = raw.Split('|');
+                if (parts.Length < 2) return null;
+                if (!DateTime.TryParse(parts[0], null,
+                        System.Globalization.DateTimeStyles.RoundtripKind, out var ts))
+                    return null;
+                // 2-part legacy cursor: ts|guid. 3-part new cursor: ts|name|guid.
+                if (parts.Length == 2)
+                    return (ts, string.Empty, parts[1]);
+                return (ts, parts[1], parts[2]);
+            }
+            catch { return null; }
+        }
     }
 
     // v2.3.8 (Task 2.2): typed criteria for ListService.List. Mirrors the
@@ -645,5 +912,17 @@ namespace GxMcp.Worker.Services
         public int Limit { get; set; } = 200;
         public int Offset { get; set; } = 0;
         public bool Verbose { get; set; } = false;
+
+        // v2.6.8: temporal & ordering controls.
+        // - Sort: "name" (default, stable) or "lastUpdate" (descending; newest first).
+        // - Since / ModifiedBefore: inclusive lower / exclusive upper bound on
+        //   IndexEntry.LastUpdate. DateTime.MinValue means "no bound".
+        // - Cursor: opaque token. When present, the worker uses it instead of Offset
+        //   to resume a page; pairs with sort=lastUpdate for stable pagination
+        //   against a mutating KB. See ListService.DecodeCursor.
+        public string Sort { get; set; }
+        public DateTime Since { get; set; }
+        public DateTime ModifiedBefore { get; set; }
+        public string Cursor { get; set; }
     }
 }

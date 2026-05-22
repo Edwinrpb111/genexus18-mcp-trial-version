@@ -69,7 +69,10 @@ namespace GxMcp.Gateway.Tests
             //   genexus_preview, dedupe of the kb-description boilerplate across 32 tools.
             //   New additions (wait_until_done, skipFullDeploy, edit_and_build.patch, worker_reload.force)
             //   fit comfortably under the lowered budget. Net ~-870 tokens vs prior 7200.
-            Assert.True(approxTokens < 6500, $"tool_definitions.json is ~{approxTokens} tokens; budget 6500.");
+            //   v2.6.8: 6500 → 6700 for sort/since/modifiedBefore/cursor declarations on
+            //   genexus_list_objects + genexus_query. Net ~+55 tokens; budget set with
+            //   ~140 tokens of headroom for the next small batch.
+            Assert.True(approxTokens < 6700, $"tool_definitions.json is ~{approxTokens} tokens; budget 6700.");
         }
     }
 }

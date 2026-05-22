@@ -88,6 +88,57 @@ namespace GxMcp.Worker.Tests
             return new CallGraphFixture { Index = svc };
         }
 
+        // v2.6.8: fixture for temporal sort/cursor/since tests. Five procedures
+        // with distinct LastUpdate timestamps spanning 30 days, plus a sixth
+        // with no timestamp (sentinel MinValue) to exercise the skip-on-emit
+        // path. Authors are split 4/2 to make by_author aggregate non-trivial.
+        public static CallGraphFixture IndexWithLifecycle()
+        {
+            var entries = new List<SearchIndex.IndexEntry>
+            {
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000001",
+                    Name = "RecentMost", Type = "Procedure", Description = "newest",
+                    LastUpdate = new System.DateTime(2026, 5, 22, 12, 0, 0, System.DateTimeKind.Utc),
+                    CreatedAt = new System.DateTime(2026, 5, 1, 0, 0, 0, System.DateTimeKind.Utc),
+                    LastModifiedBy = "alice"
+                },
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000002",
+                    Name = "Recent2", Type = "Procedure", Description = "second-newest",
+                    LastUpdate = new System.DateTime(2026, 5, 20, 12, 0, 0, System.DateTimeKind.Utc),
+                    LastModifiedBy = "alice"
+                },
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000003",
+                    Name = "Mid", Type = "Procedure", Description = "two weeks back",
+                    LastUpdate = new System.DateTime(2026, 5, 10, 12, 0, 0, System.DateTimeKind.Utc),
+                    LastModifiedBy = "bob"
+                },
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000004",
+                    Name = "Older", Type = "Procedure", Description = "month back",
+                    LastUpdate = new System.DateTime(2026, 4, 22, 12, 0, 0, System.DateTimeKind.Utc),
+                    LastModifiedBy = "alice"
+                },
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000005",
+                    Name = "Eldest", Type = "Procedure", Description = "two months back",
+                    LastUpdate = new System.DateTime(2026, 3, 22, 12, 0, 0, System.DateTimeKind.Utc),
+                    LastModifiedBy = "bob"
+                },
+                new SearchIndex.IndexEntry {
+                    Guid = "00000000-0000-0000-0000-000000000006",
+                    Name = "Untouched", Type = "Procedure", Description = "no lifecycle data",
+                    // LastUpdate left at default(DateTime) = MinValue
+                    LastModifiedBy = null
+                }
+            };
+            var svc = new IndexCacheService();
+            svc.LoadFromEntries(entries);
+            return new CallGraphFixture { Index = svc };
+        }
+
         // Linear chain N0 -> N1 -> N2 -> ... -> N{depth-1}.
         // Root = "N0". Each entry's Calls points to the next node only.
         public static CallGraphFixture LargeCallChain(int depth)

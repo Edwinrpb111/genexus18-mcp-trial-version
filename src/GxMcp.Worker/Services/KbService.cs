@@ -307,12 +307,25 @@ namespace GxMcp.Worker.Services
                         string description = null;
                         try { description = obj.Description; } catch { }
 
+                        // v2.6.8: lite pass also captures lifecycle metadata. Reads
+                        // are cheap on the KBObject handle (no part load), so we
+                        // pay the cost once during the lite walk instead of
+                        // forcing the user to wait for enrichment.
+                        DateTime lu = DateTime.MinValue, ca = DateTime.MinValue;
+                        string lub = null;
+                        try { lu = obj.LastUpdate; } catch { }
+                        try { ca = obj.VersionDate; } catch { }
+                        try { lub = obj.UserName; } catch { }
+
                         liteEntries.Add(new SearchIndex.IndexEntry
                         {
                             Guid = obj.Guid.ToString(),
                             Name = obj.Name,
                             Type = typeName,
                             Description = description,
+                            LastUpdate = lu,
+                            CreatedAt = ca,
+                            LastModifiedBy = lub,
                             IsEnriched = false
                         });
 

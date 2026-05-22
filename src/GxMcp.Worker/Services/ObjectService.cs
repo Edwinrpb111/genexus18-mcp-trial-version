@@ -31,6 +31,14 @@ namespace GxMcp.Worker.Services
         // is event-driven elsewhere, so doubling the TTL is safe.
         private static readonly TimeSpan ReadCacheTtl = TimeSpan.FromSeconds(60);
 
+        // v2.6.8 (review C8): crash-line detector. Anchored markers only —
+        // bare "critical" inside a log message (e.g., "critical section",
+        // "no critical errors") must NOT trip the matcher.
+        private static readonly System.Text.RegularExpressions.Regex _crashLinePattern =
+            new System.Text.RegularExpressions.Regex(
+                @"\[(ERROR|CRITICAL|FATAL)\]|\bCRITICAL\s+(?:Init|Error|Failure|Exception)\b|\bUnhandled\s+exception\b",
+                System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
         private readonly KbService _kbService;
         private readonly BuildService _buildService;
         private DataInsightService _dataInsightService;
@@ -246,7 +254,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string ReadLogs(int lines, string filterCorrelation, string grepPattern)
+        public string ReadLogs(int lines, string filterCorrelation, string grepPattern, string sinceMode = null)
         {
             try
             {
@@ -270,6 +278,32 @@ namespace GxMcp.Worker.Services
                 }
 
                 IEnumerable<string> filtered = allLines;
+
+                // v2.6.8: since=crash slices the log starting at the most recent
+                // [ERROR]/[CRITICAL] line — the agent (and the user reporting a
+                // crash) gets the stack + immediate context without having to
+                // hunt for it manually.
+                bool sliceFromCrash = string.Equals(sinceMode, "crash", StringComparison.OrdinalIgnoreCase);
+                int crashIndex = -1;
+                if (sliceFromCrash)
+                {
+                    for (int i = allLines.Count - 1; i >= 0; i--)
+                    {
+                        string ln = allLines[i];
+                        if (_crashLinePattern.IsMatch(ln))
+                        {
+                            crashIndex = i;
+                            break;
+                        }
+                    }
+                    if (crashIndex >= 0)
+                    {
+                        // Take 5 lines of context before + everything after.
+                        int start = Math.Max(0, crashIndex - 5);
+                        filtered = allLines.Skip(start);
+                    }
+                }
+
                 if (!string.IsNullOrWhiteSpace(filterCorrelation))
                     filtered = filtered.Where(l => l.IndexOf(filterCorrelation, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (!string.IsNullOrWhiteSpace(grepPattern))
@@ -293,6 +327,15 @@ namespace GxMcp.Worker.Services
                     ["matched"] = tail.Count,
                     ["lines"] = string.Join("\n", tail)
                 };
+                if (sliceFromCrash)
+                {
+                    result["sinceMode"] = "crash";
+                    result["crashLineIndex"] = crashIndex;
+                    if (crashIndex < 0)
+                    {
+                        result["hint"] = "No ERROR/CRITICAL markers found in the log — worker has not crashed (or the log has rotated).";
+                    }
+                }
                 return result.ToString();
             }
             catch (Exception ex)
