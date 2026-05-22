@@ -2,6 +2,84 @@
 
 Project-level instructions for AI assistants working on Genexus18MCP.
 
+## Project orient
+
+Two-process MCP server that exposes a GeneXus 18 Knowledge Base to AI agents (Claude Desktop, Claude Code, Cursor, etc.) via the native GeneXus SDK — no parsing of KB files, no scraped IDE state, edits go through the same code paths the IDE uses. Codebase is C# / .NET for everything that touches the SDK; the npm package (`genexus-mcp`) is a thin Node wrapper shipping pre-built Windows binaries and writing MCP-client config.
+
+```
+MCP client (Claude/Cursor/…)
+   │   stdio JSON-RPC
+   ▼
+GxMcp.Gateway  (long-running, one per client)
+   │   pipes JSON-RPC over stdio
+   ▼
+GxMcp.Worker   (one per opened KB; STA thread; hosts Artech.* SDK in-process)
+   │   COM-flavoured SDK calls
+   ▼
+GeneXus 18 SDK  (C:\Program Files (x86)\GeneXus\GeneXus18\Artech.*.dll)
+   ▼
+Knowledge Base on disk
+```
+
+- **Gateway** (`src/GxMcp.Gateway/`, **net8.0-windows**) — speaks MCP stdio with the client, owns a `WorkerPool` indexed by KB alias, routes tool calls through `Routers/*.cs` to a per-KB worker. `Program.cs` is the MCP loop + `whoami` builder + worker lifecycle.
+- **Worker** (`src/GxMcp.Worker/`, **net48 STA**) — owns the GeneXus SDK in-process. STA thread is mandatory because the SDK is COM-flavoured. `Services/CommandDispatcher.cs` is the RPC switchboard; `KbService` opens KBs; `IndexCacheService` maintains an on-disk `SearchIndex` cache; `Services/{ListService,SearchService,AnalyzeService,WriteService,…}` implement the tools.
+- **CLI** (`cli/run.js`) — what `npx genexus-mcp` invokes. Reads MCP client configs (Claude Desktop, Codex, Cursor, VS Code), writes the server entry pointing at `publish/start_mcp.bat`, then forwards stdio to the gateway. Tests are pure Node (`cli/run.test.js`).
+- **publish/** — the deployable artifact. Both `install.ps1` (build-from-source) and `npm publish` (via `publish.zip`) ship from this directory. `GxMcp.Gateway.exe` at the root, `worker/GxMcp.Worker.exe` one level down. This layout is asserted by the npm-publish workflow.
+
+### Tool surface lives in two synchronized places
+
+- `src/GxMcp.Gateway/tool_definitions.json` — single source of truth for MCP tool schemas. `ToolSchemaSizeTests` enforces a token budget; bumping requires updating both the budget constant and the comment trail in that test.
+- `src/GxMcp.Gateway.Tests/Fixtures/Contract/Discovery/tools-list.response.json` — golden fixture for the discovery `tools/list` envelope. **Must stay alphabetically sorted by tool name.** When you add/change a schema field in `tool_definitions.json`, regenerate the corresponding section in the golden fixture or the contract test fails.
+
+### Adding or modifying a tool
+
+The dispatch path goes: gateway router (`src/GxMcp.Gateway/Routers/*Router.cs`) ↔ worker dispatcher (`src/GxMcp.Worker/Services/CommandDispatcher.cs`). To add a tool: schema in `tool_definitions.json` → router case → dispatcher action → service method → golden fixture update.
+
+**AxiCompact projection:** `genexus_query` and `genexus_list_objects` default to a compact field allowlist defined in `Program.GetDefaultCompactFields`. Adding a field to a tool's output also requires whitelisting it there, or it gets stripped before reaching the client.
+
+## Build / test commands
+
+Set this once per shell when working with Worker code (build-time reference path):
+
+```powershell
+$env:GX_PATH = 'C:\Program Files (x86)\GeneXus\GeneXus18'
+```
+
+### Build
+
+```powershell
+.\build.ps1                                  # full Gateway+Worker build + deploy to publish/
+dotnet build Genexus18MCP.sln -v:minimal     # quick solution build (no publish/ refresh)
+dotnet build src\GxMcp.Worker\GxMcp.Worker.csproj
+dotnet build src\GxMcp.Gateway\GxMcp.Gateway.csproj
+```
+
+If the build fails with `MSB3027` / `MSB3021` citing `GxMcp.Gateway.exe` or `GxMcp.Worker.exe` locked, the running dev gateway/worker is holding the binary — see the "Kill the Gateway/Worker" permission below.
+
+### Test
+
+```powershell
+dotnet test src\GxMcp.Worker.Tests\GxMcp.Worker.Tests.csproj      # net48; ~570 tests
+dotnet test src\GxMcp.Gateway.Tests\GxMcp.Gateway.Tests.csproj    # net8.0; ~310 tests
+dotnet test Genexus18MCP.sln                                     # both
+npm test                                                          # cli tests only (node --test)
+
+# Single test or filter
+dotnet test src\GxMcp.Worker.Tests\GxMcp.Worker.Tests.csproj --filter "FullyQualifiedName~TemporalListTests"
+dotnet test ...csproj --filter "FullyQualifiedName=GxMcp.Worker.Tests.TemporalListTests.SortByLastUpdate_OrdersDescending"
+```
+
+Known flaky in parallel runs: `EdgeCaseRegressionTests.Dispatcher_PatchApply_ValidateOnly_MapsToDryRun_ViaConvention`, sometimes `PatternApplyServiceTests.*` — all pass in isolation. Treat a single failure as a flake until you reproduce it isolated.
+
+### Reload a running worker without restarting the MCP client
+
+After editing Worker code, you can hot-swap the running worker:
+
+- From inside any MCP session: `genexus_worker_reload mode=hard sourceDir=C:\Projetos\Genexus18MCP\src\GxMcp.Worker\bin\Debug`
+- Force-kill path (use when worker is wedged and not responding): `genexus_worker_reload mode=soft force=true`
+
+After a worker-reload the gateway's pipe handle can go stale — if the next call returns `Worker for KB '…' crashed/exited`, reconnect MCP via `/mcp` (Claude Code) once.
+
 ## Permissions granted to the assistant
 
 Each entry must include: **trigger** (the precise condition that activates the
