@@ -122,6 +122,63 @@ namespace GxMcp.Worker.Services
             return null;
         }
 
+        // Friction 2026-05-22: late-phase failure markers in GeneXus MSBuild output.
+        // >RO <name>          → a step ("Running ...") that ran but the build then exited 1
+        // >E0 <code>: <msg>   → an explicit error from a later phase (no CS####/spc####)
+        // Last match wins (most-recent step is the one that flipped exit code).
+        private static readonly Regex _rxLatePhaseRO = new Regex(
+            @"^\s*>?RO\s+(?<name>[^\r\n:]+?)\s*(?::\s*(?<msg>.+?))?\s*$",
+            RegexOptions.Compiled | RegexOptions.Multiline);
+        private static readonly Regex _rxLatePhaseE0 = new Regex(
+            @"^\s*>?E0\s+(?<name>[^\r\n:]+?)\s*:\s*(?<msg>.+?)\s*$",
+            RegexOptions.Compiled | RegexOptions.Multiline);
+        // "Generation: Sucesso" / "Generation succeeded" / "Compilation: Sucesso" etc.
+        // Either Portuguese or English locale; we only check presence, not order.
+        private static readonly Regex _rxGenerationOk = new Regex(
+            @"^\s*Generation\s*[:\-]?\s*(succeeded|sucesso|ok|success)\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        private static readonly Regex _rxCompilationOk = new Regex(
+            @"^\s*Compilation\s*[:\-]?\s*(succeeded|sucesso|ok|success)\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+        internal static PhaseFailureInfo ExtractPhaseFailure(string output)
+        {
+            if (string.IsNullOrEmpty(output)) return null;
+            // Prefer explicit E0 errors (carry a real message).
+            Match lastE0 = null;
+            foreach (Match m in _rxLatePhaseE0.Matches(output))
+                lastE0 = m;
+            if (lastE0 != null)
+            {
+                return new PhaseFailureInfo
+                {
+                    Name = lastE0.Groups["name"].Value.Trim(),
+                    Message = lastE0.Groups["msg"].Value.Trim()
+                };
+            }
+            // Fall back to the last RO marker — the step that was running when the build died.
+            Match lastRO = null;
+            foreach (Match m in _rxLatePhaseRO.Matches(output))
+                lastRO = m;
+            if (lastRO != null)
+            {
+                return new PhaseFailureInfo
+                {
+                    Name = lastRO.Groups["name"].Value.Trim(),
+                    Message = string.IsNullOrEmpty(lastRO.Groups["msg"].Value)
+                        ? "Step exited non-zero; no explicit error line emitted."
+                        : lastRO.Groups["msg"].Value.Trim()
+                };
+            }
+            return null;
+        }
+
+        internal static bool DidGenerationAndCompilationSucceed(string output)
+        {
+            if (string.IsNullOrEmpty(output)) return false;
+            return _rxGenerationOk.IsMatch(output) && _rxCompilationOk.IsMatch(output);
+        }
+
         // v2.6.6 Stream E (FR#9): CS2001 referencing "<obj>_bc.cs" is treated as
         // an orphan demotion when the underlying object is not a Transaction in the
         // current index (either missing entirely, or renamed to a different type).
@@ -218,6 +275,21 @@ namespace GxMcp.Worker.Services
             // v2.3.8 (Task 5.1/5.2): expansion plan applied to the BuildOne
             // sequence. Surfaced under _meta.buildPlan in status/result.
             public BuildPlan BuildPlan { get; set; }
+            // Friction 2026-05-22 (experimental): when true and the in-process
+            // build path is taken, skip the IdeWebBuildAndDeploy step. See
+            // InProcessBuildRunner.Run for the safety story.
+            [JsonIgnore] internal bool SkipFullDeploy { get; set; }
+            // Friction 2026-05-22: "Build Failed: 0 errors, 0 warnings" with no
+            // signal was forcing the agent to read the raw Output and guess what
+            // happened. When ErrorCount=0 but ExitCode!=0 (a late MSBuild step
+            // like WebAppConfig fails), surface the last >RO/>E0 line as a
+            // structured phase_failure block.
+            public PhaseFailureInfo PhaseFailure { get; set; }
+            // "partial_success" means Generation: Sucesso + Compilation: Sucesso
+            // were observed in the Output but the overall build was marked Failed
+            // (typically due to a downstream packaging/deploy step). The compiled
+            // DLLs are usually fine and the run-time picks them up.
+            public bool? PartialSuccess { get; set; }
 
             [JsonIgnore] internal Process Process { get; set; }
             [JsonIgnore] internal DateTime StartedAt { get; set; }
@@ -276,6 +348,14 @@ namespace GxMcp.Worker.Services
         // (deepest callees first, originally requested targets last), then
         // emit BuildOne for each — every csproj sees its dependencies on
         // disk by the time GeneXus generates it.
+        public class PhaseFailureInfo
+        {
+            // e.g. "WebAppConfig", "Copying Module", "Deploy". Pulled from the last
+            // ">RO <name>" or ">E0..." line the worker saw before the build exited.
+            public string Name { get; set; }
+            public string Message { get; set; }
+        }
+
         public class BuildPlan
         {
             public List<string> Expanded { get; set; } = new List<string>();
@@ -399,6 +479,11 @@ namespace GxMcp.Worker.Services
 
         public string Build(string action, string target, string includeCallees, int buildPlanCap)
         {
+            return Build(action, target, includeCallees, buildPlanCap, skipFullDeploy: false);
+        }
+
+        public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy)
+        {
             // Parse target: single name OR comma/semicolon-separated list for batch "Build With These Only"
             var targets = ParseTargets(target);
 
@@ -435,7 +520,11 @@ namespace GxMcp.Worker.Services
                 Phase = "Starting",
                 StartTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 StartedAt = DateTime.UtcNow,
-                BuildPlan = plan
+                BuildPlan = plan,
+                SkipFullDeploy = skipFullDeploy
+                    && string.Equals(action, "Build", StringComparison.OrdinalIgnoreCase)
+                    && targets.Count == 1
+                    && string.Equals(includeCallees ?? "transitive", "none", StringComparison.OrdinalIgnoreCase)
             };
 
             // Best-effort caller lookup for hint (only meaningful for single-object builds)
@@ -575,14 +664,14 @@ namespace GxMcp.Worker.Services
         // (Phase / TargetsDone / ErrorCount / WarningCount / terminal Status).
         // Caller passes the previous snapshot string under `since`; the response
         // surfaces the new baseline under `_meta.snapshot` for chaining.
-        // - waitSeconds clamped to [0, 300]; 0 = immediate (today's behaviour).
+        // - waitSeconds clamped to [0, 600]; 0 = immediate (today's behaviour).
         // - Terminal task → returns immediately regardless of since.
         // - Unknown taskId → returns immediately (Task ID not found).
         // - Baseline mismatch → returns immediately.
         public string GetStatusWait(string taskId, int waitSeconds, string sinceBaseline, int page = 1, int pageSize = 50, bool compact = false)
         {
             if (waitSeconds < 0) waitSeconds = 0;
-            if (waitSeconds > 300) waitSeconds = 300;
+            if (waitSeconds > 600) waitSeconds = 600;
 
             // No taskId, or wait disabled → match legacy GetStatus shape.
             if (string.IsNullOrEmpty(taskId) || waitSeconds == 0)
@@ -809,7 +898,8 @@ namespace GxMcp.Worker.Services
                         ok = InProcessBuildRunner.Run(
                             status, action, targets,
                             (s, l, err) => HandleLine(s, l, err),
-                            _kbService.KbObject, _kbService.KbLock);
+                            _kbService.KbObject, _kbService.KbLock,
+                            skipFullDeploy: status.SkipFullDeploy);
                     }
                     catch (Exception ex)
                     {
@@ -958,6 +1048,21 @@ namespace GxMcp.Worker.Services
                         status.Status = "Succeeded";
                     else
                         status.Status = "Failed";
+
+                    // Friction 2026-05-22: when ErrorCount==0 and ExitCode!=0, the
+                    // failure is a late MSBuild step (WebAppConfig, deploy task,
+                    // file-missing) that doesn't emit a proper "error <code>:" line.
+                    // Parse the raw output for >RO/>E0 markers so the agent gets a
+                    // named phase_failure instead of "Failed: 0 errors, 0 warnings".
+                    if (status.ErrorCount == 0 && process.ExitCode != 0)
+                    {
+                        status.PhaseFailure = ExtractPhaseFailure(fullText);
+                        if (DidGenerationAndCompilationSucceed(fullText))
+                        {
+                            status.PartialSuccess = true;
+                        }
+                    }
+
                     // Stream F: wake any pending status wait callers.
                     try { status.StateChangeSignal.Set(); } catch { }
 

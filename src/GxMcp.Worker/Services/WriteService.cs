@@ -712,6 +712,36 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // Friction 2026-05-22: parallel genexus_edit calls on the same target raced
+        // — the first applied, the rest hit "Context block not found" because the
+        // file hash changed beneath them. Serialize per-target so callers don't
+        // have to. The lock is taken at the facade boundary so BulkWrite, the
+        // edit_and_build orchestrator, and the patch path all share it.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> _perTargetLocks
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        // lastWriteAt is set under the per-target lock; readers (patch failure path)
+        // use it to detect concurrent modification vs. a real context-mismatch.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _lastWriteAtUtc
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        internal static object AcquirePerTargetLock(string target)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return new object();
+            return _perTargetLocks.GetOrAdd(target, _ => new object());
+        }
+
+        internal static void NotePerTargetWrite(string target)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return;
+            _lastWriteAtUtc[target] = DateTime.UtcNow;
+        }
+
+        internal static bool WasTargetWrittenSince(string target, DateTime sinceUtc)
+        {
+            if (string.IsNullOrWhiteSpace(target)) return false;
+            return _lastWriteAtUtc.TryGetValue(target, out var t) && t > sinceUtc;
+        }
+
         // IWriteServiceFacade adapter — translates JObject args into the canonical WriteObject call.
         public string WriteObject(string target, JObject args)
         {
@@ -724,7 +754,10 @@ namespace GxMcp.Worker.Services
             }
             if (payload == null) payload = new JObject();
 
-            return WriteObject(
+            // Per-target serialization happens inside the string overload so every
+            // entry point (this facade, PatchService's writes, BulkWrite item loop)
+            // shares the same lock and Stale-detection signal.
+            string raw = WriteObject(
                 target,
                 action,
                 payload?.ToString(),
@@ -733,10 +766,132 @@ namespace GxMcp.Worker.Services
                 false,
                 true,
                 args?["dryRun"]?.ToObject<bool?>() ?? false);
+
+            // Friction 2026-05-22: KBs default to WIN1252 (codepage 1252) on
+            // Windows. When the caller writes content containing chars outside
+            // that codepage (typically a unicode symbol or math glyph used in a
+            // caption), the SDK accepts the write, generation succeeds, runtime
+            // shows '?'. Warn explicitly so the caller can swap glyphs before
+            // building.
+            try
+            {
+                var unrepresentable = CollectNonWin1252Glyphs(args);
+                if (unrepresentable.Count > 0)
+                {
+                    var parsed = JObject.Parse(raw);
+                    var charsetWarn = new JObject
+                    {
+                        ["code"] = "kb_charset_lossy",
+                        ["message"] = "Content contains characters outside the KB's WIN1252 charset (will render as '?' at runtime): " + string.Join(", ", unrepresentable),
+                        ["hint"] = "Replace with ASCII equivalents (e.g. ✓ -> 'OK', ⧖ -> '[wait]'), or change the KB's NLS_CHARACTERSET if you need full unicode."
+                    };
+                    // Preserve any pre-existing warnings regardless of shape — earlier
+                    // writers may produce a JArray, a JObject keyed by code, or even
+                    // a scalar summary. Don't clobber.
+                    var existing = parsed["warnings"];
+                    JArray warnings;
+                    if (existing is JArray arr)
+                    {
+                        warnings = arr;
+                    }
+                    else if (existing != null && existing.Type != JTokenType.Null)
+                    {
+                        warnings = new JArray { existing.DeepClone() };
+                    }
+                    else
+                    {
+                        warnings = new JArray();
+                    }
+                    warnings.Add(charsetWarn);
+                    parsed["warnings"] = warnings;
+                    raw = parsed.ToString(Newtonsoft.Json.Formatting.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("[CHARSET-WARN] skipped: " + ex.Message);
+            }
+            return raw;
+        }
+
+        // Returns a deduped list of glyphs in the args payload that cannot
+        // round-trip through codepage 1252 (KB default on Windows). Only scans
+        // properties that contribute to the PERSISTED content — find/context
+        // anchors describe the existing source we're matching against (and the
+        // caller may legitimately be removing a lossy glyph), so flagging them
+        // would produce spurious warnings.
+        private static readonly System.Collections.Generic.HashSet<string> _readOnlyPatchKeys
+            = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "find", "context", "anchor", "old_string", "expectedCount" };
+
+        internal static System.Collections.Generic.List<string> CollectNonWin1252Glyphs(JObject args)
+        {
+            var result = new System.Collections.Generic.List<string>();
+            if (args == null) return result;
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            System.Text.Encoding enc;
+            try
+            {
+                enc = System.Text.Encoding.GetEncoding(1252,
+                    new System.Text.EncoderExceptionFallback(),
+                    new System.Text.DecoderExceptionFallback());
+            }
+            catch { return result; }
+
+            ScanTokenForLossyGlyphs(args, enc, seen, result);
+            return result;
+        }
+
+        private static void ScanTokenForLossyGlyphs(JToken token, System.Text.Encoding enc,
+            System.Collections.Generic.HashSet<string> seen, System.Collections.Generic.List<string> result)
+        {
+            if (token == null || result.Count >= 20) return;
+            switch (token.Type)
+            {
+                case JTokenType.Object:
+                    foreach (var prop in ((JObject)token).Properties())
+                    {
+                        if (_readOnlyPatchKeys.Contains(prop.Name)) continue;
+                        ScanTokenForLossyGlyphs(prop.Value, enc, seen, result);
+                        if (result.Count >= 20) return;
+                    }
+                    break;
+                case JTokenType.Array:
+                    foreach (var item in (JArray)token)
+                    {
+                        ScanTokenForLossyGlyphs(item, enc, seen, result);
+                        if (result.Count >= 20) return;
+                    }
+                    break;
+                case JTokenType.String:
+                    string s = token.Value<string>();
+                    if (string.IsNullOrEmpty(s)) return;
+                    var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(s);
+                    while (enumerator.MoveNext())
+                    {
+                        string rune = (string)enumerator.Current;
+                        try { enc.GetBytes(rune); }
+                        catch (System.Text.EncoderFallbackException)
+                        {
+                            if (seen.Add(rune)) result.Add(rune);
+                            if (result.Count >= 20) return;
+                        }
+                    }
+                    break;
+            }
         }
 
         public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true, bool preferFastSourceSave = false, bool autoInjectVariables = true, bool dryRun = false)
         {
+            // Friction 2026-05-22 fix: hold the per-target lock around the
+            // ENTIRE write pipeline (snapshot + internal write + wrap). This is
+            // the canonical writer — PatchService, BulkWrite, and the JObject
+            // facade all reach here, so the lock covers every parallel-edit case
+            // (patch-vs-patch was bypassing the prior lock site). NotePerTargetWrite
+            // fires on the success path so a sibling patch racing against this
+            // write can detect the concurrent modification and report Stale.
+            lock (AcquirePerTargetLock(target))
+            {
             // PERFORMANCE (instrumentation): wrap the entire write pipeline (SDK ops + validation +
             // persistedHash projection) in a Stopwatch so unusually-slow object saves surface in
             // worker_debug.log. Threshold 250ms matches user-perceived friction: anything over that
@@ -766,6 +921,7 @@ namespace GxMcp.Worker.Services
                     Logger.Info($"[OBJ-SAVE-SLOW] {sw.ElapsedMilliseconds}ms target='{target}' part='{partName}' codeLen={code?.Length ?? 0} dryRun={dryRun}");
                 }
             }
+            if (!dryRun) NotePerTargetWrite(target);
             // v2.3.8 Task 3.4: every edit response carries persistedHash + persistedSnippet
             // (success, no-change, dry-run, rollback, or error).
             // Default sdkPath = typed-sdk; deeper writers (LayoutService raw-XML) tag their own
@@ -795,6 +951,7 @@ namespace GxMcp.Worker.Services
                 }
             }
             return wrapped;
+            } // end lock (AcquirePerTargetLock)
         }
 
         /// <summary>
@@ -2148,6 +2305,36 @@ namespace GxMcp.Worker.Services
                 return CreateWriteError("Invalid visual XML", target, partName, ex.Message, obj);
             }
 
+            // Friction 2026-05-22: project layout gotchas against the prospective
+            // content BEFORE the SDK save. Surfaces HTML-form/gxButton/gxAttribute
+            // limitations at validate=only time so the caller fixes the XML in
+            // the same turn instead of after a build + browser cycle.
+            JArray prospectiveGotchas = null;
+            try
+            {
+                var hits = GxMcp.Worker.Helpers.LayoutGotchaScanner.Scan(normalizedInput, obj);
+                if (hits != null && hits.Count > 0)
+                {
+                    prospectiveGotchas = new JArray();
+                    foreach (var g in hits)
+                    {
+                        prospectiveGotchas.Add(new JObject
+                        {
+                            ["code"] = g.Code,
+                            ["severity"] = g.Severity,
+                            ["element"] = g.Element,
+                            ["controlId"] = g.ControlId,
+                            ["message"] = g.Message,
+                            ["workaround"] = g.Workaround
+                        });
+                    }
+                }
+            }
+            catch (Exception scanEx)
+            {
+                Logger.Debug("[GOTCHA-PREVIEW] scan failed: " + scanEx.Message);
+            }
+
             try
             {
                 string currentXml = WebFormXmlHelper.ReadEditableXml(obj);
@@ -2160,6 +2347,7 @@ namespace GxMcp.Worker.Services
                         ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
                     };
                     AttachWarnings(noChangeResp, patternShadowWarnings);
+                    if (prospectiveGotchas != null) noChangeResp["layoutGotchas"] = prospectiveGotchas;
                     return Models.McpResponse.Success("Write", target, noChangeResp);
                 }
                 if (dryRun)
@@ -2180,6 +2368,7 @@ namespace GxMcp.Worker.Services
                         dryResp["preflightWarnings"] = arr;
                         dryResp["warning"] = "Dry-run detected " + suspects.Count + " attribute(s) likely to be sanitised by the SDK on save. See preflightWarnings.";
                     }
+                    if (prospectiveGotchas != null) dryResp["layoutGotchas"] = prospectiveGotchas;
                     return Models.McpResponse.Success("Write", target, dryResp);
                 }
             }
@@ -2298,9 +2487,37 @@ namespace GxMcp.Worker.Services
                 catch (Exception ex)
                 {
                     transaction.Rollback();
-                    return CreateWriteError("Visual write failed", target, partName, ex.Message, obj);
+                    // Friction 2026-05-22: prior version surfaced only ex.Message
+                    // which was often a generic wrapper. Walk InnerException so the
+                    // root SDK error (e.g. "Invalid reference: variable 'XYZ' not
+                    // declared") makes it to the response details.
+                    return CreateWriteError("Visual write failed", target, partName, FormatExceptionChain(ex), obj);
                 }
             }
+        }
+
+        // Walks ex.InnerException so the deepest message — usually the real SDK
+        // diagnostic — ends up in the response. Outer wrappers are still surfaced
+        // but only when they add information beyond the inner message.
+        internal static string FormatExceptionChain(Exception ex)
+        {
+            if (ex == null) return null;
+            var sb = new System.Text.StringBuilder();
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            Exception cur = ex;
+            while (cur != null)
+            {
+                string typeName = cur.GetType().Name;
+                string msg = cur.Message?.Trim();
+                if (!string.IsNullOrEmpty(msg) && seen.Add(msg))
+                {
+                    if (sb.Length > 0) sb.Append(" -> ");
+                    sb.Append(typeName).Append(": ").Append(msg);
+                }
+                cur = cur.InnerException;
+                if (seen.Count > 5) break;
+            }
+            return sb.Length == 0 ? ex.Message : sb.ToString();
         }
 
         private string WritePatternPart(global::Artech.Architecture.Common.Objects.KBObject obj, string target, string partName, string xml, bool dryRun = false)

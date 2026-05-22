@@ -1,5 +1,75 @@
 # Changelog
 
+## v2.6.7 — 2026-05-22
+
+A 22-point friction list against an `AcademicoHomolog1` working session on 2026-05-22 named the highest-impact loss-makers: builds queueing through 12 polls each (5–13 min real time), "Build Failed: 0 errors, 0 warnings" with no actionable signal, HTML-form gotchas surfacing only after the browser smoke-test, parallel `genexus_edit` silently shedding all but the first patch, WIN1252 charset losses, opaque "Visual write failed" errors, and a `genexus_preview` path that pinned Chrome and wedged the worker for the rest of the session. This release closes every implementable item end-to-end and ships unit tests for the parser / charset / concurrency helpers; the build-pipeline shortcut (`skipFullDeploy`) is gated behind an `EXPERIMENTAL` flag pending live validation against a runtime that picks up generated sources directly.
+
+**Post-implementation review caught 8 correctness bugs (all fixed in this release):**
+- Per-target serialization for `genexus_edit` lived in the JObject facade only; PatchService's writes went through a different overload and still raced. Lock moved into the canonical `WriteObject(target, partName, ...)` overload so every write path shares it; `NotePerTargetWrite` now fires on success regardless of entry point.
+- `lifecycle build wait_until_done=true` returned `isError:false` for failed/cancelled builds (dead-code ternary `... ? false : false`). Fixed: terminal status is classified properly so the MCP envelope's `isError` matches build outcome.
+- `genexus_worker_reload force=true` skipped `StartWorker` when `_activeConfig` was null but still claimed success in the response. Now refuses with `-32603` when no config is loaded.
+- `PatchService.ApplyPatch`'s entry timestamp was backdated 50 ms, producing false-positive `Stale` verdicts when an unrelated write completed strictly before patch entry. Removed the backdate.
+- `CollectNonWin1252Glyphs` walked the entire args tree and flagged lossy glyphs inside `patch.find` / `context` (glyphs the caller was REMOVING). Now skips read-only patch keys.
+- Charset post-process clobbered any pre-existing `warnings` token that wasn't a JArray (silently dropping JObject-shaped warnings). Now wraps non-array shapes into an array.
+- Contract fixture `tools-list.response.json` was stale (missing `wait_until_done`/`skipFullDeploy`, old `wait_seconds` description). Regenerated via the `GXMCP_UPDATE_GOLDEN` harness mode.
+- `genexus_lifecycle.wait_seconds` description shifted from "0-25" (old reality) to "0-600" (new reality) but the description-budget test wasn't updated — was masked by the apphost.exe build lock until a clean rebuild surfaced it.
+
+### CLI fixes
+
+- **`genexus-mcp doctor` no longer false-flags `tool_definitions.json is missing` on installed copies.** `getToolDefinitionsPath()` was hardcoded to the dev-tree path `<repo>/src/GxMcp.Gateway/tool_definitions.json`, which doesn't exist in npm/install.ps1 installations — the file ships next to `publish/GxMcp.Gateway.exe`. Resolver now checks the gateway-exe sibling (matching how the gateway itself loads it), the dev-tree fallback, and a `GENEXUS_MCP_TOOL_DEFINITIONS` env override. Doctor's miss-message now names the expected path and the override env var. Regression tests added.
+
+### Tool-definitions bloat sweep (-1150 tokens, -15%)
+
+- Schema-budget test bumped from 7200 → 6500 (NOT upward, despite adding `wait_until_done` + `skipFullDeploy` + `edit_and_build.patch` + `worker_reload.force`). Prior versions raised the budget every friction sweep; this one trims aggressively.
+- Boilerplate `kb` parameter description deduped across 32 tools (`"Target KB. Required when 2+ open."` → `"KB alias (multi-KB only)."`).
+- Long prose moved out of schema descriptions (the `tools/list` payload sits in every LLM context) into `genexus://kb/tool-help/...` resources that callers fetch on demand. Affected: `genexus_edit.validate`, `genexus_apply_pattern.validate`, `genexus_history`, `genexus_lifecycle.target/compact/force/includeCallees`, `genexus_preview`, `genexus_create_object`, `genexus_create_popup`, `genexus_edit_and_build`.
+- Versioned changelog references (`v2.6.6 (FR#28)`, `v2.6.6 Stream H (FR#25)`) removed from schema descriptions — that history belongs in the changelog, not in every tool listing.
+
+### Lifecycle / build telemetry
+
+- **`wait_seconds` cap raised 90 → 600.** `genexus_lifecycle status` + `build` long-poll can now block a full 10 minutes per turn. The 90 s ceiling was tuned for short compiles; a 12-minute popup build at 90 s burned ~8 turns each on noise.
+- **`wait_until_done` on `lifecycle build`.** When true, the async dispatch path long-polls inline up to `wait_seconds` (default 600) and returns the terminal envelope directly instead of `{ job_id, running }`. Single turn versus 12.
+- **`phase_failure` parsing for "0 errors / exit 1" builds.** When `ErrorCount == 0` but `ExitCode != 0`, `BuildService.ExtractPhaseFailure` scans the raw output for the last `>E0 <name>: <msg>` (or, as a fallback, the last `>RO <step>` marker) and surfaces a structured `phase_failure: { name, message }` block. `LifecycleResponseShaper` also passes it through the compact-mode envelope.
+- **`partial_success` flag.** When the build is `Failed` but Generation + Compilation are both observed as succeeded in the raw output, `BuildService.DidGenerationAndCompilationSucceed` sets `PartialSuccess=true` and the shaper surfaces `partial_success: true` plus `effective_status: PartialSuccess`. WebAppConfig-style late failures no longer hide a successful DLL update.
+- **`suggested_retry` for WebAppConfig fail.** When `phase_failure.name` contains "WebAppConfig", the retry hint now points the agent at "run the object once before rebuilding, or full IDE build to regenerate the config" rather than asking them to chase missing object names. Other late-phase failures get a generic hint that names the failing step.
+
+### Edit pipeline
+
+- **Per-target serialization for parallel edits.** `WriteService` acquires a per-target `lock` at the `WriteObject(target, args)` facade boundary so 5 parallel `genexus_edit` calls on the same target run sequentially instead of racing on the file hash. The `_lastWriteAtUtc` map is updated under the same lock so the patch path can cross-check.
+- **`Stale` patch status vs. `NoMatch`.** `PatchService.ApplyPatch` captures the entry timestamp and, on `NoMatch`, calls `WriteService.WasTargetWrittenSince(target, entered)`. A sibling write that landed during the patch flips the failure to `Stale` with a "File modified during patch (concurrent edit landed)" message instead of the generic "Context not found".
+- **`NoChange` disambiguation.** When the patch matched + applied but the part-normalizer canonicalised the change back to the original, the response now carries `noChangeReason: "serializer_normalized"` with a message pointing at XML attribute ordering, comment preservation, or trailing whitespace. The literal-identical case keeps the existing `"literal_identical"` reason. No more guessing whether the edit persisted.
+- **WIN1252 charset warning.** `WriteService.CollectNonWin1252Glyphs` walks the patch payload and surfaces a `kb_charset_lossy` warning when any character can't round-trip through codepage 1252. Glyphs like ✓ ⧖ Σ ◷ that the SDK accepts but render as `?` at runtime are flagged before the build.
+- **`Visual write failed` exception chain.** `WriteService.FormatExceptionChain` walks `InnerException` so the root SDK diagnostic (e.g. "variable not declared") makes it into `details` instead of being swallowed by a generic wrapper.
+- **`genexus_edit_and_build` accepts `patch:{find,replace}`.** Schema relaxed: `content` is no longer required; the orchestrator auto-normalises `patch` to `mode=patch` + `content` shape, matching `genexus_edit`. Wrong-type `content: {...}` for `mode=full` returns a typed error with a workaround hint instead of the opaque "name is required".
+- **Layout gotcha preview at write time.** `WriteVisualPart` now runs `LayoutGotchaScanner.Scan` against the normalized prospective XML and attaches `layoutGotchas` to both the `DryRun` and `NoChange` responses, so the four HTML-form limitations (gxButton custom-event silent-drop, gxAttribute discrete control read-only, missing AttID/DataField, unknown ControlType) surface in the same turn as the edit instead of after a build.
+
+### Worker / preview reliability
+
+- **`genexus_preview` no-deadlock spawn.** `CliRunner.Run` switched from serial `ReadToEnd()` calls to async event-driven stream readers, eliminating the stdout/stderr pipe-buffer deadlock that wedged the worker behind a stuck chrome-devtools-mcp child. Timeout path now does `taskkill /PID … /T /F` (recursive tree kill) so the Node shim's Chrome subprocess gets reaped along with the shim.
+- **`genexus_worker_reload force=true`.** Gateway-side intercept that bypasses the JSON-RPC pipe entirely — `WorkerPool.StopAll()` + cache clear + `StartWorker()` happen in-process. Required for the wedged-worker case where the soft drain path can't get an ACK because the worker is hung.
+- **`lastError` in `whoami.metricsSummary`.** `OperationTracker.BuildMetricsSummary` now scans `_operations` for the most-recent record with a `LastError` and surfaces `{ tool, message, atUtc, operationId }`. Counters alone don't tell the agent _what_ failed; this does, on the first turn after the failure.
+
+### Playbooks (whoami)
+
+- `unbreak_html_form` — the 4 HTML-form limitations + workarounds (custom events silently routed to Enter; gxTextBlock CaptionExpression Type=Variable literal-renders; gxAttribute against uncommitted variables; controls not addressable from Events).
+- `bulk_edit` — promote `genexus_bulk_edit` over N parallel `genexus_edit` for same-object patches.
+- `wait_long_builds` — point at `wait_until_done` + 600 s `wait_seconds` cap.
+- `xml_comments_in_form` — XML comments inside HTML form Source emit as visible text (strip before edit, or use `mode=patch`).
+- `partial_success` — when build status=Failed but `partial_success=true`, try running the object before rebuilding.
+
+### Build pipeline (experimental)
+
+- **`skipFullDeploy=true` on single-target Build.** When the build action is `Build` + exactly one target + `includeCallees=none`, this stops the in-process runner after `SpecifyOneOnly` and skips `IdeWebBuildAndDeploy`. Skips Build All / WebAppConfig / module copies — turning a 5–13 min single-object build into ~30 s. **EXPERIMENTAL**: the DLL output is not redeployed; validate live against your runtime before adopting.
+
+### Tests
+
+- `PhaseFailureExtractionTests`: E0 marker wins, RO fallback, both-locales `DidGenerationAndCompilationSucceed`.
+- `Win1252CharsetWarnTests`: ASCII + Latin accents pass through; ✓ ⧖ get flagged + deduped.
+- `ConcurrentWriteTrackerTests`: per-target lock identity, `WasTargetWrittenSince` semantics.
+- `ExceptionChainFormatterTests`: null-safe; walks inner; dedupes repeated messages.
+
+All 558 worker tests pass; all 307 gateway tests pass.
+
 ## v2.6.6 — 2026-05-21
 
 A 28-point friction sweep against `AcademicoHomolog1` on 2026-05-21 surfaced the gap between MCP-driven and IDE-driven editing: builds spawned a fresh `MSBuild.exe` per invocation (cold AppDomain, 20-40s overhead before any spec work), `genexus_lifecycle action=status` was a polling treadmill with no `wait`/`since` semantics so agents burned tokens on busy-waits, patches occasionally fell through to a NoMatch and returned `success` while leaving the part unchanged, `return_post_state` echoed the request payload rather than re-reading the persisted bytes, two workers racing against the same KB silently corrupted the snapshot index, the headless preview path had no `genexus_preview action=run` equivalent of the IDE's F5 launcher, popup-vs-standalone classification of generated WebPanels was guesswork, and CS2001 compile errors from orphan `<obj>_bc.cs` files masked real issues during family-generation cleanup. This release closes all 28 points end-to-end, with a build daemon that loads `Genexus.MsBuild.Tasks` once and reuses the open KB handle, event-driven status long-poll, a pre-write snapshot store on every edit, and an IDE-parity Discard-changes path via the new history snapshot ring.

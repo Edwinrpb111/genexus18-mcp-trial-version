@@ -744,7 +744,8 @@ namespace GxMcp.Worker.Services
                             var includeCallees = args?["includeCallees"]?.ToString();
                             var cap = args?["buildPlanCap"]?.ToObject<int?>() ?? 200;
                             if (string.IsNullOrWhiteSpace(includeCallees)) includeCallees = "transitive";
-                            return _buildService.Build(action, target, includeCallees, cap);
+                            bool skipFullDeploy = args?["skipFullDeploy"]?.ToObject<bool?>() ?? false;
+                            return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy);
                         }
                     case "validation":
                         return _validationService.ValidateCode(target, action, payload);

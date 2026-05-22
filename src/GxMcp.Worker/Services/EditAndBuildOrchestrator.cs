@@ -30,7 +30,46 @@ namespace GxMcp.Worker.Services
                 return JsonConvert.SerializeObject(new
                 {
                     status = "Error",
-                    error = "name is required"
+                    error = "name is required",
+                    hint = "Pass the target object name as { name: 'MyObject' }. genexus_edit_and_build does NOT auto-detect from content."
+                });
+            }
+
+            // Friction 2026-05-22: edit_and_build used to reject patch:{find,replace}
+            // because args was forwarded to WriteService.WriteObject(target, args)
+            // which only consulted args.content. Normalize the patch shape here so
+            // the API matches genexus_edit's input contract.
+            if (args["patch"] != null && args["content"] == null)
+            {
+                args["mode"] = args["mode"] ?? "patch";
+                if (args["patch"] is JObject patchObj && patchObj["find"] != null && patchObj["replace"] != null)
+                {
+                    args["content"] = new JObject
+                    {
+                        ["find"] = patchObj["find"],
+                        ["replace"] = patchObj["replace"]
+                    };
+                }
+                else if (args["patch"].Type == JTokenType.String)
+                {
+                    // Legacy: bare string patch. Keep verbatim — WritePatch knows how to consume it.
+                    args["content"] = args["patch"];
+                }
+            }
+
+            // Friction 2026-05-22: callers occasionally passed `content: {...}`
+            // expecting JSON-shaped input where a string was required. The
+            // downstream stringification produced opaque failures; surface the
+            // type mismatch up front.
+            if (args["content"] != null
+                && args["content"].Type == JTokenType.Object
+                && args["mode"]?.ToString() != "patch")
+            {
+                return JsonConvert.SerializeObject(new
+                {
+                    status = "Error",
+                    error = "content must be a string for mode=full",
+                    hint = "For source/event/rules edits, pass content as a string. To use {find, replace}, set mode='patch' (or pass patch:{find,replace} as a sibling field — orchestrator auto-normalises)."
                 });
             }
 

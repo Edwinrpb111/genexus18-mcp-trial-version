@@ -34,7 +34,8 @@ namespace GxMcp.Worker.Services
             List<string> targets,
             Action<BuildService.BuildTaskStatus, string, bool> sink,
             object kbHandle,
-            object kbLock)
+            object kbLock,
+            bool skipFullDeploy = false)
         {
             if (status == null) return false;
             if (kbHandle == null)
@@ -101,6 +102,21 @@ namespace GxMcp.Worker.Services
                     }
 
                     bool forceRebuild = action != null && action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase);
+
+                    // Friction 2026-05-22 (experimental): when the caller passes
+                    // skipFullDeploy=true on a single-target Build with no callees,
+                    // we stop after SpecifyOneOnly. Spec+Gen wrote the .cs sources
+                    // and the next IDE Build All (or a normal lifecycle build)
+                    // picks the DLL up. This skips Copying Module GeneXus / GAM /
+                    // Crypto and the WebAppConfig step — turning 5-13min into ~30s.
+                    // EXPERIMENTAL: validate live against the runtime before
+                    // making this the default for includeCallees=none.
+                    if (skipFullDeploy && isBuildWithTargets && !forceRebuild)
+                    {
+                        lineSink("[BUILD-INPROCESS] skipFullDeploy=true — stopping after SpecifyOneOnly. DLL output is NOT redeployed; the IDE build task is bypassed.", false);
+                        return true;
+                    }
+
                     if (!ExecuteIdeWebBuildAndDeploy(kbHandle, engine, forceRebuild))
                     {
                         return false;

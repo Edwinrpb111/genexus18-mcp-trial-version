@@ -32,10 +32,10 @@ namespace GxMcp.Gateway
                 "# genexus_lifecycle\n\n" +
                 "Build, validate, index, or poll the active Knowledge Base.\n\n" +
                 "## Actions\n" +
-                "- `build` — non-blocking when `estimated_seconds >= 20`; returns `{ job_id, status: 'running' }` and surfaces `_meta.background_jobs` on the next call.\n" +
+                "- `build` — non-blocking when `estimated_seconds >= 20`; returns `{ job_id, status: 'running' }` and surfaces `_meta.background_jobs` on the next call. Pass `wait_until_done: true` to block until terminal (single turn instead of polling).\n" +
                 "- `validate` — runs the GeneXus specifier; same async pattern as build.\n" +
                 "- `index` — rebuilds the search index. Pass `force=true` to ignore the on-disk cache.\n" +
-                "- `status` — accepts either a `taskId` or `job_id` via `target`; pass `wait_seconds > 0` to long-poll up to 25s.\n" +
+                "- `status` — accepts either a `taskId` or `job_id` via `target`; pass `wait_seconds > 0` to long-poll up to 600s.\n" +
                 "- `result` — fetch the completion payload of a finished operation.\n" +
                 "- `stop-worker` — gracefully recycle the worker process for the active KB.\n\n" +
                 "## target format\n" +
@@ -43,7 +43,8 @@ namespace GxMcp.Gateway
                 "- Status/result on a background op: `op:<operationId>` or just `<job_id>`.\n\n" +
                 "## Examples\n" +
                 "- `{ action: 'build', target: 'InvoiceProc' }`\n" +
-                "- `{ action: 'status', target: 'op:abc123', wait_seconds: 25 }`\n" +
+                "- `{ action: 'status', target: 'op:abc123', wait_seconds: 600 }`\n" +
+                "- `{ action: 'build', target: 'InvoiceProc', wait_until_done: true }`\n" +
                 "- `{ action: 'index', force: true }`\n",
 
             ["genexus_edit"] =

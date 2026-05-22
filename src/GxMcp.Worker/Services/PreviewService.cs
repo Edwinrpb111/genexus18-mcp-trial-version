@@ -77,15 +77,54 @@ namespace GxMcp.Worker.Services
 
                 using (var p = Process.Start(psi))
                 {
-                    string so = p.StandardOutput.ReadToEnd();
-                    string se = p.StandardError.ReadToEnd();
+                    // Friction 2026-05-22: prior version called ReadToEnd serially
+                    // (stdout, then stderr) BEFORE WaitForExit. With both streams
+                    // redirected, a child filling either pipe buffer (default ~4 KiB)
+                    // while we block on the other can deadlock — the call never
+                    // returned and hung Chrome behind the npm shim. Use async
+                    // event-driven reads + a Kill-tree fallback so even a wedged
+                    // chrome-devtools-mcp subprocess gets reaped.
+                    var soBuf = new System.Text.StringBuilder();
+                    var seBuf = new System.Text.StringBuilder();
+                    p.OutputDataReceived += (s, e) => { if (e.Data != null) soBuf.AppendLine(e.Data); };
+                    p.ErrorDataReceived  += (s, e) => { if (e.Data != null) seBuf.AppendLine(e.Data); };
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+
                     if (!p.WaitForExit(timeoutMs))
                     {
+                        try { KillProcessTree(p.Id); } catch { }
                         try { p.Kill(); } catch { }
-                        return new CliResult { ExitCode = -1, StdOut = so, StdErr = se, TimedOut = true };
+                        // Give the async readers a moment to flush whatever was in flight.
+                        try { p.WaitForExit(1000); } catch { }
+                        return new CliResult { ExitCode = -1, StdOut = soBuf.ToString(), StdErr = seBuf.ToString(), TimedOut = true };
                     }
-                    return new CliResult { ExitCode = p.ExitCode, StdOut = so, StdErr = se };
+                    // After exit, ensure pending async output drains.
+                    try { p.WaitForExit(500); } catch { }
+                    return new CliResult { ExitCode = p.ExitCode, StdOut = soBuf.ToString(), StdErr = seBuf.ToString() };
                 }
+            }
+
+            // Recursive taskkill so a Node shim spawning Chrome doesn't leak when
+            // the shim itself is killed. Best-effort; failures swallowed because
+            // the timeout path needs to return regardless.
+            private static void KillProcessTree(int pid)
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo("taskkill", "/PID " + pid + " /T /F")
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var killer = Process.Start(psi))
+                    {
+                        killer?.WaitForExit(5000);
+                    }
+                }
+                catch { /* best-effort */ }
             }
 
             // Cached discovery of `chrome-devtools-mcp`'s entry script — global npm

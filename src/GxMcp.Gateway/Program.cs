@@ -583,6 +583,12 @@ namespace GxMcp.Gateway
                 ["create_popup"] = "genexus_create_popup { name, spec: { title, inputs:[{type,varName,...}], buttons:[{caption,event}] } } → one call replaces ~6 edits (Form layout=true + inputs + buttons + parms).",
                 ["read_object_structure"] = "genexus_inspect { name, include:['parts','variables','signature'] } → cheap snapshot before any edit. ALWAYS run this first when unsure of object type.",
                 ["unbreak_build"] = "Build failed with CS0246/CS2001? Check response.suggested_retry — it already carries `target` as a CSV of the missing objects. Fire `genexus_lifecycle { action:'build', target:<that CSV>, includeCallees:'direct' }` BEFORE asking the user. Don't grep raw error[] paths by hand and don't hand the list back to the user.",
+                // Friction 2026-05-22: each of these cost multiple iterations the first time.
+                ["unbreak_html_form"] = "HTML-form (Form type=html) gotchas — verify BEFORE writing code:\n  1. gxButton ignores custom event=... (always fires Enter). Workaround: route via a single Enter event + dispatch by sender.\n  2. gxTextBlock CaptionExpression Type=Variable renders the literal &<varName>; in HTML form. Use Caption=&varName (no Expression).\n  3. gxAttribute referencing a freshly-added variable fails 'Visual write failed' until the variable is committed. Add the variable + flush, then add the gxAttribute in a second edit.\n  4. Buttons are NOT addressable from Events as Btn<Name>.Enabled / .Caption (src0265). Drive visibility/enable via control properties at design-time or via &flag variables bound through CaptionExpression.",
+                ["bulk_edit"] = "Need N patches on the same object? Use genexus_bulk_edit instead of N parallel genexus_edit. Parallel edits race on the file hash: only the first applies, the rest return 'Context block not found'.",
+                ["wait_long_builds"] = "Don't poll genexus_lifecycle status in a loop — pass wait_until_done:true on the build call OR wait_seconds:600 on status. One turn instead of 12.",
+                ["xml_comments_in_form"] = "XML comments (<!-- ... -->) inside HTML form Source are emitted as visible text by the generator. Strip them before genexus_edit (or use mode=patch to avoid touching them).",
+                ["partial_success"] = "If a build returns Status=Failed but response.partial_success=true, Generation+Compilation already succeeded — try running the object once before rebuilding. The DLL is updated; only a late MSBuild step (often WebAppConfig) failed.",
                 ["recipes_index"] = "For full step-by-step recipes call genexus_recipe { name: 'wwp_on_webpanel' | 'wwp_on_transaction' | 'create_popup' | 'edit_pattern_instance' | 'add_custom_button' | 'list' }."
             };
         }
@@ -1464,6 +1470,61 @@ namespace GxMcp.Gateway
                 string toolName = paramsObj?["name"]?.ToString() ?? "";
                 var args = paramsObj?["arguments"] as JObject;
 
+                // Friction 2026-05-22: genexus_worker_reload force=true bypasses
+                // the JSON-RPC pipe and kills the worker directly. The soft path
+                // is unreachable when the worker is wedged on a hung preview
+                // subprocess — by definition it can't ACK the reload command.
+                if (string.Equals(toolName, "genexus_worker_reload", StringComparison.OrdinalIgnoreCase)
+                    && args?["force"]?.ToObject<bool?>() == true)
+                {
+                    // Refuse the force path when configuration isn't loaded — otherwise we'd
+                    // kill the worker pool with no way to bring it back up and the caller
+                    // would only learn from subsequent tool failures.
+                    if (_activeConfig == null)
+                    {
+                        return new JObject
+                        {
+                            ["jsonrpc"] = "2.0",
+                            ["id"] = idToken?.DeepClone(),
+                            ["error"] = JToken.FromObject(new { code = -32603, message = "Force-reload refused: no active configuration. The gateway hasn't completed startup or a prior config load failed; respawning the worker without a config would leave the pool empty." })
+                        };
+                    }
+                    try
+                    {
+                        if (_workerPool != null) _workerPool.StopAll();
+                        _semanticCache.Clear();
+                        StartWorker(_activeConfig);
+                        BroadcastToolsListChanged("worker_reloaded_force");
+                        BroadcastResourcesListChanged("worker_reloaded_force");
+                        var ok = new JObject
+                        {
+                            ["jsonrpc"] = "2.0",
+                            ["id"] = idToken?.DeepClone(),
+                            ["result"] = new JObject
+                            {
+                                ["content"] = new JArray
+                                {
+                                    new JObject
+                                    {
+                                        ["type"] = "text",
+                                        ["text"] = "{\"status\":\"Forced\",\"detail\":\"Worker process(es) killed by gateway and respawned. Any in-flight worker job was abandoned.\"}"
+                                    }
+                                }
+                            }
+                        };
+                        return ok;
+                    }
+                    catch (Exception ex)
+                    {
+                        return new JObject
+                        {
+                            ["jsonrpc"] = "2.0",
+                            ["id"] = idToken?.DeepClone(),
+                            ["error"] = JToken.FromObject(new { code = -32603, message = "Force-reload failed: " + ex.Message })
+                        };
+                    }
+                }
+
                 // genexus_kb — meta-tool for managing the WorkerPool (list/open/close).
                 // Handled entirely in the Gateway; never reaches a Worker.
                 if (string.Equals(toolName, "genexus_kb", StringComparison.OrdinalIgnoreCase))
@@ -1746,7 +1807,7 @@ namespace GxMcp.Gateway
                     }
 
                     // Long-poll intercept (Task 4.5): action=status + job_id (BackgroundJobRegistry)
-                    // wait_seconds is clamped [0,25]; 0 = immediate poll (default behaviour).
+                    // wait_seconds is clamped [0, MaxLongPollSeconds]; 0 = immediate poll (default behaviour).
                     if (string.Equals(lifecycleAction, "status", StringComparison.OrdinalIgnoreCase))
                     {
                         string? jobId = McpRouter.ResolveJobId(args);
@@ -1886,6 +1947,8 @@ namespace GxMcp.Gateway
                                         // v2.3.8 (Task 5.2) — forward callee-expansion knobs through the async path.
                                         ["includeCallees"] = tArgs?["includeCallees"]?.ToString(),
                                         ["buildPlanCap"] = tArgs?["buildPlanCap"]?.ToObject<int?>(),
+                                        // Friction 2026-05-22 (experimental): single-target shortcut.
+                                        ["skipFullDeploy"] = tArgs?["skipFullDeploy"]?.ToObject<bool?>(),
                                         // v2.6.2 (Item B): forward job_id as cancelToken so
                                         // the worker registers it. A sibling lifecycle action=cancel
                                         // target=op:<id> then resolves to a real Cancel() call.
@@ -1994,13 +2057,45 @@ namespace GxMcp.Gateway
                                 }
                             });
 
+                            // Friction 2026-05-22: wait_until_done=true blocks in a single turn
+                            // up to MaxLongPollSeconds instead of forcing the caller to poll. Falls
+                            // back to job_id+running if the build outruns the cap.
+                            bool waitUntilDone = tArgs?["wait_until_done"]?.ToObject<bool?>() ?? false;
+                            if (waitUntilDone)
+                            {
+                                int blockingCap = tArgs?["wait_seconds"]?.ToObject<int?>() ?? McpRouter.MaxLongPollSeconds;
+                                JObject pollResult = await McpRouter.LongPollJob(JobRegistry, job.Id, blockingCap);
+                                // Classify the terminal status so the MCP envelope's isError
+                                // matches the build outcome. LongPollJob surfaces JobEntry.Status
+                                // which is one of: running, completed, failed, cancelled, unknown_job_id.
+                                // running == we hit the long-poll cap without termination — not an
+                                // error per se, the caller can re-poll.
+                                string terminalStatus = pollResult["status"]?.ToString();
+                                bool succeeded = string.Equals(terminalStatus, "completed", StringComparison.OrdinalIgnoreCase);
+                                bool stillRunning = string.Equals(terminalStatus, "running", StringComparison.OrdinalIgnoreCase);
+                                bool isErr = !succeeded && !stillRunning;
+                                if (!isErr
+                                    && LifecycleResponseShaper.ShouldCompact(tArgs)
+                                    && pollResult["result"] is JObject innerResult2)
+                                {
+                                    var compactJson = LifecycleResponseShaper.Compact(innerResult2.ToString(Formatting.None), compact: true);
+                                    try { pollResult["result"] = JObject.Parse(compactJson); }
+                                    catch { /* shaper passthrough on non-JSON */ }
+                                }
+                                return new JObject
+                                {
+                                    ["isError"] = isErr,
+                                    ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = pollResult.ToString(Newtonsoft.Json.Formatting.None) } }
+                                };
+                            }
+
                             // Return immediately with job_id
                             var asyncResponse = new JObject
                             {
                                 ["job_id"] = job.Id,
                                 ["status"] = "running",
                                 ["estimated_seconds"] = estimatedSeconds,
-                                ["hint"] = "Continue with other tools; build status will appear in _meta.background_jobs on the next response."
+                                ["hint"] = "Continue with other tools; build status will appear in _meta.background_jobs on the next response. Or pass wait_until_done:true to block until terminal in one turn."
                             };
                             return new JObject
                             {

@@ -18,7 +18,30 @@ function getGatewayExePath() {
 }
 
 function getToolDefinitionsPath() {
-    return path.join(__dirname, '..', '..', 'src', 'GxMcp.Gateway', 'tool_definitions.json');
+    // The gateway loads tool_definitions.json from its own exe directory at
+    // runtime (see GxMcp.Gateway/McpRouter.cs). The packaged distribution
+    // places the file alongside publish/GxMcp.Gateway.exe via the csproj's
+    // <Content CopyToPublishDirectory="Always" /> rule. Prior versions hardcoded
+    // the dev-tree path, so `genexus-mcp doctor` reported "tool_definitions.json
+    // is missing" on every installed copy even though the file was present next
+    // to the exe.
+    if (process.env.GENEXUS_MCP_TOOL_DEFINITIONS) {
+        return process.env.GENEXUS_MCP_TOOL_DEFINITIONS;
+    }
+    const candidates = [
+        // 1. Sibling of the gateway exe (packaged install — the path the gateway itself uses).
+        path.join(path.dirname(getGatewayExePath()), 'tool_definitions.json'),
+        // 2. Dev-tree source (when running from a git checkout).
+        path.join(__dirname, '..', '..', 'src', 'GxMcp.Gateway', 'tool_definitions.json'),
+        // 3. Fallback alongside the CLI itself (defensive — for unusual layouts).
+        path.join(__dirname, '..', '..', 'publish', 'tool_definitions.json')
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    // Nothing found — return the canonical packaged path so the doctor's
+    // existence check reports the location that SHOULD have the file.
+    return candidates[0];
 }
 
 function discoverGeneXusFromRegistry() {

@@ -63,7 +63,13 @@ namespace GxMcp.Gateway.Tests
             //   v2.6.6 (Stream H FR#25/#28): 6900 → 7200 for genexus_preview action=run
             //   (F5 launcher resolution) plus genexus_history discard/snapshot/part
             //   (IDE Discard-changes parity) declarations. Net ~+210 tokens.
-            Assert.True(approxTokens < 7200, $"tool_definitions.json is ~{approxTokens} tokens; budget 7200.");
+            //   2026-05-22 bloat sweep: 7200 → 6500. Cumulative trim of ~1150 tokens by
+            //   shortening overlong descriptions on genexus_edit.validate, apply_pattern.validate,
+            //   genexus_history, genexus_lifecycle.target/compact/force/includeCallees,
+            //   genexus_preview, dedupe of the kb-description boilerplate across 32 tools.
+            //   New additions (wait_until_done, skipFullDeploy, edit_and_build.patch, worker_reload.force)
+            //   fit comfortably under the lowered budget. Net ~-870 tokens vs prior 7200.
+            Assert.True(approxTokens < 6500, $"tool_definitions.json is ~{approxTokens} tokens; budget 6500.");
         }
     }
 }

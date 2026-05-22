@@ -1102,10 +1102,10 @@ namespace GxMcp.Gateway
             return trimmed;
         }
 
-        // FR#10 (friction-report 2026-05-14): builds of 50-70s would force 3 polls at the
-        // old 25s cap, each consuming a turn + the full Output blob. 90s lets a single
-        // long-poll cover most builds in one round-trip.
-        public const int MaxLongPollSeconds = 90;
+        // Friction 2026-05-22: long builds (5-13min for popup compile) at the 90s cap
+        // forced ~12 polls per build, each consuming a turn. 600s lets a single
+        // long-poll cover the slowest realistic build.
+        public const int MaxLongPollSeconds = 600;
 
         /// <summary>
         /// Long-polls <paramref name="registry"/> for <paramref name="jobId"/> until it reaches a terminal

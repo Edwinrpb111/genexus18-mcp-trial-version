@@ -690,7 +690,7 @@ async function handleDoctor(options, ctx) {
         // guarantees a worker crash on first MCP call. Promote from warn to fail so init
         // exits non-zero and the caller (install.ps1, AI client) actually sees the problem.
         { id: 'gx_installation', status: gxExeExists ? 'pass' : (gxPath ? 'fail' : 'warn'), detail: gxExeExists ? 'GeneXus installation has genexus.exe.' : (gxPath ? `Configured GeneXus installation is missing genexus.exe at: ${gxPath}` : 'No GeneXus installation path is configured.') },
-        { id: 'tool_definitions', status: toolDefsExists ? 'pass' : 'warn', detail: toolDefsExists ? `Tool definition file found (${toolCount} tools).` : 'tool_definitions.json is missing.' },
+        { id: 'tool_definitions', status: toolDefsExists ? 'pass' : 'warn', detail: toolDefsExists ? `Tool definition file found (${toolCount} tools) at ${toolDefPath}.` : (process.env.GENEXUS_MCP_TOOL_DEFINITIONS ? `tool_definitions.json missing at GENEXUS_MCP_TOOL_DEFINITIONS=${toolDefPath}. Unset the env var or point it at a valid file.` : `tool_definitions.json missing. Expected at ${toolDefPath} (next to the gateway exe). The csproj should copy it on publish — reinstall via scripts/install.ps1, or set GENEXUS_MCP_TOOL_DEFINITIONS to override.`) },
         { id: 'gx_env', status: process.env.GX_CONFIG_PATH ? 'pass' : 'warn', detail: process.env.GX_CONFIG_PATH ? 'GX_CONFIG_PATH env var is set.' : 'GX_CONFIG_PATH env var is not set for this process.' },
         { id: 'client_config_sync', status: clientCrossCheck.status, detail: clientCrossCheck.detail }
     ];

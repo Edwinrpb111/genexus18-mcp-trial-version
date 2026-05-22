@@ -151,6 +151,14 @@ namespace GxMcp.Worker.Services
 
         public string ApplyPatch(string target, string partName, string operation, string content, string context = null, int expectedCount = 1, string typeFilter = null, bool dryRun = false, bool verifyRollback = false, bool returnPostState = true, bool verbose = false)
         {
+            // Friction 2026-05-22: capture entry timestamp so a NoMatch we see at
+            // the end can be cross-checked against WriteService.WasTargetWrittenSince
+            // — if the file changed while this patch was queued/running, the context
+            // is stale (concurrent edit) rather than truly absent. Use strict UtcNow
+            // (no backdating) so only writes that landed AFTER this patch entered
+            // the read trigger the Stale verdict; a write that completed strictly
+            // before patch entry is not concurrent with us.
+            DateTime patchEnteredAtUtc = DateTime.UtcNow;
             try
             {
                 // Probe pattern-shadow warning ONCE before doing any work. If the agent
@@ -303,6 +311,18 @@ namespace GxMcp.Worker.Services
                     string failedDetails = string.IsNullOrWhiteSpace(details)
                         ? $"Context not found. Ensure the context matches a unique block in the source code.{dbg}"
                         : details;
+
+                    // Friction 2026-05-22: distinguish "match truly absent" from
+                    // "a sibling write to this same target landed before us".
+                    // When the cross-check is positive, surface a distinct hint
+                    // so the caller doesn't burn turns retrying with the same context.
+                    bool concurrentWrite = WriteService.WasTargetWrittenSince(target, patchEnteredAtUtc);
+                    if (concurrentWrite && string.Equals(failedStatus, "NoMatch", StringComparison.OrdinalIgnoreCase))
+                    {
+                        failedStatus = "Stale";
+                        failedDetails = "File modified during patch (concurrent edit landed against the same target). Re-read the object source and retry with refreshed context. Original failure: " + failedDetails;
+                    }
+
                     string failure = BuildPatchResult(failedStatus, partName, normalizedOperation, expectedCount, matchCount, failedDetails);
 
                     // FR#18 (friction-report 2026-05-14): attach near-match diagnostics so the
@@ -358,7 +378,25 @@ namespace GxMcp.Worker.Services
 
                 if (NormalizeForPartCompare(partName, workSource) == NormalizeForPartCompare(partName, updatedSource))
                 {
-                    string noChange = BuildPatchResult("NoChange", partName, normalizedOperation, expectedCount, matchCount, "Patch produced no effective changes. Write skipped.");
+                    // Friction 2026-05-22: distinguish the two NoChange cases.
+                    // case-a: matched + content identical to context (caught earlier
+                    //   inside switch).
+                    // case-b: matched + replacement normalized back to original via
+                    //   the part-normalizer (XML comment preservation, attribute
+                    //   ordering, trailing whitespace). The match worked — the
+                    //   serializer treated the change as semantically equivalent.
+                    bool literalIdentical = string.Equals(workSource, updatedSource, StringComparison.Ordinal);
+                    string detailMessage = literalIdentical
+                        ? "Patch produced no effective changes. Write skipped."
+                        : "Patch matched and applied, but the part-normalizer treated the replacement as equivalent to the original (often XML attribute ordering, comment preservation, or trailing whitespace). The on-disk file is unchanged. Inspect the serialized source diff and adjust semantics, not just text.";
+                    string noChange = BuildPatchResult("NoChange", partName, normalizedOperation, expectedCount, matchCount, detailMessage);
+                    try
+                    {
+                        var nj = JObject.Parse(noChange);
+                        nj["noChangeReason"] = literalIdentical ? "literal_identical" : "serializer_normalized";
+                        noChange = nj.ToString();
+                    }
+                    catch { }
                     return AttachTimings(noChange, readMs, patchMs, 0, sourceFromCache);
                 }
 

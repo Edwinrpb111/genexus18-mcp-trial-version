@@ -88,6 +88,40 @@ namespace GxMcp.Gateway
                 }
             }
 
+            // Friction 2026-05-22: surface PhaseFailure / PartialSuccess so callers
+            // get a real signal instead of "Build Failed: 0 errors, 0 warnings".
+            var phaseFailure = obj["PhaseFailure"] as JObject;
+            if (phaseFailure != null)
+            {
+                compactObj["phase_failure"] = phaseFailure;
+                // No SuggestedRebuildTargets in this scenario — offer a different retry path.
+                if (compactObj["suggested_retry"] == null)
+                {
+                    string failName = phaseFailure["Name"]?.ToString() ?? "";
+                    string hint;
+                    if (failName.IndexOf("WebAppConfig", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        hint = "WebAppConfig step failed (often a missing template/config). The Generation/Compilation steps may already have updated the DLL — try running the object once before rebuilding, or run a full Build via the IDE to regenerate the config.";
+                    }
+                    else
+                    {
+                        hint = $"Late MSBuild step '{failName}' failed. Generation/Compilation may have succeeded — check phase_failure.Message before rerunning the whole build.";
+                    }
+                    compactObj["suggested_retry"] = new JObject
+                    {
+                        ["action"] = "build",
+                        ["hint"] = hint,
+                        ["recoverable"] = obj["PartialSuccess"]?.ToObject<bool?>() ?? false
+                    };
+                }
+            }
+            if (obj["PartialSuccess"]?.ToObject<bool?>() == true)
+            {
+                compactObj["partial_success"] = true;
+                // Override Status so a caller branching on it gets a clear signal.
+                compactObj["effective_status"] = "PartialSuccess";
+            }
+
             // Surface taskId/jobId for callers that want to fetch the raw payload later via action=result&compact=false.
             if (obj["jobId"] != null) compactObj["jobId"] = obj["jobId"];
             if (obj["ElapsedSeconds"] != null) compactObj["ElapsedSeconds"] = obj["ElapsedSeconds"];

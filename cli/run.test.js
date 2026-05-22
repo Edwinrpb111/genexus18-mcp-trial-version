@@ -523,6 +523,34 @@ test('--fields validation returns usage error for invalid doctor field', () => {
     assert.equal(parsed.error.code, 'usage_error');
 });
 
+test('doctor finds tool_definitions.json next to the gateway exe (not just dev-tree)', () => {
+    // Regression for v2.6.6 bug: getToolDefinitionsPath() hard-coded the dev-tree
+    // location, so every installed copy reported "tool_definitions.json is missing"
+    // even though the file was published alongside GxMcp.Gateway.exe.
+    const result = runCli(['doctor', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    const check = parsed.ok.checks.find((c) => c.id === 'tool_definitions');
+    assert.ok(check, 'tool_definitions check must be present');
+    assert.equal(check.status, 'pass', `expected pass, got '${check.status}': ${check.detail}`);
+    assert.match(check.detail, /Tool definition file found \(\d+ tools\) at .+/);
+});
+
+test('doctor honours GENEXUS_MCP_TOOL_DEFINITIONS override and reports it on miss', () => {
+    const bogusPath = path.join(os.tmpdir(), 'nonexistent-tool-defs-' + Date.now() + '.json');
+    const result = runCli(['doctor', '--format', 'json'], { env: { GENEXUS_MCP_TOOL_DEFINITIONS: bogusPath } });
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    const check = parsed.ok.checks.find((c) => c.id === 'tool_definitions');
+    assert.ok(check);
+    assert.equal(check.status, 'warn');
+    assert.match(check.detail, /GENEXUS_MCP_TOOL_DEFINITIONS=/);
+    assert.ok(check.detail.includes(bogusPath) || check.detail.includes(bogusPath.replace(/\\/g, '/')),
+        `detail should mention the bogus override path; got: ${check.detail}`);
+});
+
 test('doctor --mcp-smoke adds explicit mcp_smoke check', () => {
     const result = runCli(['doctor', '--mcp-smoke', '--format', 'json']);
     assert.equal(result.status, 0);

@@ -253,6 +253,29 @@ namespace GxMcp.Gateway
                     slowestTool = metric.ToolName;
                 }
             }
+
+            // Friction 2026-05-22: counters alone don't tell the agent WHAT failed.
+            // Pull the most recent OperationRecord with a LastError so a zombie
+            // worker / repeated SDK fault surfaces in one read.
+            JObject? lastError = null;
+            OperationRecord? mostRecent = null;
+            foreach (var rec in _operations.Values)
+            {
+                if (string.IsNullOrEmpty(rec.LastError)) continue;
+                if (mostRecent == null || rec.UpdatedAtUtc > mostRecent.UpdatedAtUtc)
+                    mostRecent = rec;
+            }
+            if (mostRecent != null)
+            {
+                lastError = new JObject
+                {
+                    ["tool"] = mostRecent.ToolName,
+                    ["message"] = mostRecent.LastError,
+                    ["atUtc"] = mostRecent.UpdatedAtUtc,
+                    ["operationId"] = mostRecent.OperationId
+                };
+            }
+
             return new JObject
             {
                 ["totalCalls"] = totalCalls,
@@ -261,7 +284,8 @@ namespace GxMcp.Gateway
                 ["distinctTools"] = _toolMetrics.Count,
                 ["slowestToolByP95"] = slowestTool != null
                     ? (JToken)new JObject { ["name"] = slowestTool, ["p95Ms"] = slowestP95 }
-                    : JValue.CreateNull()
+                    : JValue.CreateNull(),
+                ["lastError"] = lastError != null ? (JToken)lastError : JValue.CreateNull()
             };
         }
 

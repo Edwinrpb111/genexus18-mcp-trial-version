@@ -5,7 +5,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -27,11 +27,11 @@
       "name": "genexus_add_variable"
     },
     {
-      "description": "Cross-object semantic analysis: impact, dependencies, complexity, naming, summary. See genexus://kb/tool-help/genexus_analyze for mode selection.",
+      "description": "Use this for cross-object semantic analysis: impact, dependencies, complexity, naming, summary. See tool-help for mode selection.",
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "mode": {
@@ -52,7 +52,7 @@
           },
           "waitForIndex": {
             "default": true,
-            "description": "For mode=impact: when true (default) block up to 30s for the index to be Ready; when false return a status envelope immediately if the index is Cold/Reindexing.",
+            "description": "mode=impact: block up to 30s for Ready index (default true).",
             "type": "boolean"
           }
         },
@@ -65,33 +65,33 @@
       "name": "genexus_analyze"
     },
     {
-      "description": "Apply a GeneXus pattern (e.g. WorkWithPlus) to a parent object. Equivalent to IDE 'Right-click → Apply Pattern'. ALWAYS run genexus_inspect first to confirm parentType — Transaction (family-gen, no template) vs WebPanel/SDPanel (direct-attach, pass settings.template). Other types are rejected. See recipe 'wwp_on_transaction' or 'wwp_on_webpanel' via genexus_recipe.",
+      "description": "Apply a pattern (e.g. WorkWithPlus) to a parent. IDE 'Right-click → Apply Pattern'. Inspect parentType first: Transaction=family-gen, WebPanel/SDPanel=direct-attach (pass settings.template). Others rejected.",
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
-            "description": "Target KBObject name (Transaction, WebPanel, etc.)",
+            "description": "Target KBObject name.",
             "type": "string"
           },
           "pattern": {
-            "description": "Pattern key ('WorkWithPlus') or GUID",
+            "description": "Pattern key ('WorkWithPlus') or GUID.",
             "type": "string"
           },
           "reapply": {
             "default": false,
-            "description": "Re-run on existing instance instead of first-time apply",
+            "description": "Re-run on existing instance.",
             "type": "boolean"
           },
           "settings": {
-            "description": "Optional pattern-instance settings (deeply nested config tree from the pattern's settings dialog)",
+            "description": "Pattern-instance settings tree.",
             "type": "object"
           },
           "validate": {
             "default": false,
-            "description": "After apply, build the generated host to verify it compiles cleanly. Response gains a `validation` block: {status: ok|failed|timeout, errorCount, warningCount, errors[], warnings[], durationMs}. Adds 60-180s wall time but catches binding/wiring errors the LLM would only see by opening the IDE.",
+            "description": "After apply, build the generated host. Adds validation block (60-180s). Catches binding errors.",
             "type": "boolean"
           }
         },
@@ -104,7 +104,7 @@
       "name": "genexus_apply_pattern"
     },
     {
-      "description": "Apply a visual template: kpi_header (title,kpi1,kpi2,kpi3) | empty_state (caption,image) | confirm_dialog (confirmEvent,cancelEvent). Template args go in args.",
+      "description": "Apply visual template: kpi_header | empty_state | confirm_dialog. See tool-help for args per template.",
       "inputSchema": {
         "properties": {
           "args": {
@@ -114,7 +114,7 @@
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -159,7 +159,7 @@
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
@@ -193,7 +193,7 @@
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "stopOnError": {
@@ -214,7 +214,7 @@
       "name": "genexus_bulk_edit"
     },
     {
-      "description": "Create any IDE-creatable GeneXus object (Transaction, Procedure, WebPanel, SDPanel, SDT, DataProvider, Domain, Dashboard, WorkflowDiagram, etc.). Domain takes dataType+length or enumValues. NOT for WorkWithPlus/WWP — that is a pattern applied via genexus_apply_pattern (see recipe 'wwp_on_transaction' or 'wwp_on_webpanel'). NOT for popups with editable inputs — use genexus_create_popup. See genexus://kb/tool-help/genexus_create_object.",
+      "description": "Create any IDE-creatable object (Transaction, Procedure, WebPanel, SDPanel, SDT, DataProvider, Domain, Dashboard...). Domain takes dataType+length or enumValues. NOT for WorkWithPlus (use genexus_apply_pattern) or popups with inputs (use genexus_create_popup).",
       "inputSchema": {
         "properties": {
           "basedOn": {
@@ -236,7 +236,7 @@
             "type": "array"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "length": {
@@ -261,15 +261,15 @@
       "name": "genexus_create_object"
     },
     {
-      "description": "W3: create a popup WebPanel with a Form type=\"layout\" body so radio/combo bindings render editable. Spec carries title, description, inputs (radio|combo|text with options), buttons, inParms, outParms.",
+      "description": "Create popup WebPanel with Form type=\"layout\" body (radio/combo render editable). Spec: title, inputs, buttons, inParms, outParms.",
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
-            "description": "WebPanel name. Created if missing; updated if exists.",
+            "description": "WebPanel name (created or updated).",
             "type": "string"
           },
           "spec": {
@@ -293,7 +293,7 @@
                 "type": "string"
               },
               "inParms": {
-                "description": "e.g. [\"AluAnoCad:Numeric(2)\"]",
+                "description": "e.g. [\"X:Numeric(2)\"]",
                 "items": {
                   "type": "string"
                 },
@@ -320,7 +320,7 @@
                       "type": "array"
                     },
                     "showWhen": {
-                      "description": "e.g. \"RespRegProf == 'S'\"; emits Refresh event toggling group visibility.",
+                      "description": "e.g. \"X == 'S'\"; emits Refresh toggling group visibility.",
                       "type": "string"
                     },
                     "type": {
@@ -372,7 +372,7 @@
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -395,7 +395,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -421,7 +421,7 @@
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "left": {
@@ -449,7 +449,7 @@
       "name": "genexus_diff"
     },
     {
-      "description": "Generate structured docs (wiki, sequence diagrams, health reports) for an object/domain. Not for programmatic analysis (see genexus_analyze) or source (see genexus_read).",
+      "description": "Use to generate structured docs (wiki, sequence diagrams, health reports). Don't use for programmatic analysis (see genexus_analyze) or source (see genexus_read).",
       "inputSchema": {
         "properties": {
           "action": {
@@ -473,7 +473,7 @@
       "name": "genexus_doc"
     },
     {
-      "description": "Edit an object part. Pass name or targets (mutually exclusive). Mode: full | patch. Use dryRun before persisting. For WWP screens edit the host WorkWithPlus<X>.PatternInstance — NOT the WebForm of the parent (gets overwritten on reapply). See recipe 'edit_pattern_instance' and 'add_custom_button' via genexus_recipe.",
+      "description": "Edit object part. name or targets (exclusive). mode: full|patch|ops. dryRun first. For WWP edit host's PatternInstance NOT the parent WebForm (gets overwritten on reapply).",
       "inputSchema": {
         "properties": {
           "content": {
@@ -489,7 +489,7 @@
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "mode": {
@@ -561,10 +561,10 @@
                 "type": "object"
               }
             ],
-            "description": "Legacy string replacement OR {find, replace} JSON object. Prefer separate operation/context/content params for new code."
+            "description": "String or {find,replace} object. Prefer operation+context+content."
           },
           "return_post_state": {
-            "description": "Set false to omit post_state.diff from the response (default true).",
+            "description": "Omit post_state.diff (default true).",
             "type": "boolean"
           },
           "targets": {
@@ -589,7 +589,7 @@
             "type": "string"
           },
           "validate": {
-            "description": "v2.6.6 FR#13. strict (default) aborts on the first op compile error. best-effort applies every op that compiles and reports per-op outcomes under result.opResults[]. only runs ops in-memory and returns diagnostics without persisting.",
+            "description": "strict (default) aborts on first error. best-effort applies what compiles. only runs in-memory, no persist.",
             "enum": [
               "strict",
               "best-effort",
@@ -598,7 +598,7 @@
             "type": "string"
           },
           "verbose": {
-            "description": "When true, adds slices (±15 lines around each hunk) to post_state (default false).",
+            "description": "Add ±15-line slices to post_state.",
             "type": "boolean"
           },
           "verifyRollback": {
@@ -610,7 +610,7 @@
       "name": "genexus_edit"
     },
     {
-      "description": "Edit an object then rebuild its callers in one call. Returns edit diff + impact + build operationId. See genexus://kb/tool-help/genexus_edit_and_build for examples.",
+      "description": "Edit + rebuild callers in one call. Returns edit diff + impact + build operationId.",
       "inputSchema": {
         "properties": {
           "buildIncludeCallees": {
@@ -627,7 +627,7 @@
             "type": "integer"
           },
           "content": {
-            "description": "New content or unified diff.",
+            "description": "New content. For mode=patch may be {find,replace} object.",
             "type": "string"
           },
           "dryRun": {
@@ -647,11 +647,34 @@
             "type": "string"
           },
           "part": {
-            "description": "Part to edit (Source, Rules, ...).",
+            "description": "Part (Source, Rules, ...).",
             "type": "string"
           },
+          "patch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "find": {
+                    "type": "string"
+                  },
+                  "replace": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "find",
+                  "replace"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "Same shape as genexus_edit.patch. Auto-sets mode=patch."
+          },
           "type": {
-            "description": "Disambiguates when name matches multiple objects.",
+            "description": "Disambiguates ambiguous names.",
             "type": "string"
           },
           "waitForIndex": {
@@ -665,8 +688,7 @@
         },
         "required": [
           "name",
-          "part",
-          "content"
+          "part"
         ],
         "type": "object"
       },
@@ -677,7 +699,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -709,7 +731,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -742,7 +764,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -767,7 +789,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           }
         },
@@ -779,7 +801,7 @@
       "name": "genexus_format"
     },
     {
-      "description": "List, read, save, or restore GeneXus object history snapshots. v2.6.6 (FR#28): restore now supports IDE 'Discard changes' parity — pass discard=true with part=<part> to restore the most recent EditSnapshotStore baseline. Returns {status:NoSnapshot,hint:...} when no baseline exists.",
+      "description": "List/read/save/restore object history snapshots. restore + discard=true = IDE 'Discard changes' parity.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -793,22 +815,22 @@
           },
           "discard": {
             "default": false,
-            "description": "action=restore only. When true and no snapshot is supplied, restore the most recent EditSnapshotStore baseline for (name,part) — IDE History|Restore (Discard changes) parity.",
+            "description": "restore-only: drop in-memory edits, restore last persisted baseline for (name,part).",
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
             "type": "string"
           },
           "part": {
-            "description": "Part name for snapshot-based restore (default 'Source').",
+            "description": "Default 'Source'.",
             "type": "string"
           },
           "snapshot": {
-            "description": "Snapshot token (timestamp or 'latest') for explicit edit-snapshot restore.",
+            "description": "Snapshot token (timestamp or 'latest').",
             "type": "string"
           },
           "versionId": {
@@ -831,7 +853,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -857,7 +879,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -875,7 +897,7 @@
       "name": "genexus_inject_context"
     },
     {
-      "description": "Snapshot of an object: metadata, variables, structure, signature. Raw object shape without source text. For source/code use genexus_read.",
+      "description": "Use to snapshot an object: metadata, variables, structure, signature. Raw shape, no source text — use genexus_read for code.",
       "inputSchema": {
         "properties": {
           "include": {
@@ -895,7 +917,7 @@
             "type": "array"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -913,7 +935,7 @@
       "name": "genexus_inspect"
     },
     {
-      "description": "Manage open KBs: list (with PID/RSS/idle), open (acquire Worker), close (release), set_default (persist alias to config.json).",
+      "description": "Manage open KBs: list / open / close / set_default.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -926,11 +948,11 @@
             "type": "string"
           },
           "alias": {
-            "description": "KB alias (for open/close). For open, auto-generated from path basename if omitted.",
+            "description": "KB alias. open: auto from path basename if omitted.",
             "type": "string"
           },
           "path": {
-            "description": "Absolute path to the KB (required for action=open if alias is not declared in config).",
+            "description": "Absolute KB path (required for open if alias not in config).",
             "type": "string"
           }
         },
@@ -942,7 +964,7 @@
       "name": "genexus_kb"
     },
     {
-      "description": "Native SDK layout/WebForm operations: get_tree, set_property, find_controls, inspect_surface, scan_mutators.",
+      "description": "SDK layout/WebForm ops: get_tree, set_property, find_controls, inspect_surface, scan_mutators.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -991,7 +1013,7 @@
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
@@ -1013,7 +1035,7 @@
             "type": "string"
           },
           "target": {
-            "description": "Object name alias for backward compatibility.",
+            "description": "Alias for name (backcompat).",
             "type": "string"
           },
           "value": {
@@ -1049,26 +1071,26 @@
             "type": "string"
           },
           "buildPlanCap": {
-            "description": "Build: max expanded nodes before BuildPlanTooLarge (default 200).",
+            "description": "Build: max nodes before BuildPlanTooLarge (default 200).",
             "type": "integer"
           },
           "code": {
             "type": "string"
           },
           "compact": {
-            "description": "Status: when true (default) returns counts + top-10 errors + warning dedup. Set false for legacy full Output/Errors[].",
+            "description": "Status: counts + top-10 errors (default true).",
             "type": "boolean"
           },
           "estimated_seconds": {
-            "description": "Build: <20 forces sync fast-path (one turn); >=20 (default 60) goes async.",
+            "description": "Build: <20 sync, >=20 async (default 60).",
             "type": "integer"
           },
           "force": {
-            "description": "Index: when true, clears in-memory + on-disk snapshot and runs a full SDK rescan. Use when impact analyze reports indexEdgesMissing or after adding/renaming objects.",
+            "description": "Index: full SDK rescan (clears snapshot).",
             "type": "boolean"
           },
           "includeCallees": {
-            "description": "Build: auto-expand target via call graph so callees compile before callers (fixes CS0246 from missing DLLs). Default transitive.",
+            "description": "Build: expand call graph so callees compile first (default transitive).",
             "enum": [
               "none",
               "direct",
@@ -1077,7 +1099,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
@@ -1087,20 +1109,28 @@
             "description": "Status: prior _meta.snapshot for chained waits.",
             "type": "string"
           },
+          "skipFullDeploy": {
+            "description": "EXPERIMENTAL. Single-target Build + includeCallees=none: skip deploy step. DLL is NOT redeployed; see tool-help.",
+            "type": "boolean"
+          },
           "snapshotPath": {
             "type": "string"
           },
           "target": {
-            "description": "Object name(s), taskId, job_id, or op:<operationId>.",
+            "description": "Object name(s), taskId, job_id, or op:<id>. Build accepts CSV ('Foo,Bar').",
             "type": "string"
           },
           "wait": {
-            "description": "Status taskId: 0-300. Event-driven block until baseline (phase/counts/done) changes.",
+            "description": "Status taskId event-driven block, 0-600s.",
             "type": "integer"
           },
           "wait_seconds": {
-            "description": "Status: 0-25. >0 long-polls server-side until terminal or timeout.",
+            "description": "Status/build long-poll cap, 0-600s.",
             "type": "integer"
+          },
+          "wait_until_done": {
+            "description": "Build/rebuild: block in one turn until terminal (up to wait_seconds, default 600).",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1116,30 +1146,30 @@
         "properties": {
           "axiCompact": {
             "default": true,
-            "description": "Default true. Returns compact projection (name,type,path,parentPath). Pass false for full payload.",
+            "description": "Compact projection (default true).",
             "type": "boolean"
           },
           "descriptionFilter": {
-            "description": "Substring match on description only.",
+            "description": "Substring on description.",
             "type": "string"
           },
           "filter": {
-            "description": "Legacy: matches name OR description. Prefer nameFilter/descriptionFilter.",
+            "description": "Legacy: name OR description. Prefer nameFilter/descriptionFilter.",
             "type": "string"
           },
           "inline_read_top": {
-            "description": "0-3. Inline reads of top N in response.",
+            "description": "0-3. Inline reads of top N.",
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
             "type": "integer"
           },
           "nameFilter": {
-            "description": "Substring match on object name only.",
+            "description": "Substring on name.",
             "type": "string"
           },
           "offset": {
@@ -1152,14 +1182,14 @@
             "type": "string"
           },
           "pathPrefix": {
-            "description": "Folder path prefix, e.g. 'Root Module/ClickSign/'.",
+            "description": "Folder prefix, e.g. 'Root Module/X/'.",
             "type": "string"
           },
           "typeFilter": {
             "type": "string"
           },
           "verbose": {
-            "description": "When true, returns full item shape (default false).",
+            "description": "Full item shape.",
             "type": "boolean"
           }
         },
@@ -1186,19 +1216,18 @@
       "name": "genexus_logs"
     },
     {
-      "description": "Change a variable's type atomically (delete+add) preserving name and description.",
+      "description": "Change variable type atomically. Preserves name + description.",
       "inputSchema": {
         "properties": {
           "basedOn": {
-            "description": "Domain name (optional)",
+            "description": "Domain (optional).",
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
-            "description": "Object name",
             "type": "string"
           },
           "typeName": {
@@ -1218,12 +1247,12 @@
       "name": "genexus_modify_variable"
     },
     {
-      "description": "Render preview of a WebPanel via headless Chrome (chrome-devtools-axi). Opens the launcher page, fills required parms, navigates to the target, captures HTML/a11y/screenshot, optionally diffs vs baseline. Returns status + captures.",
+      "description": "Render WebPanel via headless Chrome. Opens launcher, fills parms, navigates, captures HTML/a11y/screenshot, optionally diffs vs baseline.",
       "inputSchema": {
         "properties": {
           "action": {
             "default": "render",
-            "description": "v2.6.6 Stream H (FR#25): 'run' resolves the KB launcher object automatically when name is omitted (IDE F5 parity). 'render' (default) requires explicit name.",
+            "description": "run = auto-resolve launcher (IDE F5 parity). render = explicit name.",
             "enum": [
               "render",
               "run"
@@ -1231,16 +1260,16 @@
             "type": "string"
           },
           "auth": {
-            "description": "GAM auth override (mode/user/pass).",
+            "description": "GAM override (mode/user/pass).",
             "type": "object"
           },
           "buildFirst": {
             "default": false,
-            "description": "If true, dispatch a build before opening the browser.",
+            "description": "Build before launch.",
             "type": "boolean"
           },
           "capture": {
-            "description": "Capture set (default ['html','a11y']).",
+            "description": "Default ['html','a11y'].",
             "items": {
               "enum": [
                 "html",
@@ -1253,42 +1282,42 @@
             "type": "array"
           },
           "click": {
-            "description": "GX-aware click target (button/link logical name).",
+            "description": "GX-aware click target.",
             "type": "string"
           },
           "diffBaseline": {
             "default": false,
-            "description": "Compute structural diff vs stored a11y baseline.",
+            "description": "Structural diff vs stored baseline.",
             "type": "boolean"
           },
           "fill": {
-            "description": "GX-aware form fills (logical attr names → values).",
+            "description": "GX-aware form fills.",
             "type": "object"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "launcher": {
-            "description": "Launcher page (default 'auto' = config.launcher).",
+            "description": "Launcher page (default 'auto').",
             "type": "string"
           },
           "name": {
-            "description": "Target WebPanel name. Optional when action=run.",
+            "description": "WebPanel name. Optional for action=run.",
             "type": "string"
           },
           "parms": {
-            "description": "Per-call launcher parms (merged over config defaults and objectParms).",
+            "description": "Per-call launcher parms.",
             "type": "object"
           },
           "updateBaseline": {
             "default": false,
-            "description": "Persist current a11y snapshot as the new baseline.",
+            "description": "Persist current as new baseline.",
             "type": "boolean"
           },
           "waitMs": {
             "default": 3000,
-            "description": "Milliseconds to wait after navigation before capture.",
+            "description": "Wait ms after nav.",
             "type": "integer"
           }
         },
@@ -1312,7 +1341,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -1339,18 +1368,18 @@
         "properties": {
           "axiCompact": {
             "default": true,
-            "description": "Default true. Returns compact projection (name,type,path). Pass false for full payload.",
+            "description": "Compact projection (default true).",
             "type": "boolean"
           },
           "domainFilter": {
             "type": "string"
           },
           "inline_read_top": {
-            "description": "0-3. Inline reads of top N in response.",
+            "description": "0-3. Inline reads of top N.",
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
@@ -1375,7 +1404,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "limit": {
@@ -1412,11 +1441,11 @@
       "name": "genexus_read"
     },
     {
-      "description": "Fetch a step-by-step playbook for a named flow (e.g. 'wwp_on_transaction', 'wwp_on_webpanel', 'create_popup', 'edit_pattern_instance', 'add_custom_button'). Returns prereq/steps/pitfalls. Call name='list' to enumerate available recipes.",
+      "description": "Step-by-step playbook for a named flow ('wwp_on_transaction', 'create_popup', etc.). name='list' to enumerate.",
       "inputSchema": {
         "properties": {
           "name": {
-            "description": "Recipe key, or 'list' to enumerate.",
+            "description": "Recipe key, or 'list'.",
             "type": "string"
           }
         },
@@ -1448,7 +1477,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "newName": {
@@ -1479,11 +1508,11 @@
       "name": "genexus_refactor"
     },
     {
-      "description": "Scan loaded GeneXus SDK assemblies and dump a structured map of every public type, method, property to docs/sdk-probe/. Use when investigating new SDK surface or hunting for an entry point. Outputs raw.json + INDEX.md + generators.md.",
+      "description": "Dump SDK surface (types/methods/props) to docs/sdk-probe/. Use when hunting for entry points.",
       "inputSchema": {
         "properties": {
           "outputDir": {
-            "description": "Optional absolute path. Defaults to <repo>/docs/sdk-probe/ or %TEMP%/gxmcp_sdk_probe/.",
+            "description": "Absolute path. Default <repo>/docs/sdk-probe/.",
             "type": "string"
           }
         },
@@ -1514,7 +1543,7 @@
             "type": "integer"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "maxResults": {
@@ -1553,7 +1582,7 @@
             "type": "boolean"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "levelNumber": {
@@ -1589,7 +1618,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -1613,7 +1642,7 @@
       "inputSchema": {
         "properties": {
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -1635,7 +1664,7 @@
             "type": "string"
           },
           "kb": {
-            "description": "Target KB. Required when 2+ open.",
+            "description": "KB alias (multi-KB only).",
             "type": "string"
           },
           "name": {
@@ -1654,7 +1683,7 @@
       "name": "genexus_validate_payload"
     },
     {
-      "description": "Return current KB context, GeneXus install, MCP version, AND inline playbooks for common flows (WWP, popup, layout). Call this FIRST on every session — the `playbooks` block routes you to the right tool without exploration.",
+      "description": "KB context + version + playbooks. Call FIRST every session — playbooks block routes you to the right tool.",
       "inputSchema": {
         "properties": {},
         "type": "object"
@@ -1662,12 +1691,16 @@
       "name": "genexus_whoami"
     },
     {
-      "description": "Reload worker. mode=soft (default): drain + clean exit, gateway respawns same binary, JobRegistry preserved. mode=hard: copy sourceDir over publish/worker and respawn (iterating on worker code).",
+      "description": "Reload worker. soft (default): drain + respawn. hard: copy sourceDir + respawn. force=true: gateway kills directly (use when worker is hung).",
       "inputSchema": {
         "properties": {
           "drainTimeoutMs": {
             "description": "Soft only; default 30000.",
             "type": "integer"
+          },
+          "force": {
+            "description": "Bypass drain; gateway kills + respawns. Use when worker is wedged.",
+            "type": "boolean"
           },
           "mode": {
             "enum": [
