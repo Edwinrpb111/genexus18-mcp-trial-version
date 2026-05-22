@@ -85,6 +85,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          # v2.6.8: spell out the contract so a missing asset gives an actionable
+          # message instead of `gh release download`'s cryptic "no assets to
+          # download". The asset has to be produced locally (the Worker
+          # references Artech.* DLLs from a GeneXus 18 install which the
+          # ubuntu runner doesn't have) — release.ps1 automates the full
+          # sequence: build → zip → tag → push → gh release create with asset.
+          if ! gh release view "${{ steps.tag.outputs.tag }}" \
+                --json assets --jq '.assets[].name' | grep -qx 'publish.zip'; then
+            echo "::error title=publish.zip missing::Release ${{ steps.tag.outputs.tag }} has no publish.zip asset. Use ./release.ps1 to create releases (builds + zips + uploads in one step), or run 'gh release upload ${{ steps.tag.outputs.tag }} publish.zip' from a machine that has the Worker artefacts."
+            exit 1
+          fi
           gh release download "${{ steps.tag.outputs.tag }}" \
             --pattern publish.zip \
             --dir .
