@@ -343,7 +343,10 @@ namespace GxMcp.Gateway.Routers
                         // Stream G (v2.6.6): GX-aware fill / click and GAM auth.
                         fill = args?["fill"],
                         click = args?["click"]?.ToString(),
-                        auth = args?["auth"]
+                        auth = args?["auth"],
+                        // Items 39/97: device emulation + network-throttle pass-through.
+                        emulate = args?["emulate"]?.ToString(),
+                        network = args?["network"]?.ToString()
                     };
 
                 case "genexus_browser_capture":

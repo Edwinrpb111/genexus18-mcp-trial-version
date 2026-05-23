@@ -100,7 +100,10 @@ namespace GxMcp.Gateway.Tests
             //   / genexus_kb_readme) added in parallel. Measured ~8853; budget set at 9000.
             //   2026-05-23 wave3 browser-verify: 9000 → 9300 for genexus_browser_capture,
             //   genexus_smoke_test, genexus_a11y_audit. Net ~+220 tokens.
-            Assert.True(approxTokens < 9300, $"tool_definitions.json is ~{approxTokens} tokens; budget 9300.");
+            //   2026-05-23 friction items 39/60/97: 9300 → 9500 for genexus_preview
+            //   emulate + network enums and genexus_recipe versioned-name hint.
+            //   Net ~+125 tokens measured (~9426); budget set at 9500.
+            Assert.True(approxTokens < 9500, $"tool_definitions.json is ~{approxTokens} tokens; budget 9500.");
         }
     }
 }

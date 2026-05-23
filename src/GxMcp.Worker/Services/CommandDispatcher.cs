@@ -1105,12 +1105,16 @@ namespace GxMcp.Worker.Services
                             var fill = args?["fill"] as JObject;
                             string click = args?["click"]?.ToString();
                             var auth = args?["auth"] as JObject;
+                            // Items 39/97: device emulation + network throttle, passed
+                            // through to chrome-devtools-axi via --emulate / --throttle.
+                            string emulate = args?["emulate"]?.ToString();
+                            string network = args?["network"]?.ToString();
                             // v2.6.6 Stream H (FR#25): action=Run resolves the
                             // KB launcher object when target is omitted; action=Render
                             // requires an explicit target as before.
                             var previewTask = action == "Run"
-                                ? _previewService.RunAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth)
-                                : _previewService.PreviewAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth);
+                                ? _previewService.RunAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network)
+                                : _previewService.PreviewAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network);
                             previewTask.Wait();
                             return previewTask.Result.ToString(Newtonsoft.Json.Formatting.None);
                         }

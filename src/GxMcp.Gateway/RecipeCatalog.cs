@@ -15,35 +15,117 @@ namespace GxMcp.Gateway
     // ToolHelpCatalog; this is the routing layer.
     internal static class RecipeCatalog
     {
-        // Registry: key → (description, example, builder)
-        private record RecipeMeta(string Description, string Example, Func<JObject> Build);
+        // Registry: key → (description, example, version, builder).
+        // Item 60: recipes are versioned. The catalog stores one entry per
+        // (key, version); `Get(name)` resolves the latest version when no
+        // pin is given, and `Get(name@v1)` resolves a specific one. All
+        // current recipes are "v1" — no breaking change.
+        private record RecipeMeta(string Description, string Example, string Version, Func<JObject> Build);
 
         public static JObject Get(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
                 return Error("Recipe name is required.", "Pass name='list' to enumerate recipes.");
 
-            string key = name.Trim().ToLowerInvariant();
+            string raw = name.Trim();
+            string keyPart = raw;
+            string requestedVersion = null;
+            int atIdx = raw.IndexOf('@');
+            if (atIdx >= 0)
+            {
+                keyPart = raw.Substring(0, atIdx).Trim();
+                requestedVersion = raw.Substring(atIdx + 1).Trim();
+                if (string.IsNullOrEmpty(requestedVersion)) requestedVersion = null;
+            }
+            string key = keyPart.ToLowerInvariant();
+
             if (key == "list" || key == "index")
             {
                 var arr = new JArray();
+                // Group by recipe key (case-insensitive) to compute availableVersions.
+                var grouped = new Dictionary<string, List<RecipeMeta>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var kvp in RecipeRegistry)
                 {
+                    string baseName = StripVersion(kvp.Key);
+                    if (!grouped.TryGetValue(baseName, out var list))
+                    {
+                        list = new List<RecipeMeta>();
+                        grouped[baseName] = list;
+                    }
+                    list.Add(kvp.Value);
+                }
+                foreach (var pair in grouped)
+                {
+                    var versions = new JArray();
+                    string latestVersion = null;
+                    string latestDesc = null;
+                    string latestExample = null;
+                    foreach (var m in pair.Value)
+                    {
+                        versions.Add(m.Version);
+                        // "Latest" = lexicographically max version string ("v2" > "v1").
+                        if (latestVersion == null || string.CompareOrdinal(m.Version, latestVersion) > 0)
+                        {
+                            latestVersion = m.Version;
+                            latestDesc = m.Description;
+                            latestExample = m.Example;
+                        }
+                    }
                     arr.Add(new JObject
                     {
-                        ["name"] = kvp.Key,
-                        ["description"] = kvp.Value.Description,
-                        ["example"] = kvp.Value.Example
+                        ["name"] = pair.Key,
+                        ["description"] = latestDesc,
+                        ["example"] = latestExample,
+                        ["latestVersion"] = latestVersion,
+                        ["availableVersions"] = versions
                     });
                 }
                 return new JObject
                 {
                     ["recipes"] = arr,
-                    ["hint"] = "Call genexus_recipe { name: '<recipeName>' } to fetch a single playbook."
+                    ["hint"] = "Call genexus_recipe { name: '<recipeName>' } for latest, or 'name@v1' to pin."
                 };
             }
 
-            if (RecipeRegistry.TryGetValue(key, out var meta)) return meta.Build();
+            // Resolve (key, version) → entry. Without an explicit version,
+            // pick the lexicographically max version among matching entries.
+            RecipeMeta resolved = null;
+            string resolvedVersion = null;
+            foreach (var kvp in RecipeRegistry)
+            {
+                string baseName = StripVersion(kvp.Key);
+                if (!string.Equals(baseName, key, StringComparison.OrdinalIgnoreCase)) continue;
+                if (requestedVersion != null)
+                {
+                    if (string.Equals(kvp.Value.Version, requestedVersion, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resolved = kvp.Value;
+                        resolvedVersion = kvp.Value.Version;
+                        break;
+                    }
+                }
+                else
+                {
+                    if (resolvedVersion == null || string.CompareOrdinal(kvp.Value.Version, resolvedVersion) > 0)
+                    {
+                        resolved = kvp.Value;
+                        resolvedVersion = kvp.Value.Version;
+                    }
+                }
+            }
+
+            if (resolved != null)
+            {
+                JObject body = resolved.Build();
+                body["version"] = resolvedVersion;
+                return body;
+            }
+
+            if (requestedVersion != null)
+            {
+                return Error($"Unknown recipe version '{name}'.",
+                    "Try the latest with name='" + keyPart + "', or check availableVersions in 'list'.");
+            }
 
             return Error($"Unknown recipe '{name}'.",
                 "Try one of: " + string.Join(", ", RecipeNames()));
@@ -79,7 +161,10 @@ namespace GxMcp.Gateway
                         ["description"] = kvp.Value.Description,
                         ["example"] = kvp.Value.Example,
                         ["goal"] = body?["goal"]?.ToString(),
-                        ["steps"] = stepSummaries
+                        ["steps"] = stepSummaries,
+                        // Item 60: versioned recipes.
+                        ["latestVersion"] = kvp.Value.Version,
+                        ["availableVersions"] = new JArray(kvp.Value.Version)
                     });
                 }
                 return new JObject
@@ -99,6 +184,14 @@ namespace GxMcp.Gateway
 
             return Error($"Unknown action '{action}'.",
                          "Supported actions: list, describe.");
+        }
+
+        private static string StripVersion(string key)
+        {
+            // Internal registry keys do not embed version (versions are on the
+            // RecipeMeta). This hook lets future variants register the same
+            // logical name twice (e.g. 'wwp_on_webpanel' v1 and v2).
+            return key;
         }
 
         private static IEnumerable<string> RecipeNames()
@@ -129,6 +222,7 @@ namespace GxMcp.Gateway
                 ["wwp_on_transaction"] = new RecipeMeta(
                     "Generate the full WorkWithPlus screen family for a Transaction.",
                     "genexus_recipe { name: 'wwp_on_transaction' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Generate the full WorkWithPlus screen family (WW<Trn> + View + Export*) for a Transaction.",
@@ -150,6 +244,7 @@ namespace GxMcp.Gateway
                 ["wwp_on_webpanel"] = new RecipeMeta(
                     "Direct-attach a WorkWithPlus host onto an existing WebPanel/SDPanel.",
                     "genexus_recipe { name: 'wwp_on_webpanel' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Direct-attach a WorkWithPlus host onto an existing WebPanel/SDPanel (no transaction family).",
@@ -175,6 +270,7 @@ namespace GxMcp.Gateway
                 ["create_popup"] = new RecipeMeta(
                     "Create a popup WebPanel with editable form bindings in ONE call.",
                     "genexus_recipe { name: 'create_popup' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Create a popup WebPanel with editable form bindings (radio/combo/text + buttons) in ONE call.",
@@ -200,6 +296,7 @@ namespace GxMcp.Gateway
                 ["edit_pattern_instance"] = new RecipeMeta(
                     "Surgically edit a WWP host's PatternInstance XML without destroying surrounding state.",
                     "genexus_recipe { name: 'edit_pattern_instance' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Surgically edit a WWP host's PatternInstance XML without destroying surrounding state.",
@@ -223,6 +320,7 @@ namespace GxMcp.Gateway
                 ["popup_blocking_with_reload"] = new RecipeMeta(
                     "Open a popup synchronously from a parent WebPanel and force a Refresh once it closes.",
                     "genexus_recipe { name: 'popup_blocking_with_reload' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Parent WebPanel opens a popup, locks the screen until the user finishes the gate condition, and reloads on close. Mitigates the AUTO_REFRESH=VARS_CHANGE not firing after .Popup() (see playbook popup_call_async).",
@@ -268,6 +366,7 @@ namespace GxMcp.Gateway
                 ["radio_group_show_hide"] = new RecipeMeta(
                     "Build a radio-group whose selection toggles visibility of dependent controls.",
                     "genexus_recipe { name: 'radio_group_show_hide' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Render a radio group as raw HTML inside a Format=\"HTML\" gxTextBlock and route onclick handlers to a hidden gxAttribute carrying the selected value. Dependent controls toggle visibility via inline onclick.",
@@ -310,6 +409,7 @@ namespace GxMcp.Gateway
                 ["extract_to_procedure"] = new RecipeMeta(
                     "Move a WebPanel Events block that writes attributes (would hit spc0150) into a Procedure.",
                     "genexus_recipe { name: 'extract_to_procedure' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Fix spc0150 (\"Attribute cannot be assigned in this context\") by extracting an attribute-writing For each block from a WebPanel Events part into a Procedure. Receives the same in/out variables and is called from the original spot.",
@@ -356,6 +456,7 @@ namespace GxMcp.Gateway
                 ["feature_scaffold"] = new RecipeMeta(
                     "Scaffold a full feature (Transaction + WWP screens + Procedures) from a structured spec.",
                     "genexus_recipe { name: 'feature_scaffold' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "End-to-end scaffold: parse a structured spec (entity + attributes + ui flags + procedure list), then drive create_object/apply_pattern/create_object in sequence. The agent supplies the spec (already markdown-parsed); the recipe runs it via FeatureScaffoldService. Supports dryRun for plan-only mode.",
@@ -401,6 +502,7 @@ namespace GxMcp.Gateway
                 ["add_custom_button"] = new RecipeMeta(
                     "Add a custom action button to a WWP grid/toolbar.",
                     "genexus_recipe { name: 'add_custom_button' }",
+                    "v1",
                     () => new JObject
                     {
                         ["goal"] = "Add a custom action button to a WWP grid/toolbar.",

@@ -175,5 +175,73 @@ namespace GxMcp.Worker.Tests
             Assert.Contains(removed, t => t.ToString() == "/nested/a");
             Assert.Contains(changed, t => t["path"]?.ToString() == "/y");
         }
+
+        // ------------------------------------------------------------------
+        // Item 39 — device emulation passthrough
+        // Item 97 — slow-network throttle passthrough
+        // ------------------------------------------------------------------
+
+        [Theory]
+        [InlineData("iPhone12")]
+        [InlineData("iPhone15Pro")]
+        [InlineData("iPadPro")]
+        [InlineData("Pixel7")]
+        [InlineData("desktop1920")]
+        [InlineData("desktop1280")]
+        public void BuildEmulateNetworkArgs_AcceptedEmulateProfiles_AppendFlag(string profile)
+        {
+            string args = PreviewService.BuildEmulateNetworkArgs(profile, null);
+            Assert.Contains("--emulate " + profile, args);
+        }
+
+        [Fact]
+        public void BuildEmulateNetworkArgs_UnknownEmulateIsDropped()
+        {
+            string args = PreviewService.BuildEmulateNetworkArgs("NotARealPhone", null);
+            Assert.DoesNotContain("--emulate", args);
+        }
+
+        [Theory]
+        [InlineData("slow3g")]
+        [InlineData("fast3g")]
+        [InlineData("offline")]
+        public void BuildEmulateNetworkArgs_NetworkProfilesEmitThrottle(string profile)
+        {
+            string args = PreviewService.BuildEmulateNetworkArgs(null, profile);
+            Assert.Contains("--throttle " + profile, args);
+        }
+
+        [Fact]
+        public void BuildEmulateNetworkArgs_FastNetworkProfileIsSkippedToKeepBaselinesStable()
+        {
+            string args = PreviewService.BuildEmulateNetworkArgs(null, "fast");
+            Assert.DoesNotContain("--throttle", args);
+        }
+
+        [Fact]
+        public void PreviewSync_PassesEmulateAndThrottleToOpenCommand()
+        {
+            var dir = TempDir();
+            var runner = new FakeRunner();
+            runner.ByVerb["snapshot"] = new PreviewService.CliResult
+            {
+                ExitCode = 0,
+                StdOut = "form with PesCod ano sem aluno"
+            };
+            runner.ByVerb["eval"] = new PreviewService.CliResult { ExitCode = 0, StdOut = "" };
+            runner.ByVerb["open"] = new PreviewService.CliResult { ExitCode = 0, StdOut = "" };
+
+            var svc = new PreviewService(null, null, runner, Path.Combine(dir, "preview.config.json"), dir);
+            var r = svc.PreviewSync("MyPanel", null, "auto", false, 0, new[] { "html" }, false, false,
+                fill: null, click: null, auth: null, emulate: "iPhone12", network: "slow3g");
+
+            Assert.Equal("ok", r["status"]?.ToString());
+            var openCall = System.Linq.Enumerable.FirstOrDefault(runner.Calls, c => c.arguments.StartsWith("open "));
+            Assert.NotNull(openCall.arguments);
+            Assert.Contains("--emulate iPhone12", openCall.arguments);
+            Assert.Contains("--throttle slow3g", openCall.arguments);
+            Assert.Equal("iPhone12", r["emulation"]?["emulate"]?.ToString());
+            Assert.Equal("slow3g", r["emulation"]?["network"]?.ToString());
+        }
     }
 }

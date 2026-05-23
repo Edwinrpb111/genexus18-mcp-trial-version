@@ -277,7 +277,9 @@ namespace GxMcp.Worker.Services
             bool updateBaseline = false,
             JObject fill = null,
             string click = null,
-            JObject auth = null)
+            JObject auth = null,
+            string emulate = null,
+            string network = null)
         {
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -295,7 +297,7 @@ namespace GxMcp.Worker.Services
                 name = resolved;
             }
 
-            var result = PreviewSync(name, parms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth);
+            var result = PreviewSync(name, parms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network);
             result["resolvedLauncher"] = name;
             return Task.FromResult(result);
         }
@@ -408,9 +410,41 @@ namespace GxMcp.Worker.Services
             bool updateBaseline = false,
             JObject fill = null,
             string click = null,
-            JObject auth = null)
+            JObject auth = null,
+            string emulate = null,
+            string network = null)
         {
-            return Task.FromResult(PreviewSync(name, parms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth));
+            return Task.FromResult(PreviewSync(name, parms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network));
+        }
+
+        // Item 39: device emulation profiles forwarded to chrome-devtools-axi
+        // as `--emulate <profile>`. Names mirror the CLI's preset list so
+        // typos surface early as cli errors rather than silent misrender.
+        internal static readonly HashSet<string> EmulateProfiles =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "iPhone12", "iPhone15Pro", "iPadPro", "Pixel7", "desktop1920", "desktop1280" };
+
+        // Item 97: network-throttle profiles forwarded as `--throttle <name>`.
+        // "fast" is the unthrottled default — we skip the flag in that case
+        // so existing baselines (recorded without throttling) stay reproducible.
+        internal static readonly HashSet<string> NetworkProfiles =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "fast", "slow3g", "fast3g", "offline" };
+
+        internal static string BuildEmulateNetworkArgs(string emulate, string network)
+        {
+            var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(emulate) && EmulateProfiles.Contains(emulate))
+            {
+                sb.Append(" --emulate ").Append(emulate);
+            }
+            if (!string.IsNullOrWhiteSpace(network) &&
+                NetworkProfiles.Contains(network) &&
+                !string.Equals(network, "fast", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.Append(" --throttle ").Append(network);
+            }
+            return sb.ToString();
         }
 
         internal JObject PreviewSync(
@@ -424,7 +458,9 @@ namespace GxMcp.Worker.Services
             bool updateBaseline,
             JObject fill = null,
             string click = null,
-            JObject auth = null)
+            JObject auth = null,
+            string emulate = null,
+            string network = null)
         {
             var result = new JObject { ["name"] = name };
             try
@@ -508,7 +544,20 @@ namespace GxMcp.Worker.Services
                 result["launcherUrl"] = launcherUrl;
 
                 // 5) Open launcher
-                var openRes = _runner.Run(cli, "open " + Quote(launcherUrl), DefaultCliTimeoutMs);
+                //    Items 39/97: forward device-emulation + network-throttle
+                //    profiles to chrome-devtools-axi via `--emulate` / `--throttle`.
+                //    Unknown names are dropped silently (BuildEmulateNetworkArgs
+                //    validates against the schema enum), so a typo never becomes a
+                //    garbled command line.
+                string emulateNetArgs = BuildEmulateNetworkArgs(emulate, network);
+                if (!string.IsNullOrEmpty(emulateNetArgs))
+                {
+                    var emuRes = new JObject();
+                    if (!string.IsNullOrWhiteSpace(emulate) && EmulateProfiles.Contains(emulate)) emuRes["emulate"] = emulate;
+                    if (!string.IsNullOrWhiteSpace(network) && NetworkProfiles.Contains(network)) emuRes["network"] = network;
+                    if (emuRes.Count > 0) result["emulation"] = emuRes;
+                }
+                var openRes = _runner.Run(cli, "open " + Quote(launcherUrl) + emulateNetArgs, DefaultCliTimeoutMs);
                 if (openRes.TimedOut || openRes.ExitCode != 0)
                 {
                     result["status"] = "launcher_missing";

@@ -86,7 +86,20 @@ namespace GxMcp.Gateway
             long elapsedMs = record.CompletedAtUtc.HasValue
                 ? Math.Max(0L, (long)(record.CompletedAtUtc.Value - record.StartedAtUtc).TotalMilliseconds)
                 : 0L;
-            metric.RegisterCompletion(elapsedMs, string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase), record.WorkerPayload);
+            // Item 75: cheap proxy for "tokens in/out" — JSON byte length of the
+            // tool arguments and the worker's full response payload. Whole-token
+            // accuracy isn't worth a tokeniser dep; bytes/4 in the percentile
+            // surface gives the agent a workable bound for "is my tool reply huge?".
+            long reqBytes = SafeJsonLength(record.ToolArguments);
+            long respBytes = SafeJsonLength(workerPayload);
+            metric.RegisterCompletion(elapsedMs, string.Equals(record.Status, "Failed", StringComparison.OrdinalIgnoreCase), record.WorkerPayload, reqBytes, respBytes);
+        }
+
+        private static long SafeJsonLength(JToken token)
+        {
+            if (token == null) return 0;
+            try { return token.ToString(Newtonsoft.Json.Formatting.None).Length; }
+            catch { return 0; }
         }
 
         // FR#7 (friction-report 2026-05-14): support best-effort cancellation surface on the
@@ -117,7 +130,7 @@ namespace GxMcp.Gateway
             long elapsedMs = record.CompletedAtUtc.HasValue
                 ? Math.Max(0L, (long)(record.CompletedAtUtc.Value - record.StartedAtUtc).TotalMilliseconds)
                 : 0L;
-            metric.RegisterCompletion(elapsedMs, isError: true, workerPayload: null);
+            metric.RegisterCompletion(elapsedMs, isError: true, workerPayload: null, reqBytes: 0, respBytes: 0);
             return true;
         }
 
@@ -139,7 +152,7 @@ namespace GxMcp.Gateway
             long elapsedMs = record.CompletedAtUtc.HasValue
                 ? Math.Max(0L, (long)(record.CompletedAtUtc.Value - record.StartedAtUtc).TotalMilliseconds)
                 : 0L;
-            metric.RegisterCompletion(elapsedMs, isError: true, workerPayload: null);
+            metric.RegisterCompletion(elapsedMs, isError: true, workerPayload: null, reqBytes: 0, respBytes: 0);
         }
 
         public JObject BuildOperationStatus(string operationId)
@@ -291,6 +304,9 @@ namespace GxMcp.Gateway
 
         // Item 73: per-tool latency stats for whoami.stats.tools.
         // In-memory ring buffer (lost on gateway restart); count/p50/p95 per tool.
+        // Item 75: also surface request/response size percentiles ("tokensIn /
+        // tokensOut" — JSON byte length, divided by 4 as a coarse token proxy)
+        // so the agent can spot tools producing oversized responses.
         // Limitation: stats reset on every gateway restart — document this in the block.
         public JObject BuildToolStatsBlock()
         {
@@ -304,13 +320,20 @@ namespace GxMcp.Gateway
                 long count = j["count"]?.ToObject<long>() ?? 0;
                 if (count == 0) continue;
                 long errors = j["errors"]?.ToObject<long>() ?? 0;
-                toolsObj[kvp.Key] = new JObject
+                var entry = new JObject
                 {
                     ["p50Ms"] = j["p50Ms"],
                     ["p95Ms"] = j["p95Ms"],
                     ["count"] = count,
                     ["errorCount"] = errors
                 };
+                // Item 75: tokensIn / tokensOut percentiles, omitted when no
+                // payload was ever observed (cancellation-only history).
+                JToken tIn = j["tokensIn"];
+                JToken tOut = j["tokensOut"];
+                if (tIn is JObject) entry["tokensIn"] = tIn;
+                if (tOut is JObject) entry["tokensOut"] = tOut;
+                toolsObj[kvp.Key] = entry;
                 if (errors > 0) failureRanking.Add((kvp.Key, errors, count));
             }
             var mostFailed = new JArray();
@@ -328,7 +351,7 @@ namespace GxMcp.Gateway
             {
                 ["tools"] = toolsObj,
                 ["mostFailed"] = mostFailed,
-                ["note"] = "In-memory only; resets on gateway restart."
+                ["note"] = "In-memory only; resets on gateway restart. tokensIn/Out are bytes/4 estimates."
             };
         }
 
@@ -431,6 +454,11 @@ namespace GxMcp.Gateway
         {
             private readonly object _lock = new object();
             private readonly List<long> _latencies = new List<long>();
+            // Item 75: parallel ring buffers for JSON byte sizes of the request
+            // and the response. Same 256-sample cap as latency so the memory
+            // footprint stays bounded.
+            private readonly List<long> _reqBytes = new List<long>();
+            private readonly List<long> _respBytes = new List<long>();
             private const int MaxLatencySamples = 256;
 
             public ToolMetricState(string toolName)
@@ -454,7 +482,7 @@ namespace GxMcp.Gateway
                 }
             }
 
-            public void RegisterCompletion(long elapsedMs, bool isError, JToken? workerPayload)
+            public void RegisterCompletion(long elapsedMs, bool isError, JToken? workerPayload, long reqBytes, long respBytes)
             {
                 lock (_lock)
                 {
@@ -469,6 +497,20 @@ namespace GxMcp.Gateway
                         }
                     }
 
+                    // Only record payload sizes when at least one side is non-zero;
+                    // cancellation paths feed (0,0) and should not skew the
+                    // percentile toward "tools have empty bodies".
+                    if (reqBytes > 0)
+                    {
+                        _reqBytes.Add(reqBytes);
+                        if (_reqBytes.Count > MaxLatencySamples) _reqBytes.RemoveAt(0);
+                    }
+                    if (respBytes > 0)
+                    {
+                        _respBytes.Add(respBytes);
+                        if (_respBytes.Count > MaxLatencySamples) _respBytes.RemoveAt(0);
+                    }
+
                     ApplySemanticCounters(workerPayload);
                 }
             }
@@ -480,7 +522,7 @@ namespace GxMcp.Gateway
                     var ordered = _latencies.OrderBy(v => v).ToArray();
                     long p50 = Percentile(ordered, 0.50);
                     long p95 = Percentile(ordered, 0.95);
-                    return new JObject
+                    var payload = new JObject
                     {
                         ["toolName"] = ToolName,
                         ["count"] = Count,
@@ -492,7 +534,29 @@ namespace GxMcp.Gateway
                         ["p50Ms"] = p50,
                         ["p95Ms"] = p95
                     };
+                    payload["tokensIn"] = BuildSizeBlock(_reqBytes);
+                    payload["tokensOut"] = BuildSizeBlock(_respBytes);
+                    return payload;
                 }
+            }
+
+            // Bytes / 4 ≈ tokens for the typical JSON character mix; cheap
+            // enough that we can compute on every whoami call. Returns null
+            // when the buffer is empty so callers can omit the block.
+            private static JToken BuildSizeBlock(List<long> samples)
+            {
+                if (samples == null || samples.Count == 0) return JValue.CreateNull();
+                var ordered = samples.OrderBy(v => v).ToArray();
+                long p50 = Percentile(ordered, 0.50) / 4;
+                long p95 = Percentile(ordered, 0.95) / 4;
+                long max = ordered[ordered.Length - 1] / 4;
+                return new JObject
+                {
+                    ["p50"] = p50,
+                    ["p95"] = p95,
+                    ["max"] = max,
+                    ["samples"] = samples.Count
+                };
             }
 
             private void ApplySemanticCounters(JToken? workerPayload)

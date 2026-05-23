@@ -1721,6 +1721,18 @@
             "description": "Structural diff vs stored baseline.",
             "type": "boolean"
           },
+          "emulate": {
+            "description": "Device emulation profile passed to chrome-devtools-axi.",
+            "enum": [
+              "iPhone12",
+              "iPhone15Pro",
+              "iPadPro",
+              "Pixel7",
+              "desktop1920",
+              "desktop1280"
+            ],
+            "type": "string"
+          },
           "fill": {
             "description": "GX-aware form fills.",
             "type": "object"
@@ -1735,6 +1747,17 @@
           },
           "name": {
             "description": "WebPanel name. Optional for action=run.",
+            "type": "string"
+          },
+          "network": {
+            "default": "fast",
+            "description": "Network throttle profile.",
+            "enum": [
+              "fast",
+              "slow3g",
+              "fast3g",
+              "offline"
+            ],
             "type": "string"
           },
           "parms": {
@@ -1892,11 +1915,11 @@
       "name": "genexus_read"
     },
     {
-      "description": "Step-by-step playbook for a named flow ('wwp_on_transaction', 'create_popup', etc.). name='list' to enumerate.",
+      "description": "Step-by-step playbook for a named flow ('wwp_on_transaction', 'create_popup', etc.). name='list' to enumerate. Pass 'name@v1' to pin a specific version (latest otherwise).",
       "inputSchema": {
         "properties": {
           "name": {
-            "description": "Recipe key, or 'list'.",
+            "description": "Recipe key (latest version), 'name@v1' (pinned), or 'list'.",
             "type": "string"
           }
         },

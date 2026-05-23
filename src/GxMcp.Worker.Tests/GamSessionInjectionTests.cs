@@ -103,7 +103,9 @@ namespace GxMcp.Worker.Tests
                 false,
                 (JObject)null,
                 (string)null,
-                auth
+                auth,
+                (string)null,
+                (string)null
             });
 
             // Auth should be reported as attempted.

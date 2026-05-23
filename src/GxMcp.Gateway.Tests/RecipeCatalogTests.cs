@@ -95,5 +95,57 @@ namespace GxMcp.Gateway.Tests
             // overkill; presence of the same top-level keys is enough.
             Assert.True(lower.ContainsKey("goal") && upper.ContainsKey("goal"));
         }
+
+        // ------------------------------------------------------------------
+        // Item 60 — versioned recipes
+        // ------------------------------------------------------------------
+
+        [Fact]
+        public void Get_KnownRecipe_HasVersionField()
+        {
+            var r = RecipeCatalog.Get("wwp_on_webpanel");
+            Assert.NotNull(r["version"]);
+            Assert.Equal("v1", r["version"]?.ToString());
+        }
+
+        [Fact]
+        public void Get_PinnedVersion_ReturnsThatVersion()
+        {
+            var r = RecipeCatalog.Get("wwp_on_webpanel@v1");
+            Assert.False(r.ContainsKey("error"));
+            Assert.Equal("v1", r["version"]?.ToString());
+            Assert.NotNull(r["goal"]);
+        }
+
+        [Fact]
+        public void Get_PinnedUnknownVersion_ReturnsErrorEnvelope()
+        {
+            var r = RecipeCatalog.Get("wwp_on_webpanel@v99");
+            Assert.NotNull(r["error"]);
+            Assert.Contains("v99", r["error"]?.ToString());
+        }
+
+        [Fact]
+        public void Get_List_IncludesAvailableVersionsArray()
+        {
+            var r = RecipeCatalog.Get("list");
+            var arr = (JArray)r["recipes"]!;
+            Assert.NotEmpty(arr);
+            foreach (var entry in arr)
+            {
+                var versions = entry["availableVersions"] as JArray;
+                Assert.NotNull(versions);
+                Assert.NotEmpty(versions!);
+                Assert.NotNull(entry["latestVersion"]);
+            }
+        }
+
+        [Fact]
+        public void Get_BareName_ResolvesToLatestVersion()
+        {
+            // With only v1 in the catalog today, bare name resolves to v1.
+            var bare = RecipeCatalog.Get("create_popup");
+            Assert.Equal("v1", bare["version"]?.ToString());
+        }
     }
 }

@@ -117,6 +117,68 @@ namespace GxMcp.Gateway.Tests
         }
 
         // -----------------------------------------------------------------------
+        // Item 75 — per-tool token usage in whoami.stats.tools
+        // -----------------------------------------------------------------------
+
+        [Fact]
+        public void BuildToolStatsBlock_SurfacesTokensInAndTokensOut_AfterCompletions()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(60));
+
+            // Drive a few completions with concrete request + response payloads so the
+            // ring buffer has samples to percentile over.
+            for (int i = 0; i < 6; i++)
+            {
+                string reqId = Guid.NewGuid().ToString("N");
+                var args = new JObject
+                {
+                    ["name"] = "MyObject_" + new string('x', 40 * (i + 1)),
+                    ["mode"] = "patch"
+                };
+                tracker.StartOperation(reqId, "genexus_edit", args, Guid.NewGuid().ToString("N"));
+                var payload = new JObject
+                {
+                    ["id"] = reqId,
+                    ["result"] = new JObject
+                    {
+                        ["status"] = "Success",
+                        ["diff"] = new string('z', 200 * (i + 1))
+                    }
+                };
+                tracker.CompleteFromWorker(reqId, payload);
+            }
+
+            var block = tracker.BuildToolStatsBlock();
+            var edit = (JObject)((JObject)block["tools"])["genexus_edit"];
+            Assert.NotNull(edit);
+
+            var tokensIn = edit["tokensIn"] as JObject;
+            var tokensOut = edit["tokensOut"] as JObject;
+            Assert.NotNull(tokensIn);
+            Assert.NotNull(tokensOut);
+
+            Assert.True(tokensIn["p50"]?.ToObject<long>() > 0);
+            Assert.True(tokensOut["p95"]?.ToObject<long>() > 0);
+            Assert.Equal(6L, tokensIn["samples"]?.ToObject<long>());
+            Assert.Equal(6L, tokensOut["samples"]?.ToObject<long>());
+            // The largest response was ~200*6 chars; max/4 should be ≈ 300+.
+            Assert.True(tokensOut["max"]?.ToObject<long>() >= 200);
+        }
+
+        [Fact]
+        public void BuildToolStatsBlock_NoteMentionsTokenEstimate()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            string reqId = Guid.NewGuid().ToString("N");
+            tracker.StartOperation(reqId, "genexus_read", new JObject { ["name"] = "X" }, Guid.NewGuid().ToString("N"));
+            tracker.CompleteFromWorker(reqId, new JObject { ["result"] = new JObject { ["status"] = "Success" } });
+            var block = tracker.BuildToolStatsBlock();
+            string? note = block["note"]?.ToString();
+            Assert.NotNull(note);
+            Assert.Contains("tokens", note, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // -----------------------------------------------------------------------
         // Item 52 — worker memory in whoami
         // -----------------------------------------------------------------------
 
