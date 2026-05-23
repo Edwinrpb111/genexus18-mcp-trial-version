@@ -798,7 +798,10 @@ namespace GxMcp.Worker.Services
                     var parsed = JObject.Parse(raw);
                     var charsetWarn = new JObject
                     {
-                        ["code"] = "kb_charset_lossy",
+                        // Friction 2026-05-22 #62: was snake_case "kb_charset_lossy";
+                        // standardized to PascalCase Lint* with resolvable docUrl.
+                        ["code"] = GotchaCodes.LintKbCharsetLossy,
+                        ["docUrl"] = GotchaCodes.DocUrlFor(GotchaCodes.LintKbCharsetLossy),
                         ["message"] = "Content contains characters outside the KB's WIN1252 charset (will render as '?' at runtime): " + string.Join(", ", unrepresentable),
                         ["hint"] = "Replace with ASCII equivalents (e.g. ✓ -> 'OK', ⧖ -> '[wait]'), or change the KB's NLS_CHARACTERSET if you need full unicode."
                     };
@@ -1523,7 +1526,10 @@ namespace GxMcp.Worker.Services
                                     {
                                         new JObject
                                         {
-                                            ["code"] = "PreflightSpc0150",
+                                            // Friction 2026-05-22 #62: was "PreflightSpc0150"; renamed to the
+                                            // canonical Lint* form so the audit-test enumerator picks it up.
+                                            ["code"] = GotchaCodes.LintSpc0150ForEachAttributeWrite,
+                                            ["docUrl"] = GotchaCodes.DocUrlFor(GotchaCodes.LintSpc0150ForEachAttributeWrite),
                                             ["message"] = "WebPanel Events with attribute writes inside `For each` → spc0150 at build time. Move to a Procedure (recipe extract_to_procedure).",
                                             ["suggested_recipe"] = "extract_to_procedure"
                                         }
@@ -2370,6 +2376,7 @@ namespace GxMcp.Worker.Services
                 result.Add(new JObject
                 {
                     ["code"] = "GotchaHtmlFormatScriptStripped",
+                    ["docUrl"] = GotchaCodes.DocUrlFor("GotchaHtmlFormatScriptStripped"),
                     ["message"] = "Format=\"HTML\" gxTextBlock with <script> inside CDATA — GeneXus generator escapes this on render. Code appears as literal text. Use <body onmousedown> + addEventListener for runtime JS instead."
                 });
             }
@@ -2429,6 +2436,7 @@ namespace GxMcp.Worker.Services
                         prospectiveGotchas.Add(new JObject
                         {
                             ["code"] = g.Code,
+                            ["docUrl"] = g.DocUrl,
                             ["severity"] = g.Severity,
                             ["element"] = g.Element,
                             ["controlId"] = g.ControlId,

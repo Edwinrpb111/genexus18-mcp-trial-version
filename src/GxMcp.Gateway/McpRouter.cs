@@ -794,6 +794,29 @@ namespace GxMcp.Gateway
                 };
             }
 
+            // Friction 2026-05-22 #62: gotcha doc resource. Codes emitted on
+            // warnings carry docUrl=genexus://kb/tool-help/gotchas/<code>; the
+            // agent fetches the long-form here. Falls back to a generic stub
+            // when the code is unknown so callers always get a 200.
+            const string gotchaPrefix = "genexus://kb/tool-help/gotchas/";
+            if (uri.StartsWith(gotchaPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                string code = uri.Substring(gotchaPrefix.Length);
+                string text = ToolHelpCatalog.GetGotchaHelp(code);
+                return new
+                {
+                    contents = new[]
+                    {
+                        new
+                        {
+                            uri,
+                            mimeType = "text/markdown",
+                            text
+                        }
+                    }
+                };
+            }
+
             const string toolHelpPrefix = "genexus://kb/tool-help/";
             if (uri.StartsWith(toolHelpPrefix, StringComparison.OrdinalIgnoreCase))
             {

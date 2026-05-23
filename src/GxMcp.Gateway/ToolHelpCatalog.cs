@@ -232,5 +232,82 @@ namespace GxMcp.Gateway
         }
 
         internal static System.Collections.Generic.IReadOnlyCollection<string> KnownTools => _helpTexts.Keys;
+
+        // Friction 2026-05-22 #62: gotcha doc resource. Every warning/lint
+        // envelope carries docUrl=genexus://kb/tool-help/gotchas/<code>; the
+        // agent fetches the long-form here. Returns a per-code body when
+        // known, a generic stub otherwise so callers always get a payload.
+        private static readonly Dictionary<string, string> _gotchaTexts = new(System.StringComparer.OrdinalIgnoreCase)
+        {
+            ["LintKbCharsetLossy"] =
+                "# LintKbCharsetLossy\n\n" +
+                "**Severity:** Warning.\n\n" +
+                "Content contains characters outside the KB's WIN1252 charset. At runtime GeneXus will render those characters as `?`.\n\n" +
+                "## Fix\n" +
+                "- Replace with ASCII / latin-1 equivalents (`✓` → `OK`, `⧖` → `[wait]`).\n" +
+                "- Or change the KB's `NLS_CHARACTERSET` to a UTF-8 variant if you need full unicode.\n",
+            ["LintSpc0150ForEachAttributeWrite"] =
+                "# LintSpc0150ForEachAttributeWrite\n\n" +
+                "**Severity:** Warning (preflight — write succeeds, build will fail).\n\n" +
+                "WebPanel Events source has an attribute assignment (no leading `&`) inside a `For each` / `endfor` block. GeneXus will fail the build with `spc0150 — Attribute cannot be assigned in this context`.\n\n" +
+                "## Fix\n" +
+                "Move the offending logic into a Procedure. Use the recipe:\n\n" +
+                "```\ngenexus_recipe { name: 'extract_to_procedure' }\n```\n",
+            ["GotchaGxButtonHtmlFormCustomEvent"] =
+                "# GotchaGxButtonHtmlFormCustomEvent\n\n" +
+                "`gxButton` with a custom `OnClickEvent` inside `<Form type=\"html\">` compiles but the HTML generator wires `data-gx-evt=5` (Enter) regardless. Custom events do not fire.\n\n" +
+                "## Fix\n" +
+                "- Use `<gxBitmap eventGX=\"'EventName'\" />` styled as a button, OR\n" +
+                "- Move the control to `<Form type=\"layout\">` with `<action onClickEvent=\"'EventName'\" />`.\n",
+            ["GotchaGxAttributeHtmlFormDiscreteReadOnly"] =
+                "# GotchaGxAttributeHtmlFormDiscreteReadOnly\n\n" +
+                "`gxAttribute` with `ControlType=\"Radio Button\"` or `\"Combo Box\"` inside `<Form type=\"html\">` renders disabled (the generator emits `disabled=\"\" class=\"gx-disabled\"`). `ReadOnly=\"False\"` and `Enabled=\"True\"` are ignored on this generator path.\n\n" +
+                "## Fix\n" +
+                "- Move the control to `<Form type=\"layout\">` (WWP table pattern), OR\n" +
+                "- Render via a User Control, OR\n" +
+                "- Emit raw `<input type=\"radio\">` inside a `gxTextBlock Format=\"HTML\"` block + JS wiring back to a hidden default-ControlType gxAttribute.\n",
+            ["GotchaGxAttributeMissingDataField"] =
+                "# GotchaGxAttributeMissingDataField\n\n" +
+                "`gxAttribute` has neither `AttID` nor `DataField`. The control renders but binds to nothing; `FixWebFormData` silently keeps it so the missing binding masks the problem.\n\n" +
+                "## Fix\n" +
+                "Add `AttID=\"var:N\"` or `DataField=\"<attributeName>\"` so the control binds to a value.\n",
+            ["GotchaUnknownControlType"] =
+                "# GotchaUnknownControlType\n\n" +
+                "`gxAttribute ControlType=\"...\"` is not a value the SDK recognizes (often a typo: `RadioButton` for `Radio Button`). The generator silently falls back to `Edit`.\n\n" +
+                "## Valid ControlType values\n" +
+                "Edit, Text Box, Combo Box, Radio Button, Check Box, Calendar, Image, Picture, Hyperlink, Button, Static, Description, Embedded Page, Dynamic Combo Box, List Box, Multi Selection List Box, Textarea, Password.\n",
+            ["GotchaWebComponentMissingObjectCall"] =
+                "# GotchaWebComponentMissingObjectCall\n\n" +
+                "`gxEmbeddedPage` / `gxWebComponent` has no `ObjectCall` attribute → runtime renders an empty `<div>`.\n\n" +
+                "## Fix\n" +
+                "Add `ObjectCall=\"<ComponentName>.Create()\"` (or equivalent factory call).\n",
+            ["GotchaHtmlFormatScriptStripped"] =
+                "# GotchaHtmlFormatScriptStripped\n\n" +
+                "`gxTextBlock Format=\"HTML\"` with `<script>`, `<iframe>`, or `<img onerror=...>` inside the CDATA. The GeneXus HTML generator escapes these tags so they render as literal text — your JS will NOT run.\n\n" +
+                "## Fix\n" +
+                "Use `<body onmousedown=\"...\">` + `addEventListener` for runtime JS injection. Inline event attributes on raw HTML elements inside `Format=\"HTML\"` blocks (e.g. `<input type=\"radio\" onclick=\"...\">`) ARE preserved — only block-level `<script>` / `<iframe>` / `img onerror` patterns are escaped.\n",
+            ["GotchaCellOutsideTable"] =
+                "# GotchaCellOutsideTable\n\n" +
+                "`<cell>` or `<row>` with no `<table>` ancestor — the generator wraps silently or drops the element. Layout structure may be malformed at runtime.\n\n" +
+                "## Fix\n" +
+                "Wrap the element in a `<table>...<tbody>...</tbody></table>` hierarchy.\n",
+            ["GotchaDuplicateControlName"] =
+                "# GotchaDuplicateControlName\n\n" +
+                "Two elements share the same `id` / `Name`. The SDK auto-renames the duplicates via `GetUniqueName` on save — any caller reference (event handler, JS, parent layout) that pointed at the renamed control breaks silently.\n\n" +
+                "## Fix\n" +
+                "Make each `id` unique. Suffix logically-related controls (`Btn1`, `Btn2`, ...).\n"
+        };
+
+        internal static string GetGotchaHelp(string code)
+        {
+            if (!string.IsNullOrWhiteSpace(code) && _gotchaTexts.TryGetValue(code, out var text))
+                return text;
+            // Generic stub so the agent always gets a 200. The code itself is the strongest
+            // grep target; the agent can fall back to the message text on the warning.
+            return $"# {code}\n\nNo long-form documentation is registered for this code yet. " +
+                   "Inspect the `message` / `workaround` fields on the warning envelope — those carry the actionable guidance.\n";
+        }
+
+        internal static System.Collections.Generic.IReadOnlyCollection<string> KnownGotchaCodes => _gotchaTexts.Keys;
     }
 }

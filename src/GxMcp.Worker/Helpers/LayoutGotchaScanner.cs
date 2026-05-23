@@ -21,12 +21,17 @@ namespace GxMcp.Worker.Helpers
     {
         public sealed class Gotcha
         {
-            public string Code;       // stable identifier for grep/dedup
+            public string Code;       // stable identifier for grep/dedup; PascalCase with "Gotcha" prefix
             public string Severity;   // "Warning" — these compile clean
             public string Element;
             public string ControlId;
             public string Message;
             public string Workaround;
+            // Friction 2026-05-22 #62: resolvable resource the agent can fetch via
+            // resources/read for the long-form explanation of this code. Populated
+            // automatically by GotchaCodes.DocUrlFor(Code) at construction time
+            // (set inline below; emit sites pass it through to the JSON envelope).
+            public string DocUrl => GotchaCodes.DocUrlFor(Code);
         }
 
         /// <summary>

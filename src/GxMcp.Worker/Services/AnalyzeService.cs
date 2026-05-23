@@ -786,6 +786,7 @@ namespace GxMcp.Worker.Services
                                                     var entry = new JObject
                                                     {
                                                         ["code"] = g.Code,
+                                                        ["docUrl"] = g.DocUrl,
                                                         ["severity"] = g.Severity,
                                                         ["element"] = g.Element,
                                                         ["controlId"] = g.ControlId,
