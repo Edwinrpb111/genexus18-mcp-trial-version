@@ -353,6 +353,51 @@ namespace GxMcp.Gateway
                         )
                     }),
 
+                ["feature_scaffold"] = new RecipeMeta(
+                    "Scaffold a full feature (Transaction + WWP screens + Procedures) from a structured spec.",
+                    "genexus_recipe { name: 'feature_scaffold' }",
+                    () => new JObject
+                    {
+                        ["goal"] = "End-to-end scaffold: parse a structured spec (entity + attributes + ui flags + procedure list), then drive create_object/apply_pattern/create_object in sequence. The agent supplies the spec (already markdown-parsed); the recipe runs it via FeatureScaffoldService. Supports dryRun for plan-only mode.",
+                        ["prereq"] = new JArray(
+                            "spec.entity.type must be 'Transaction' (other roots are not supported by this scaffold).",
+                            "spec.entity.attributes must be non-empty AND at least one attribute has isKey=true.",
+                            "Each spec.procedures[i].parms entry must be 'in|out|inout:Name:Type' (e.g. 'in:Course:Character(40)').",
+                            "Run with dryRun=true FIRST to confirm the plan before mutating the KB."
+                        ),
+                        ["steps"] = new JArray(
+                            Step("genexus_scaffold_feature", new JObject {
+                                ["dryRun"] = true,
+                                ["spec"] = new JObject {
+                                    ["name"] = "CourseEnrollment",
+                                    ["entity"] = new JObject {
+                                        ["type"] = "Transaction",
+                                        ["name"] = "Enrollment",
+                                        ["attributes"] = new JArray(
+                                            new JObject { ["name"] = "EnrId", ["type"] = "Numeric(8)", ["isKey"] = true },
+                                            new JObject { ["name"] = "EnrStudent", ["type"] = "Character(60)" }
+                                        )
+                                    },
+                                    ["ui"] = new JObject { ["list"] = true, ["edit"] = true, ["summary"] = true },
+                                    ["procedures"] = new JArray(
+                                        new JObject { ["name"] = "GetEnrollmentsByCourse", ["parms"] = new JArray("in:Course:Character(40)", "out:list:Enrollment[]") }
+                                    ),
+                                    ["tests"] = false
+                                }
+                            }, "DryRun: get the full plan (sequence of tool calls with args) without touching the KB. Returns status='DryRun' + plan[]."),
+                            Step("genexus_scaffold_feature", new JObject {
+                                ["dryRun"] = false,
+                                ["spec"] = new JObject { ["...same as above..."] = true }
+                            }, "Execute: runs create_object → apply_pattern(WorkWithPlus) → create_object per procedure (+ optional Test stubs if spec.tests=true). On any failure returns status='PartialFailure' with completedSteps[] + failedStep — call genexus_undo to roll back if needed.")
+                        ),
+                        ["pitfalls"] = new JArray(
+                            "Validation runs FIRST and is structural only — it does NOT check that types resolve in the KB (e.g. 'Enrollment[]' as an SDT collection must already exist for the procedure parm to bind at build time). Expect a follow-up build to surface those.",
+                            "WorkWithPlus only applies to Transactions; if you set ui.list/edit/summary, entity.type MUST be 'Transaction'.",
+                            "PartialFailure does NOT auto-rollback. The agent is responsible for calling genexus_undo if it wants to revert prior steps.",
+                            "Procedure parm rules use 'in|out|inout:Name:Type' shape; the scaffold reduces that to 'parm(in:&Name, ...)' for the Rules part. Variable declarations with full types are a later concern (genexus_add_variable)."
+                        )
+                    }),
+
                 ["add_custom_button"] = new RecipeMeta(
                     "Add a custom action button to a WWP grid/toolbar.",
                     "genexus_recipe { name: 'add_custom_button' }",
