@@ -77,6 +77,10 @@ namespace GxMcp.Worker.Services
         private readonly BrowserCaptureService _browserCaptureService;
         private readonly SmokeTestService _smokeTestService;
         private readonly A11yAuditService _a11yAuditService;
+        // Wave-3 items 5 + 37: post-edit visual verification (screenshot + pixel-diff).
+        // Lazy because it shells out to chrome-devtools-axi / playwright and is only
+        // engaged when callers opt in via `visualVerify=true`.
+        private readonly VisualVerifyService _visualVerifyService;
 
         private CommandDispatcher()
         {
@@ -147,6 +151,7 @@ namespace GxMcp.Worker.Services
             _browserCaptureService = new BrowserCaptureService(_objectService, _browserDriverInvoker);
             _smokeTestService = new SmokeTestService(_browserCaptureService);
             _a11yAuditService = new A11yAuditService(_browserDriverInvoker);
+            _visualVerifyService = new VisualVerifyService(_kbService, _objectService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -668,26 +673,38 @@ namespace GxMcp.Worker.Services
                         {
                             return _applyTemplateService.ListTemplates();
                         }
-                        return _writeService.WriteObject(
-                            target,
-                            action,
-                            payload,
-                            args?["type"]?.ToString(),
-                            true,
-                            false,
-                            true,
-                            args?["dryRun"]?.ToObject<bool?>() ?? false);
+                        {
+                            var writeResp = _writeService.WriteObject(
+                                target,
+                                action,
+                                payload,
+                                args?["type"]?.ToString(),
+                                true,
+                                false,
+                                true,
+                                args?["dryRun"]?.ToObject<bool?>() ?? false);
+                            return VisualVerifyResponseHook.MaybeAttach(args, writeResp, _visualVerifyService);
+                        }
                     case "editandbuild":
                         if (action == "Orchestrate")
                         {
-                            return _editAndBuildOrchestrator.Orchestrate(args ?? new JObject());
+                            var orchResp = _editAndBuildOrchestrator.Orchestrate(args ?? new JObject());
+                            return VisualVerifyResponseHook.MaybeAttach(args, orchResp, _visualVerifyService);
                         }
                         break;
                     case "semanticops":
-                        if (action == "Apply") return _writeService.ApplySemanticOps(args ?? request);
+                        if (action == "Apply")
+                        {
+                            var soResp = _writeService.ApplySemanticOps(args ?? request);
+                            return VisualVerifyResponseHook.MaybeAttach(args ?? request, soResp, _visualVerifyService);
+                        }
                         break;
                     case "jsonpatch":
-                        if (action == "Apply") return _writeService.ApplyJsonPatch(args ?? request);
+                        if (action == "Apply")
+                        {
+                            var jpResp = _writeService.ApplyJsonPatch(args ?? request);
+                            return VisualVerifyResponseHook.MaybeAttach(args ?? request, jpResp, _visualVerifyService);
+                        }
                         break;
                     case "patch":
                         if (action == "Apply")
@@ -708,7 +725,7 @@ namespace GxMcp.Worker.Services
                             bool dryRunArg = args?["dryRun"]?.ToObject<bool?>() ?? false;
                             bool validateOnly = string.Equals(validateMode, "only", StringComparison.OrdinalIgnoreCase)
                                                 || string.Equals(validateMode, "validate-only", StringComparison.OrdinalIgnoreCase);
-                            return _patchService.ApplyPatch(
+                            var patchResp = _patchService.ApplyPatch(
                                 target,
                                 args?["part"]?.ToString(),
                                 args?["operation"]?.ToString(),
@@ -721,6 +738,7 @@ namespace GxMcp.Worker.Services
                                 args?["return_post_state"]?.ToObject<bool?>() ?? true,
                                 args?["verbose"]?.ToObject<bool?>() ?? false,
                                 args?["replaceAll"]?.ToObject<bool?>() ?? false);
+                            return VisualVerifyResponseHook.MaybeAttach(args, patchResp, _visualVerifyService);
                         }
                         break;
                     case "analyze":

@@ -762,6 +762,11 @@
           },
           "verifyRollback": {
             "type": "boolean"
+          },
+          "visualVerify": {
+            "default": false,
+            "description": "After the edit (+ optional build), open the resolved runtime URL in a headless browser, screenshot it, attach base64 (truncated) + pixel-diff vs baseline.",
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -835,6 +840,11 @@
           "type": {
             "description": "Disambiguates ambiguous names.",
             "type": "string"
+          },
+          "visualVerify": {
+            "default": false,
+            "description": "After the edit (+ optional build), open the resolved runtime URL in a headless browser, screenshot it, attach base64 (truncated) + pixel-diff vs baseline.",
+            "type": "boolean"
           },
           "waitForIndex": {
             "default": true,
