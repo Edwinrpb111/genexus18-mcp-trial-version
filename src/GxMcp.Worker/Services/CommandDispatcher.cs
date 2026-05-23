@@ -855,10 +855,12 @@ namespace GxMcp.Worker.Services
                             int last = args?["last"]?.ToObject<int?>() ?? 1;
                             return _undoService.Undo(last);
                         }
-                    // Item 50 — genexus_security action=audit_gam
+                    // Items 50 + 48 — genexus_security action=audit_gam|scan_secrets
                     case "security":
                         if (string.Equals(action, "audit_gam", StringComparison.OrdinalIgnoreCase))
                             return _securityAuditService.AuditGam();
+                        if (string.Equals(action, "scan_secrets", StringComparison.OrdinalIgnoreCase))
+                            return _securityAuditService.ScanSecrets();
                         return Models.McpResponse.Error("Unknown action", target, null, $"Unsupported security action '{action}'.");
                     // Item 65 — genexus_orient welcome card
                     case "orient":

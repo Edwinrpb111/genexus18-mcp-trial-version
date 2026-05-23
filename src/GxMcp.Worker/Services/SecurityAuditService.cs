@@ -25,6 +25,80 @@ namespace GxMcp.Worker.Services
             _kbService = kbService;
         }
 
+        // Item 48 — scan KB object sources for credential-shaped literals.
+        // Heuristic regex set; designed to err on the side of false positives
+        // (each match is reported with its location so a human can verify).
+        private static readonly (string code, string severity, string pattern, string remediation)[] _secretPatterns = new[]
+        {
+            ("JwtLiteral", "critical", "eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}", "Move JWT to env vars or a secret manager; rotate the leaked token."),
+            ("PemPrivateKey", "critical", "-----BEGIN [A-Z ]*PRIVATE KEY-----", "Move PEM to a secret manager; rotate the leaked key."),
+            ("AwsAccessKey", "critical", "AKIA[0-9A-Z]{16}", "Rotate the AWS key immediately; move to env vars."),
+            ("GenericPassword", "warn", "(?i)(password|pwd|secret)\\s*=\\s*['\"][^'\"\\s]{6,}['\"]", "Move credential to env var; never commit literals."),
+            ("ConnectionStringInline", "warn", "(?i)(Server|Data\\s+Source|Host)\\s*=\\s*[^;]+;.*(Password|Pwd)\\s*=", "Use connection-string aliases from environment props rather than literals.")
+        };
+
+        public string ScanSecrets()
+        {
+            string kbPath = null;
+            try { kbPath = _kbService?.GetKbPath(); } catch { }
+            var findings = new JArray();
+            if (string.IsNullOrEmpty(kbPath) || !Directory.Exists(kbPath))
+            {
+                findings.Add(Finding("info", "KbPathUnknown",
+                    "No KB is currently open; cannot scan sources.",
+                    "Open a KB first via genexus_kb action=open, then re-run."));
+                return Envelope(findings).ToString();
+            }
+
+            try
+            {
+                // Walk *.xml under the KB's PrivateExport / Objects directories — that's
+                // where the SDK persists per-object Source. File-level scan keeps this
+                // SDK-free so the worker doesn't need to walk the design model.
+                var roots = new[] { "PrivateExport", "Objects" }
+                    .Select(d => Path.Combine(kbPath, d))
+                    .Where(Directory.Exists)
+                    .ToArray();
+                int filesScanned = 0;
+                foreach (var root in roots)
+                {
+                    foreach (var f in Directory.EnumerateFiles(root, "*.xml", SearchOption.AllDirectories).Take(5000))
+                    {
+                        filesScanned++;
+                        string text;
+                        try { text = File.ReadAllText(f); } catch { continue; }
+                        foreach (var pat in _secretPatterns)
+                        {
+                            var m = Regex.Match(text, pat.pattern);
+                            if (!m.Success) continue;
+                            int lineNo = text.Substring(0, m.Index).Count(c => c == '\n') + 1;
+                            findings.Add(new JObject
+                            {
+                                ["severity"] = pat.severity,
+                                ["code"] = pat.code,
+                                ["message"] = $"{pat.code} matched in {Path.GetFileName(f)} at line {lineNo}.",
+                                ["file"] = f,
+                                ["line"] = lineNo,
+                                ["remediation"] = pat.remediation
+                            });
+                            // One finding per pattern per file keeps the report scannable.
+                            break;
+                        }
+                    }
+                }
+                if (findings.Count == 0)
+                    findings.Add(Finding("info", "NoSecretsFound",
+                        $"Scanned {filesScanned} files; no credential-shaped literals matched.",
+                        "Heuristic — does not guarantee no secrets. Run a static-analysis tool for stronger guarantees."));
+            }
+            catch (Exception ex)
+            {
+                findings.Add(Finding("warn", "ScanError",
+                    "Secret scan failed: " + ex.Message, "Inspect the KB manually if findings are missing."));
+            }
+            return Envelope(findings).ToString();
+        }
+
         public string AuditGam()
         {
             string kbPath = null;

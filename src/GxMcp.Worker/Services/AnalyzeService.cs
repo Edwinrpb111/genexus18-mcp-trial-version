@@ -455,6 +455,28 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        private static string BuildHierarchyAsciiTree(string rootName, string rootType, JArray calls, JArray calledBy)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(rootName).Append(" (").Append(rootType).Append(')').Append('\n');
+            void Render(string label, JArray arr, bool last)
+            {
+                string branch = last ? "└─ " : "├─ ";
+                string pad = last ? "   " : "│  ";
+                sb.Append(branch).Append(label).Append(" (").Append(arr.Count).Append(')').Append('\n');
+                for (int i = 0; i < arr.Count; i++)
+                {
+                    bool isLast = i == arr.Count - 1;
+                    var item = (JObject)arr[i];
+                    sb.Append(pad).Append(isLast ? "└─ " : "├─ ")
+                      .Append(item["name"]).Append(" (").Append(item["type"]).Append(')').Append('\n');
+                }
+            }
+            Render("calls", calls, last: false);
+            Render("calledBy", calledBy, last: true);
+            return sb.ToString();
+        }
+
         public string GetHierarchy(string name, string typeFilter = null)
         {
             try
@@ -502,6 +524,10 @@ namespace GxMcp.Worker.Services
                     });
                 }
                 result["calledBy"] = calledBy;
+
+                // Friction item 25: ASCII tree view — eyeball-friendly summary the agent
+                // can paste back to the user without re-formatting the flat arrays.
+                result["asciiTree"] = BuildHierarchyAsciiTree(obj.Name, obj.TypeDescriptor.Name, calls, calledBy);
 
                 return result.ToString();
             }

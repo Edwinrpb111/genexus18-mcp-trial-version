@@ -295,21 +295,39 @@ namespace GxMcp.Gateway
         public JObject BuildToolStatsBlock()
         {
             var toolsObj = new JObject();
+            // Item 74 — track top-N most-failed tools so the agent can spot
+            // "tried X 5 times, still failing" without scanning every entry.
+            var failureRanking = new List<(string name, long errors, long count)>();
             foreach (var kvp in _toolMetrics)
             {
                 var j = kvp.Value.ToJObject();
                 long count = j["count"]?.ToObject<long>() ?? 0;
                 if (count == 0) continue;
+                long errors = j["errors"]?.ToObject<long>() ?? 0;
                 toolsObj[kvp.Key] = new JObject
                 {
                     ["p50Ms"] = j["p50Ms"],
                     ["p95Ms"] = j["p95Ms"],
-                    ["count"] = count
+                    ["count"] = count,
+                    ["errorCount"] = errors
                 };
+                if (errors > 0) failureRanking.Add((kvp.Key, errors, count));
+            }
+            var mostFailed = new JArray();
+            foreach (var f in failureRanking.OrderByDescending(t => t.errors).ThenByDescending(t => (double)t.errors / Math.Max(1, t.count)).Take(5))
+            {
+                mostFailed.Add(new JObject
+                {
+                    ["tool"] = f.name,
+                    ["errors"] = f.errors,
+                    ["count"] = f.count,
+                    ["errorRate"] = Math.Round((double)f.errors / Math.Max(1, f.count), 3)
+                });
             }
             return new JObject
             {
                 ["tools"] = toolsObj,
+                ["mostFailed"] = mostFailed,
                 ["note"] = "In-memory only; resets on gateway restart."
             };
         }
