@@ -183,5 +183,179 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal(LifecycleResponseShaper.BuildOutcome.Error,
                 LifecycleResponseShaper.ClassifyBuildOutcome(fail));
         }
+
+        // Production bug this catches: a non-build envelope (e.g. job status,
+        // history result) silently being reshaped — losing fields the caller
+        // depended on — because the shaper failed to gate on the build-shape
+        // sentinel (Errors / Warnings / ErrorCount).
+        [Fact]
+        public void Compact_PassesThroughNonBuildEnvelope_Verbatim()
+        {
+            var raw = new JObject
+            {
+                ["status"] = "Running",
+                ["jobId"] = "job-123",
+                ["progress"] = new JObject { ["pct"] = 42 }
+            }.ToString(Newtonsoft.Json.Formatting.None);
+
+            var result = LifecycleResponseShaper.Compact(raw, compact: true);
+
+            Assert.Equal(raw, result);
+        }
+
+        // Production bug this catches: an empty / whitespace string slips
+        // through and tries to JObject.Parse(""), throwing an unhandled
+        // exception inside the gateway's response pipeline.
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData("\t\r\n")]
+        public void Compact_EmptyOrWhitespace_ReturnsAsIs(string raw)
+        {
+            var result = LifecycleResponseShaper.Compact(raw, compact: true);
+            Assert.Equal(raw, result);
+        }
+
+        // Production bug this catches: PhaseFailure on WebAppConfig was
+        // historically reported as "Build Failed: 0 errors, 0 warnings",
+        // burning the user's time. Compact must surface phase_failure with
+        // a tailored retry hint that mentions WebAppConfig recovery.
+        [Fact]
+        public void Compact_PhaseFailure_WebAppConfig_SurfacesTailoredRetryHint()
+        {
+            var rawObj = JObject.Parse(MakeBuildStatus(0, 0));
+            rawObj["PhaseFailure"] = new JObject
+            {
+                ["Name"] = "WebAppConfig",
+                ["Message"] = "Could not write web.config"
+            };
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            var pf = obj["phase_failure"] as JObject;
+            Assert.NotNull(pf);
+            Assert.Equal("WebAppConfig", pf!["Name"]!.ToString());
+
+            var retry = obj["suggested_retry"] as JObject;
+            Assert.NotNull(retry);
+            Assert.Contains("WebAppConfig", retry!["hint"]!.ToString());
+        }
+
+        // Production bug this catches: PhaseFailure on a non-WebAppConfig
+        // step (e.g. Reorg) was previously bucketed with WebAppConfig hints
+        // — agents got a misleading "run the object" tip instead of
+        // "check phase_failure.Message".
+        [Fact]
+        public void Compact_PhaseFailure_GenericPhase_SurfacesGenericHint()
+        {
+            var rawObj = JObject.Parse(MakeBuildStatus(0, 0));
+            rawObj["PhaseFailure"] = new JObject
+            {
+                ["Name"] = "Reorganization",
+                ["Message"] = "DB schema drift"
+            };
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            var retry = obj["suggested_retry"] as JObject;
+            Assert.NotNull(retry);
+            var hint = retry!["hint"]!.ToString();
+            Assert.Contains("Reorganization", hint);
+            Assert.DoesNotContain("WebAppConfig", hint);
+        }
+
+        // Production bug this catches: a failed-build envelope that ALSO had
+        // SuggestedRebuildTargets must keep the CS0246/CS2001 retry hint
+        // even when PhaseFailure is present — both got attached at different
+        // times and one was overwriting the other.
+        [Fact]
+        public void Compact_PhaseFailureDoesNotOverwrite_SuggestedRebuildTargetsRetry()
+        {
+            var rawObj = JObject.Parse(MakeBuildStatus(1, 0));
+            rawObj["SuggestedRebuildTargets"] = new JArray { "FooObject" };
+            rawObj["PhaseFailure"] = new JObject { ["Name"] = "WebAppConfig" };
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            var retry = obj["suggested_retry"] as JObject;
+            Assert.NotNull(retry);
+            // The CS0246 hint (which carries target=) wins over WebAppConfig.
+            Assert.Equal("FooObject", retry!["target"]?.ToString());
+            Assert.Equal("direct", retry["includeCallees"]?.ToString());
+        }
+
+        // Production bug this catches: PartialSuccess=true must override
+        // Status so a caller branching on Status="Failed" doesn't treat a
+        // partially-successful build as a hard failure.
+        [Fact]
+        public void Compact_PartialSuccess_SurfacesPartialSuccessFlagAndOverridesStatus()
+        {
+            var rawObj = JObject.Parse(MakeBuildStatus(2, 1));
+            rawObj["PartialSuccess"] = true;
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            Assert.True(obj["partial_success"]!.Value<bool>());
+            Assert.Equal("PartialSuccess", obj["effective_status"]!.ToString());
+            // Original Status is preserved for callers that want raw.
+            Assert.Equal("Failed", obj["Status"]!.ToString());
+        }
+
+        // Production bug this catches: jobId / ElapsedSeconds / _meta were
+        // dropped during the reshape, so callers asking for the raw payload
+        // later via action=result lost the handle.
+        [Fact]
+        public void Compact_PropagatesJobIdElapsedSecondsAndMeta()
+        {
+            var rawObj = JObject.Parse(MakeBuildStatus(1, 0));
+            rawObj["jobId"] = "JOB-42";
+            rawObj["ElapsedSeconds"] = 12.5;
+            rawObj["_meta"] = new JObject { ["taskId"] = "T-1" };
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            Assert.Equal("JOB-42", obj["jobId"]!.ToString());
+            Assert.Equal(12.5, obj["ElapsedSeconds"]!.Value<double>());
+            Assert.Equal("T-1", obj["_meta"]!["taskId"]!.ToString());
+        }
+
+        // Production bug this catches: with very many duplicate warnings, the
+        // sampleLocations array was unbounded and the "compact" envelope was
+        // anything but. Cap at WarningSampleCap (3).
+        [Fact]
+        public void Compact_WarningSampleLocations_CappedAtThree()
+        {
+            var raw = MakeBuildStatus(0, 10, repeatedWarning: "spc0042");
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(raw, compact: true));
+
+            var warns = (JArray)obj["warnings"]!;
+            Assert.Single(warns);
+            Assert.Equal(10, warns[0]!["count"]!.Value<int>());
+            var samples = (JArray)warns[0]!["sampleLocations"]!;
+            Assert.Equal(LifecycleResponseShaper.WarningSampleCap, samples.Count);
+        }
+
+        // Production bug this catches: ErrorCount field absent on some
+        // envelope shapes — shaper must fall back to Errors.Count rather
+        // than emit errorCount=0 alongside a non-empty errors[] array.
+        [Fact]
+        public void Compact_MissingErrorCountField_FallsBackToErrorsArrayCount()
+        {
+            var rawObj = new JObject
+            {
+                ["Status"] = "Failed",
+                ["Errors"] = new JArray
+                {
+                    new JObject { ["message"] = "e1" },
+                    new JObject { ["message"] = "e2" }
+                }
+            };
+
+            var obj = JObject.Parse(LifecycleResponseShaper.Compact(rawObj.ToString(), compact: true));
+
+            Assert.Equal(2, obj["errorCount"]!.Value<int>());
+            Assert.Equal(2, ((JArray)obj["errors"]!).Count);
+        }
     }
 }
