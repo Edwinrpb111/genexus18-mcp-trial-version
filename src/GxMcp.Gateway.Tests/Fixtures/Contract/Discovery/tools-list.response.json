@@ -1,6 +1,25 @@
 {
   "tools": [
     {
+      "description": "Accessibility audit via chrome-devtools-axi a11y subcommand (fallback: playwright axe). Returns {violations:[{rule,impact,helpUrl,nodes}],score,capturedAtUtc} or {skipped,code:'A11yDriverUnavailable',hint}.",
+      "inputSchema": {
+        "properties": {
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_a11y_audit"
+    },
+    {
       "description": "Add a variable to the Variables part of a GeneXus object.",
       "inputSchema": {
         "properties": {
@@ -227,6 +246,38 @@
         "type": "object"
       },
       "name": "genexus_blame"
+    },
+    {
+      "description": "Open target object in headless Chrome, capture console/network/exceptions. Returns {console,network,exceptions,driverUsed,capturedAtUtc} or {skipped,code:'BrowserDriverUnavailable',hint} when chrome-devtools-axi not on PATH.",
+      "inputSchema": {
+        "properties": {
+          "capture": {
+            "description": "Default all three.",
+            "items": {
+              "enum": [
+                "console",
+                "network",
+                "exceptions"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "target": {
+            "description": "WebPanel name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_browser_capture"
     },
     {
       "description": "Apply N independent edits. Item: {name,part?,content,type?,dryRun?}. stopOnError halts at first fail. transactional=true snapshots all targets pre-edit and rolls back prior successes on first Error.",
@@ -2025,6 +2076,25 @@
         "type": "object"
       },
       "name": "genexus_security"
+    },
+    {
+      "description": "Sequence: open target headless, assert HTTP 200, no <scriptError> in body, console.exceptions empty. Returns {ok,steps:[{name,ok,message}],failedAt?}. Skips with BrowserDriverUnavailable when driver missing.",
+      "inputSchema": {
+        "properties": {
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_smoke_test"
     },
     {
       "description": "SQL for a Transaction/Table (DDL) or a procedure For Each navigation.",
