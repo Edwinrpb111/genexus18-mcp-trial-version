@@ -47,7 +47,7 @@ namespace GxMcp.Gateway
         // Must mirror the exclusion list in tool_definitions.json (no `kb` param on these).
         private static readonly HashSet<string> _metaTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "genexus_kb", "genexus_whoami", "genexus_logs", "genexus_doc", "genexus_worker_reload", "genexus_recipe", "genexus_recipes"
+            "genexus_kb", "genexus_whoami", "genexus_logs", "genexus_doc", "genexus_worker_reload", "genexus_recipe"
         };
         private static bool IsMetaTool(string name) => _metaTools.Contains(name);
         private sealed class PendingWorkerRequest
@@ -665,45 +665,8 @@ namespace GxMcp.Gateway
                 // on the first turn and skips ~3-8k tokens of discovery. Each entry
                 // is a 1-line route, not full docs — for full recipes the agent can
                 // fetch genexus_recipe(name=...).
-                ["playbooks"] = BuildPlaybooksBlock(),
-                // Item 70 (friction-report 2026-05-22): which browser driver the
-                // gateway can hand off to genexus_preview / verify_in_browser.
-                // Prefer chrome-devtools-axi; fall back to Playwright via npx.
-                // When neither is available, "kind": "none" + a hint with both
-                // install commands so the agent doesn't blindly try and fail.
-                ["browserDriver"] = BuildBrowserDriverBlock()
+                ["playbooks"] = BuildPlaybooksBlock()
             };
-        }
-
-        // Item 70 — surface BrowserDriverDetector result so genexus_whoami exposes
-        // whatever automation driver the worker can drive in this session.
-        private static JObject BuildBrowserDriverBlock()
-        {
-            try
-            {
-                var det = Helpers.BrowserDriverDetector.Detect();
-                var obj = new JObject
-                {
-                    ["kind"] = det.Kind.ToString()
-                };
-                if (!string.IsNullOrEmpty(det.Command)) obj["command"] = det.Command;
-                if (!string.IsNullOrEmpty(det.ResolvedPath)) obj["resolvedPath"] = det.ResolvedPath;
-                if (det.Kind == Helpers.BrowserDriverDetector.DriverKind.None)
-                {
-                    obj["code"] = "BrowserDriverUnavailable";
-                    obj["hint"] = det.Hint;
-                }
-                return obj;
-            }
-            catch (Exception ex)
-            {
-                return new JObject
-                {
-                    ["kind"] = "None",
-                    ["code"] = "BrowserDriverUnavailable",
-                    ["hint"] = "Detection failed: " + ex.Message
-                };
-            }
         }
 
         // Friction 2026-05-22: which worker exe is actually running was opaque —
@@ -2209,22 +2172,6 @@ namespace GxMcp.Gateway
                     {
                         string recipeName = tArgs?["name"]?.ToString();
                         JObject payload = RecipeCatalog.Get(recipeName);
-                        bool isErr = payload?["error"] != null;
-                        return new JObject
-                        {
-                            ["isError"] = isErr,
-                            ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = payload.ToString(Formatting.None) } }
-                        };
-                    }
-
-                    // Item 47 — genexus_recipes (plural). action=list returns the
-                    // catalog with concrete copy-pasteable examples; action=describe
-                    // returns the same playbook as the singular tool. Gateway-served.
-                    if (string.Equals(tName, "genexus_recipes", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string recipesAction = tArgs?["action"]?.ToString();
-                        string recipesName = tArgs?["name"]?.ToString();
-                        JObject payload = RecipeCatalog.Dispatch(recipesAction, recipesName);
                         bool isErr = payload?["error"] != null;
                         return new JObject
                         {
