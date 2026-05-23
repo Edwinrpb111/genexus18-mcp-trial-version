@@ -64,6 +64,9 @@ namespace GxMcp.Gateway.Routers
                         case "callers":
                             // Item 24: per-call-site detail with line + context.
                             return new { module = "Analyze", action = "FindCallerSites", target = target, type = type };
+                        case "event_flow":
+                            // Item 23: ASCII event-flow diagram for WebPanel/SDPanel.
+                            return new { module = "Analyze", action = "GetEventFlow", target = target, type = type };
                         case "parent_context":
                             // FR#18 (Stream G, v2.6.6): classifies how a WebPanel / SDPanel is
                             // invoked by its callers (popup vs standalone) so the agent picks

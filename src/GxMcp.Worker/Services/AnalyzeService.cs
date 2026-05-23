@@ -455,6 +455,82 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // Item 23 — Event-flow ASCII viz for WebPanel/SDPanel.
+        // Parses the Events source and groups handlers under the gate that fires
+        // them (Start → Refresh → user events). No control-flow inference;
+        // events that exist get listed in canonical order so the agent gets
+        // a one-glance map of the surface.
+        public string GetEventFlow(string name, string typeFilter = null)
+        {
+            try
+            {
+                var obj = _objectService.FindObject(name, typeFilter);
+                if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
+
+                string source = null;
+                try
+                {
+                    if (obj is global::Artech.Genexus.Common.Objects.WebPanel wbp)
+                        source = wbp.Parts.Get<global::Artech.Genexus.Common.Parts.EventsPart>()?.Source ?? "";
+                    else if (obj is global::Artech.Genexus.Common.Objects.Transaction trn)
+                        source = trn.Parts.Get<global::Artech.Genexus.Common.Parts.EventsPart>()?.Source ?? "";
+                }
+                catch { source = ""; }
+
+                if (string.IsNullOrEmpty(source))
+                {
+                    return new JObject
+                    {
+                        ["name"] = obj.Name,
+                        ["type"] = obj.TypeDescriptor.Name,
+                        ["events"] = new JArray(),
+                        ["asciiTree"] = obj.Name + " (no Events source)"
+                    }.ToString();
+                }
+
+                // Cheap parser: pull every `Event <Name>` declaration. Order is preserved
+                // so the agent sees them as authored. Sub names are ignored (they're not
+                // event entry-points).
+                var rx = new System.Text.RegularExpressions.Regex(
+                    @"^\s*Event\s+([A-Za-z_][\w\.]*)\s*$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline);
+                var seenEvent = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var events = new JArray();
+                foreach (System.Text.RegularExpressions.Match m in rx.Matches(source))
+                {
+                    string evName = m.Groups[1].Value;
+                    if (seenEvent.Add(evName))
+                        events.Add(evName);
+                }
+
+                // Group: lifecycle (Start/Refresh/Load) first; everything else after.
+                string[] lifecycle = { "Start", "Refresh", "Load", "ClientStart" };
+                var sb = new System.Text.StringBuilder();
+                sb.Append(obj.Name).Append(" (").Append(obj.TypeDescriptor.Name).Append(')').Append('\n');
+                var lifecycleEvents = events.Where(e => lifecycle.Contains(e.ToString(), StringComparer.OrdinalIgnoreCase)).Select(e => e.ToString()).ToList();
+                var userEvents = events.Where(e => !lifecycle.Contains(e.ToString(), StringComparer.OrdinalIgnoreCase)).Select(e => e.ToString()).ToList();
+                sb.Append("├─ lifecycle (").Append(lifecycleEvents.Count).Append(")\n");
+                for (int i = 0; i < lifecycleEvents.Count; i++)
+                    sb.Append("│  ").Append(i == lifecycleEvents.Count - 1 ? "└─ " : "├─ ").Append(lifecycleEvents[i]).Append('\n');
+                sb.Append("└─ user events (").Append(userEvents.Count).Append(")\n");
+                for (int i = 0; i < userEvents.Count; i++)
+                    sb.Append("   ").Append(i == userEvents.Count - 1 ? "└─ " : "├─ ").Append(userEvents[i]).Append('\n');
+
+                return new JObject
+                {
+                    ["name"] = obj.Name,
+                    ["type"] = obj.TypeDescriptor.Name,
+                    ["events"] = events,
+                    ["asciiTree"] = sb.ToString()
+                }.ToString();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("GetEventFlow failed: " + ex);
+                return Models.McpResponse.Error("GetEventFlow failed", name, ex.GetType().FullName, ex.Message);
+            }
+        }
+
         private static string BuildHierarchyAsciiTree(string rootName, string rootType, JArray calls, JArray calledBy)
         {
             var sb = new System.Text.StringBuilder();

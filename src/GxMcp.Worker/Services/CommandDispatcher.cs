@@ -639,6 +639,7 @@ namespace GxMcp.Worker.Services
                         if (action == "ParentContext") return _analyzeService.ParentContext(target);
                         // Item 24: mode=callers — per-call-site detail with line + context.
                         if (action == "FindCallerSites") return _analyzeService.FindCallerSites(target);
+                        if (action == "GetEventFlow") return _analyzeService.GetEventFlow(target, analyzeType);
                         if (action == "ImpactAnalysis")
                         {
                             // v2.3.8 (Task 1.4): index-aware impact with optional wait-for-index.
