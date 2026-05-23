@@ -106,7 +106,10 @@ namespace GxMcp.Gateway.Tests
             //   2026-05-23 wave3 items 34/42/44/92: 9500 → 9800 for genexus_sql
             //   execution-plan + index-advisor flags, genexus_generate_sample_data,
             //   genexus_translations.
-            Assert.True(approxTokens < 9800, $"tool_definitions.json is ~{approxTokens} tokens; budget 9800.");
+            //   2026-05-23 wave3 items 30/87/36/94: 9800 → 10200 for two new tools
+            //   (genexus_build_plan, genexus_execution_history) + dependency_heatmap
+            //   mode + format param on genexus_analyze.
+            Assert.True(approxTokens < 10200, $"tool_definitions.json is ~{approxTokens} tokens; budget 10200.");
         }
     }
 }

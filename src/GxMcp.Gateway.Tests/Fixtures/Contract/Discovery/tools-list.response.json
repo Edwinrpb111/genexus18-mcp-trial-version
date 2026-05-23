@@ -49,6 +49,14 @@
       "description": "Use this for cross-object semantic analysis: impact, dependencies, complexity, naming, summary. See tool-help for mode selection.",
       "inputSchema": {
         "properties": {
+          "format": {
+            "description": "mode=dependency_heatmap: ascii adds rendered bar chart.",
+            "enum": [
+              "json",
+              "ascii"
+            ],
+            "type": "string"
+          },
           "kb": {
             "description": "KB alias (multi-KB only).",
             "type": "string"
@@ -64,7 +72,8 @@
               "data_context",
               "ui_context",
               "pattern_metadata",
-              "summary"
+              "summary",
+              "dependency_heatmap"
             ],
             "type": "string"
           },
@@ -278,6 +287,36 @@
         "type": "object"
       },
       "name": "genexus_browser_capture"
+    },
+    {
+      "description": "Walks the callee graph for target and emits {nodes:[{name,type,estimatedSeconds}],edges:[{from,to}],totalEstimatedSeconds}. estimatedSeconds derived from per-tool p95 in the ring buffer (gateway-injected) and per-type defaults. format=ascii adds a rendered tree.",
+      "inputSchema": {
+        "properties": {
+          "format": {
+            "enum": [
+              "json",
+              "ascii"
+            ],
+            "type": "string"
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "maxNodes": {
+            "description": "Cap node count (default 100, max 500).",
+            "type": "integer"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_build_plan"
     },
     {
       "description": "Apply N independent edits. Item: {name,part?,content,type?,dryRun?}. stopOnError halts at first fail. transactional=true snapshots all targets pre-edit and rolls back prior successes on first Error.",
@@ -930,6 +969,26 @@
         "type": "object"
       },
       "name": "genexus_edit_form"
+    },
+    {
+      "description": "Recent invocations of an object from the gateway in-memory ring buffer. Returns {runs:[{atUtc,tool,durationMs,params,outcome}]}; last clamped to [1,50]. Resets on gateway restart.",
+      "inputSchema": {
+        "properties": {
+          "last": {
+            "description": "Max runs to return (default 10, max 50).",
+            "type": "integer"
+          },
+          "target": {
+            "description": "Object name to filter on (matches args.target or args.name).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_execution_history"
     },
     {
       "description": "Deterministic PM-readable summary of an object: purpose, inputs/outputs, variables, top called procs/transactions, description. NOT raw source.",

@@ -302,6 +302,111 @@ namespace GxMcp.Gateway
             };
         }
 
+        // Item 94: per-tool heat (totalMs / percentOfSession / lastUsedAt) for whoami.stats.heatmap.
+        // Purely additive: stats.tools keeps its current shape; heatmap is a separate array.
+        // Reads the same ToolMetricState ring buffer so the cost is constant.
+        public JArray BuildHeatmapBlock()
+        {
+            long sessionTotalMs = 0;
+            var entries = new List<(string tool, long totalMs, DateTime? lastUsed)>();
+            foreach (var kvp in _toolMetrics)
+            {
+                var snapshot = kvp.Value.SnapshotHeat();
+                if (snapshot.totalMs <= 0 && !snapshot.lastUsedAt.HasValue) continue;
+                entries.Add((kvp.Key, snapshot.totalMs, snapshot.lastUsedAt));
+                sessionTotalMs += snapshot.totalMs;
+            }
+            var arr = new JArray();
+            foreach (var e in entries.OrderByDescending(t => t.totalMs))
+            {
+                double pct = sessionTotalMs > 0 ? Math.Round((double)e.totalMs * 100.0 / sessionTotalMs, 2) : 0.0;
+                arr.Add(new JObject
+                {
+                    ["tool"] = e.tool,
+                    ["totalMs"] = e.totalMs,
+                    ["percentOfSession"] = pct,
+                    ["lastUsedAt"] = e.lastUsed.HasValue ? (JToken)new JValue(e.lastUsed.Value) : JValue.CreateNull()
+                });
+            }
+            return arr;
+        }
+
+        // Item 36: ring-buffer view of recent invocations filtered by target object name.
+        // Reads ToolArguments.name/target from each OperationRecord; clamps `last` to 50.
+        // Returns an envelope: { runs: [{atUtc, tool, durationMs, params, outcome}] }.
+        public JObject BuildExecutionHistory(string targetName, int last)
+        {
+            if (last <= 0) last = 10;
+            if (last > 50) last = 50;
+            var matches = new List<OperationRecord>();
+            foreach (var rec in _operations.Values)
+            {
+                if (!string.IsNullOrWhiteSpace(targetName))
+                {
+                    string recTarget = rec.ToolArguments?["target"]?.ToString()
+                                   ?? rec.ToolArguments?["name"]?.ToString();
+                    if (string.IsNullOrEmpty(recTarget)) continue;
+                    if (!string.Equals(recTarget, targetName, StringComparison.OrdinalIgnoreCase)) continue;
+                }
+                matches.Add(rec);
+            }
+            var runs = new JArray();
+            foreach (var rec in matches.OrderByDescending(r => r.StartedAtUtc).Take(last))
+            {
+                long durMs = rec.CompletedAtUtc.HasValue
+                    ? Math.Max(0L, (long)(rec.CompletedAtUtc.Value - rec.StartedAtUtc).TotalMilliseconds)
+                    : 0L;
+                JObject pruned = rec.ToolArguments != null ? (JObject)rec.ToolArguments.DeepClone() : new JObject();
+                runs.Add(new JObject
+                {
+                    ["atUtc"] = rec.StartedAtUtc,
+                    ["tool"] = rec.ToolName,
+                    ["durationMs"] = durMs,
+                    ["params"] = pruned,
+                    ["outcome"] = rec.Status,
+                    ["error"] = string.IsNullOrEmpty(rec.LastError) ? (JToken)JValue.CreateNull() : new JValue(rec.LastError)
+                });
+            }
+            return new JObject
+            {
+                ["status"] = "Success",
+                ["target"] = targetName ?? string.Empty,
+                ["runs"] = runs,
+                ["totalMatches"] = matches.Count,
+                ["note"] = "In-memory ring buffer; resets on gateway restart. Filtered by ToolArguments.name/target."
+            };
+        }
+
+        // Item 30: surface per-tool p95 (ms) so BuildPlanService can estimate per-node duration.
+        // Returns { toolName -> p95Ms } drained from the live metric ring buffer.
+        public JObject BuildToolP95Map()
+        {
+            var obj = new JObject();
+            foreach (var kvp in _toolMetrics)
+            {
+                var j = kvp.Value.ToJObject();
+                obj[kvp.Key] = j["p95Ms"] ?? 0L;
+            }
+            return obj;
+        }
+
+        // Test seam: record a tool invocation synthetically (no worker round-trip required).
+        // Used by HeatmapBlockTests and ExecutionHistoryTests to keep them hermetic.
+        internal void RecordSyntheticCompletion(string toolName, long elapsedMs, bool isError, JObject toolArguments = null)
+        {
+            string requestId = Guid.NewGuid().ToString("N");
+            string opId = StartOperation(requestId, toolName, toolArguments, Guid.NewGuid().ToString("N"));
+            // Move started timestamp back by elapsedMs so duration math sees the gap.
+            if (_operations.TryGetValue(opId, out var rec))
+            {
+                lock (rec.SyncRoot) { rec.StartedAtUtc = DateTime.UtcNow - TimeSpan.FromMilliseconds(elapsedMs); }
+            }
+            var payload = new JObject { ["id"] = requestId };
+            if (isError) payload["error"] = new JObject { ["message"] = "synthetic" };
+            else payload["result"] = new JObject { ["status"] = "Success" };
+            CompleteFromWorker(requestId, payload);
+        }
+
         // Item 73: per-tool latency stats for whoami.stats.tools.
         // In-memory ring buffer (lost on gateway restart); count/p50/p95 per tool.
         // Item 75: also surface request/response size percentiles ("tokensIn /
@@ -473,6 +578,15 @@ namespace GxMcp.Gateway
             public long NoChangeCount { get; private set; }
             public long PatchFailCount { get; private set; }
             public long FallbackSaveCount { get; private set; }
+            // Item 94: cumulative elapsed ms across all observed completions and the
+            // most recent timestamp any call landed.
+            private long _totalMs;
+            private DateTime? _lastUsedAt;
+
+            public (long totalMs, DateTime? lastUsedAt) SnapshotHeat()
+            {
+                lock (_lock) { return (_totalMs, _lastUsedAt); }
+            }
 
             public void RegisterTimeout()
             {
@@ -488,6 +602,8 @@ namespace GxMcp.Gateway
                 {
                     Count++;
                     if (isError) ErrorCount++;
+                    _lastUsedAt = DateTime.UtcNow;
+                    if (elapsedMs > 0) _totalMs += elapsedMs;
                     if (elapsedMs > 0)
                     {
                         _latencies.Add(elapsedMs);

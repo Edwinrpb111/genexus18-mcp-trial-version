@@ -169,6 +169,23 @@ namespace GxMcp.Gateway.Routers
                     };
                 }
 
+                // genexus_build_plan — Wave-3 item 30. Walks the callee graph for a target
+                // and returns nodes/edges/totalEstimatedSeconds. Gateway pre-injects per-tool
+                // p95 stats (in-memory tracker) so the worker estimator can use real timing.
+                case "genexus_build_plan":
+                {
+                    JObject p95Map = Program.GetToolP95MapForBuildPlan();
+                    return new
+                    {
+                        module = "BuildPlan",
+                        action = "Generate",
+                        target = args?["target"]?.ToString() ?? args?["name"]?.ToString(),
+                        format = args?["format"]?.ToString(),
+                        maxNodes = args?["maxNodes"]?.ToObject<int?>() ?? 100,
+                        toolStatsP95 = p95Map
+                    };
+                }
+
                 // genexus_blame — git blame for an object part.
                 case "genexus_blame":
                 {

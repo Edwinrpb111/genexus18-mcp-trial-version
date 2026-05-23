@@ -658,7 +658,7 @@ namespace GxMcp.Gateway
                 // flags (high error/timeout ratio, a tool with a >10s p95).
                 ["metricsSummary"] = _operationTracker?.BuildMetricsSummary() ?? new JObject(),
                 // Item 73: per-tool latency breakdown. In-memory, resets on gateway restart.
-                ["stats"] = _operationTracker?.BuildToolStatsBlock() ?? new JObject(),
+                ["stats"] = BuildStatsWithHeatmap(),
                 // Inline playbooks for the flows that drove the largest token spend
                 // in real sessions (LLMs were exploring WWP/popup structure before
                 // every change). Embedding the routing here means the agent sees it
@@ -787,6 +787,27 @@ namespace GxMcp.Gateway
                 ["control_type_glossary"] = "GeneXus 18 control types — which to use when:\n  • <gxButton> — standalone button. caption/event/buttonClass; ignores OnClickEvent\n    in HTML form (always fires Enter). Use 'Event' attribute, not 'OnClickEvent'.\n  • <gxAttribute ControlType=\"Button\"> — attribute-bound button. Rare; prefer\n    gxButton unless you need attribute binding.\n  • <gxAttribute> default (no ControlType) — IS editable. Sanitizer-safe target\n    for hidden-value bridges (set via document.getElementById('vNAME').value).\n  • <gxAttribute ControlType=\"Radio\"|\"Combo\"> on Form type='free style' →\n    rendered READ-ONLY. Switch Form type='layout' OR use raw HTML radios\n    inside gxTextBlock Format='HTML' + a hidden gxAttribute.\n  • <gxTextBlock> Format='Text' — plain text, sanitized.\n  • <gxTextBlock> Format='HTML' — raw HTML. <script>/<iframe>/<img onerror>\n    inside CDATA are escaped (see html_form_inline_js); inline event-attrs are kept.\n  • <gxImage> — clickable when 'eventGX' is set; mirrors the gxAttribute pattern.",
                 ["dep_tree_view"] = "Need an ASCII tree of who-calls-what? Use genexus_analyze mode='hierarchy'\nfor a tree under target, or mode='callers' for per-call-site detail with line+context.\nmode='impact' is the flat caller list — fastest when you only need a count."
             };
+        }
+
+        // Wave-3 item 30: surface the live p95 ring-buffer to SystemRouter so the
+        // build-plan worker call can derive per-node estimatedSeconds. Returns an
+        // empty object when the tracker is null (first-call before init).
+        internal static JObject GetToolP95MapForBuildPlan()
+        {
+            return _operationTracker?.BuildToolP95Map() ?? new JObject();
+        }
+
+        // Item 94: assemble the existing stats block + heatmap array. Purely additive
+        // (no field renamed in stats.tools); heatmap is the new key. Heatmap is per-tool
+        // [{tool,totalMs,percentOfSession,lastUsedAt}] sorted descending by totalMs.
+        private static JObject BuildStatsWithHeatmap()
+        {
+            JObject stats = _operationTracker?.BuildToolStatsBlock() ?? new JObject();
+            if (_operationTracker != null)
+            {
+                stats["heatmap"] = _operationTracker.BuildHeatmapBlock();
+            }
+            return stats;
         }
 
         private static async Task RunSelfTestAndExitAsync()
@@ -1765,6 +1786,18 @@ namespace GxMcp.Gateway
                             ["error"] = JToken.FromObject(new { code = -32603, message = "Force-reload failed: " + ex.Message })
                         };
                     }
+                }
+
+                // Item 36: genexus_execution_history — gateway-only ring-buffer view of
+                // recent tool invocations filtered by target object name. Reads
+                // OperationTracker (in-memory) directly; never reaches a worker.
+                if (string.Equals(toolName, "genexus_execution_history", StringComparison.OrdinalIgnoreCase))
+                {
+                    string targetName = args?["target"]?.ToString() ?? args?["name"]?.ToString();
+                    int lastN = args?["last"]?.ToObject<int?>() ?? 10;
+                    JObject historyPayload = _operationTracker?.BuildExecutionHistory(targetName, lastN)
+                        ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
+                    return BuildToolTextResponse(idToken, historyPayload, isError: false, toolName: "genexus_execution_history", toolArgs: args);
                 }
 
                 // genexus_kb — meta-tool for managing the WorkerPool (list/open/close).

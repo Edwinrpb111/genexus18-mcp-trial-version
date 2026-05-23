@@ -81,6 +81,69 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("op-xyz", built["_meta"]?["progressToken"]?.ToString());
             Assert.Equal("Build", built["method"]?.ToString());
         }
+
+        // Wave-3 item 94 — heatmap block surfaces totalMs / percentOfSession / lastUsedAt.
+        [Fact]
+        public void BuildHeatmapBlock_RanksToolsByTotalMs_AndComputesPercent()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            tracker.RecordSyntheticCompletion("genexus_read", 100, isError: false);
+            tracker.RecordSyntheticCompletion("genexus_read", 200, isError: false);
+            tracker.RecordSyntheticCompletion("genexus_edit", 50, isError: false);
+
+            var heat = tracker.BuildHeatmapBlock();
+
+            Assert.Equal(2, heat.Count);
+            Assert.Equal("genexus_read", heat[0]["tool"]?.ToString()); // higher totalMs first
+            Assert.True(heat[0]["totalMs"]!.ToObject<long>() >= 300);
+            Assert.True(heat[0]["percentOfSession"]!.ToObject<double>() > heat[1]["percentOfSession"]!.ToObject<double>());
+            Assert.NotNull(heat[0]["lastUsedAt"]);
+        }
+
+        [Fact]
+        public void BuildHeatmapBlock_Empty_WhenNoCompletionsRecorded()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            var heat = tracker.BuildHeatmapBlock();
+            Assert.Empty(heat);
+        }
+
+        // Wave-3 item 36 — execution history filtered by target.
+        [Fact]
+        public void BuildExecutionHistory_FiltersByTarget_AndClampsLast()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            for (int i = 0; i < 60; i++)
+            {
+                tracker.RecordSyntheticCompletion("genexus_read", 10, isError: false,
+                    new JObject { ["target"] = "InvoiceProc" });
+            }
+            tracker.RecordSyntheticCompletion("genexus_read", 10, isError: false,
+                new JObject { ["target"] = "OtherObj" });
+
+            JObject result = tracker.BuildExecutionHistory("InvoiceProc", last: 100);
+            var runs = (JArray)result["runs"]!;
+            Assert.Equal(50, runs.Count); // clamped to 50
+            Assert.Equal(60, result["totalMatches"]?.ToObject<int>());
+            foreach (var run in runs)
+            {
+                Assert.Equal("InvoiceProc", run["params"]?["target"]?.ToString());
+                Assert.NotNull(run["outcome"]);
+                Assert.NotNull(run["durationMs"]);
+            }
+        }
+
+        [Fact]
+        public void BuildExecutionHistory_ReturnsEmptyRuns_WhenTargetUnknown()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            tracker.RecordSyntheticCompletion("genexus_read", 10, isError: false,
+                new JObject { ["target"] = "Existing" });
+
+            JObject result = tracker.BuildExecutionHistory("Missing", last: 10);
+            Assert.Empty((JArray)result["runs"]!);
+            Assert.Equal(0, result["totalMatches"]?.ToObject<int>());
+        }
     }
 }
 

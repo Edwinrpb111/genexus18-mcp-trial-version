@@ -1644,5 +1644,136 @@ namespace GxMcp.Worker.Services
                 return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
+
+        // Wave-3 item 87: rank KB objects by composite heat
+        // (editCount + refCount + callerCount). editCount comes from
+        // .gx/snapshots/<guid>-<part>-*.bak filename histogram; refCount /
+        // callerCount come from the search-index Calls / CalledBy edges.
+        // Top 50 by descending score; optional ASCII viz when format=ascii.
+        public string DependencyHeatmap(string kbPath, string format)
+        {
+            try
+            {
+                var idx = _indexCacheService?.GetIndex();
+                if (idx == null || idx.Objects.IsEmpty)
+                {
+                    return new JObject
+                    {
+                        ["status"] = "Unwired",
+                        ["code"] = "ItemDeferred",
+                        ["hint"] = "Index empty/unavailable; run genexus_lifecycle action=index first."
+                    }.ToString();
+                }
+
+                // Build edit-count histogram from snapshots. Key = guidSanitized (matches
+                // KbReadmeService.TopEditedObjects behaviour for parity).
+                var editsByGuid = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                if (!string.IsNullOrEmpty(kbPath))
+                {
+                    string snapDir = System.IO.Path.Combine(kbPath, ".gx", "snapshots");
+                    if (System.IO.Directory.Exists(snapDir))
+                    {
+                        try
+                        {
+                            foreach (var path in System.IO.Directory.EnumerateFiles(snapDir))
+                            {
+                                string fn = System.IO.Path.GetFileName(path);
+                                if (!(fn.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)
+                                      || fn.EndsWith(".bak.gz", StringComparison.OrdinalIgnoreCase))) continue;
+                                int dash = fn.IndexOf('-');
+                                if (dash <= 0) continue;
+                                string guidKey = fn.Substring(0, dash);
+                                editsByGuid[guidKey] = editsByGuid.TryGetValue(guidKey, out int n) ? n + 1 : 1;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                var entries = new List<JObject>();
+                foreach (var kvp in idx.Objects)
+                {
+                    var entry = kvp.Value;
+                    if (entry == null || string.IsNullOrEmpty(entry.Name)) continue;
+                    int editCount = 0;
+                    if (!string.IsNullOrEmpty(entry.Guid))
+                    {
+                        // Snapshot key is the sanitised GUID — sanitise = replace
+                        // '/' '\' ':' '<' '>' with '_'. For our histogram we accept
+                        // the raw GUID too (LightWeight check: many KBs have GUIDs
+                        // that contain none of the unsafe chars).
+                        string raw = entry.Guid;
+                        string sanitised = SanitiseGuid(raw);
+                        editsByGuid.TryGetValue(sanitised, out editCount);
+                        if (editCount == 0) editsByGuid.TryGetValue(raw, out editCount);
+                    }
+                    int refCount = entry.Calls?.Count ?? 0;
+                    int callerCount = entry.CalledBy?.Count ?? 0;
+                    // Composite heat: weighted sum. Edits are the strongest signal
+                    // (someone actively touches it), then incoming calls, then outgoing.
+                    int score = (editCount * 5) + (callerCount * 2) + refCount;
+                    if (score <= 0) continue;
+                    entries.Add(new JObject
+                    {
+                        ["name"] = entry.Name,
+                        ["type"] = entry.Type,
+                        ["score"] = score,
+                        ["factors"] = new JObject
+                        {
+                            ["editCount"] = editCount,
+                            ["refCount"] = refCount,
+                            ["callerCount"] = callerCount
+                        }
+                    });
+                }
+                var topRanked = entries
+                    .OrderByDescending(e => e["score"]?.ToObject<int>() ?? 0)
+                    .ThenBy(e => e["name"]?.ToString())
+                    .Take(50)
+                    .ToList();
+
+                var result = new JObject
+                {
+                    ["status"] = "Success",
+                    ["objects"] = new JArray(topRanked.Cast<JToken>().ToArray()),
+                    ["totalScanned"] = idx.Objects.Count,
+                    ["note"] = "score = editCount*5 + callerCount*2 + refCount. Edit counts read from .gx/snapshots/."
+                };
+
+                if (string.Equals(format, "ascii", StringComparison.OrdinalIgnoreCase))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("Dependency heatmap (top ").Append(topRanked.Count).Append(")\n");
+                    int maxScore = topRanked.Count > 0 ? topRanked[0]["score"]!.ToObject<int>() : 1;
+                    if (maxScore <= 0) maxScore = 1;
+                    foreach (var e in topRanked)
+                    {
+                        int score = e["score"]!.ToObject<int>();
+                        int barLen = (int)Math.Round((double)score / maxScore * 24.0);
+                        sb.Append(' ').Append(new string('█', Math.Max(1, barLen))).Append(' ')
+                          .Append(e["name"]).Append(" (").Append(score).Append(")\n");
+                    }
+                    result["ascii"] = sb.ToString();
+                }
+
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private static string SanitiseGuid(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return raw;
+            var sb = new System.Text.StringBuilder(raw.Length);
+            foreach (var ch in raw)
+            {
+                if (ch == '/' || ch == '\\' || ch == ':' || ch == '<' || ch == '>') sb.Append('_');
+                else sb.Append(ch);
+            }
+            return sb.ToString();
+        }
     }
 }

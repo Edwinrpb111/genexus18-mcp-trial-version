@@ -67,6 +67,16 @@ namespace GxMcp.Gateway.Routers
                         case "event_flow":
                             // Item 23: ASCII event-flow diagram for WebPanel/SDPanel.
                             return new { module = "Analyze", action = "GetEventFlow", target = target, type = type };
+                        case "dependency_heatmap":
+                            // Item 87: KB-wide heat ranking — top 50 objects by composite
+                            // (edit + ref + caller) score; optional ASCII viz.
+                            return new {
+                                module = "Analyze",
+                                action = "DependencyHeatmap",
+                                target = target,
+                                type = type,
+                                format = args?["format"]?.ToString()
+                            };
                         case "parent_context":
                             // FR#18 (Stream G, v2.6.6): classifies how a WebPanel / SDPanel is
                             // invoked by its callers (popup vs standalone) so the agent picks

@@ -84,6 +84,8 @@ namespace GxMcp.Worker.Services
         // Lazy because it shells out to chrome-devtools-axi / playwright and is only
         // engaged when callers opt in via `visualVerify=true`.
         private readonly VisualVerifyService _visualVerifyService;
+        // Wave-3 item 30: per-target build-plan with per-tool p95-derived estimates.
+        private readonly BuildPlanService _buildPlanService;
 
         private CommandDispatcher()
         {
@@ -157,6 +159,7 @@ namespace GxMcp.Worker.Services
             _smokeTestService = new SmokeTestService(_browserCaptureService);
             _a11yAuditService = new A11yAuditService(_browserDriverInvoker);
             _visualVerifyService = new VisualVerifyService(_kbService, _objectService);
+            _buildPlanService = new BuildPlanService(_indexCacheService, _objectService, callerGraphService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -781,6 +784,12 @@ namespace GxMcp.Worker.Services
                         // Item 24: mode=callers — per-call-site detail with line + context.
                         if (action == "FindCallerSites") return _analyzeService.FindCallerSites(target);
                         if (action == "GetEventFlow") return _analyzeService.GetEventFlow(target, analyzeType);
+                        // Wave-3 item 87: KB-wide dependency heat rankings.
+                        if (action == "DependencyHeatmap")
+                        {
+                            string heatFormat = args?["format"]?.ToString();
+                            return _analyzeService.DependencyHeatmap(_kbService.GetKbPath(), heatFormat);
+                        }
                         if (action == "ImpactAnalysis")
                         {
                             // v2.3.8 (Task 1.4): index-aware impact with optional wait-for-index.
@@ -800,6 +809,17 @@ namespace GxMcp.Worker.Services
                             return _injectionService.InjectContext(target, recursive, analyzeType);
                         }
                         return _analyzeService.Analyze(target, analyzeType);
+                    case "buildplan":
+                        // Wave-3 item 30: GeneratePlan walks the callee graph and emits
+                        // {nodes, edges, totalEstimatedSeconds, ascii?}.
+                        if (action == "Generate")
+                        {
+                            string planFormat = args?["format"]?.ToString();
+                            JObject toolStatsP95 = args?["toolStatsP95"] as JObject;
+                            int maxNodes = args?["maxNodes"]?.ToObject<int?>() ?? 100;
+                            return _buildPlanService.GeneratePlan(target, planFormat, toolStatsP95, maxNodes);
+                        }
+                        break;
                     case "linter":
                         bool linterFix = args?["fix"]?.ToObject<bool?>() ?? false;
                         if (linterFix) return _linterService.LintAndFix(target);
