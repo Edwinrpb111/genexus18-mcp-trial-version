@@ -27,7 +27,10 @@ namespace GxMcp.Gateway.Routers
                         signed = args?["signed"]?.ToObject<bool?>(),
                         description = args?["description"]?.ToString(),
                         basedOn = args?["basedOn"]?.ToString(),
-                        enumValues = args?["enumValues"]
+                        enumValues = args?["enumValues"],
+                        // Item 21 (friction 2026-05-22) — universal dryRun: report
+                        // the planned object shape without calling Save().
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 case "genexus_delete_object":
@@ -133,12 +136,15 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_apply_pattern":
                 {
                     // Item 45: mode=diagnose routes to read-only Diagnose action; default → Apply.
+                    // Item 21 (friction 2026-05-22): dryRun=true is an alias for mode=diagnose
+                    // — both return the same read-only findings without mutating the KB.
                     string apPatMode = args?["mode"]?.ToString();
                     bool isDiagnose = string.Equals(apPatMode, "diagnose", System.StringComparison.OrdinalIgnoreCase);
+                    bool isDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
                     return new
                     {
                         module = "Pattern",
-                        action = isDiagnose ? "Diagnose" : "Apply",
+                        action = (isDiagnose || isDryRun) ? "Diagnose" : "Apply",
                         target = args?["name"]?.ToString(),
                         @params = args
                     };
@@ -195,7 +201,9 @@ namespace GxMcp.Gateway.Routers
                         // v2.6.6 Stream H (FR#28) — IDE "Discard changes" parity.
                         part = RouterArgs.Str(args, "part"),
                         snapshot = RouterArgs.Str(args, "snapshot"),
-                        discard = RouterArgs.Bool(args, "discard")
+                        discard = RouterArgs.Bool(args, "discard"),
+                        // Item 21 (friction 2026-05-22): dryRun=true on restore returns diff without writing.
+                        dryRun = RouterArgs.Bool(args, "dryRun")
                     };
 
                 // Item 16 — genexus_undo last=N
@@ -204,7 +212,9 @@ namespace GxMcp.Gateway.Routers
                     {
                         module = "Undo",
                         action = "Undo",
-                        last = args?["last"]?.ToObject<int?>() ?? 1
+                        last = args?["last"]?.ToObject<int?>() ?? 1,
+                        // Item 21 (friction 2026-05-22): dryRun=true lists snapshots without writing.
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 // Item 50 — genexus_security action=audit_gam
@@ -235,7 +245,9 @@ namespace GxMcp.Gateway.Routers
                         action = "Create",
                         target = args?["name"]?.ToString(),
                         name = args?["name"]?.ToString(),
-                        spec = args?["spec"]
+                        spec = args?["spec"],
+                        // Item 21 (friction 2026-05-22): dryRun=true validates + renders layout XML, no save.
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 case "genexus_preview":

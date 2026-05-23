@@ -29,7 +29,9 @@ namespace GxMcp.Worker.Services
             _indexCacheService = indexCacheService;
         }
 
-        public string Undo(int last)
+        public string Undo(int last) => Undo(last, false);
+
+        public string Undo(int last, bool dryRun)
         {
             int requestedLast = last;
             if (last < 1) last = 1;
@@ -126,6 +128,21 @@ namespace GxMcp.Worker.Services
 
                 try
                 {
+                    // Item 21 (friction 2026-05-22): dryRun skips the WriteObject call;
+                    // we report what WOULD be restored so the agent can preview.
+                    if (dryRun)
+                    {
+                        restored.Add(new JObject
+                        {
+                            ["object"] = objectName,
+                            ["part"] = meta.Part,
+                            ["snapshotTimestamp"] = meta.Timestamp,
+                            ["restoreSource"] = path,
+                            ["bytes"] = content?.Length ?? 0,
+                            ["dryRun"] = true
+                        });
+                        continue;
+                    }
                     string writeResult = _writeService.WriteObject(objectName, meta.Part, content);
                     var writeJson = TryParseJson(writeResult);
                     bool success = writeJson != null
@@ -165,13 +182,15 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            string status = failed.Count == 0 ? "Success"
+            string status = dryRun ? "DryRun"
+                          : failed.Count == 0 ? "Success"
                           : restored.Count == 0 ? "Failed"
                           : "PartialSuccess";
 
             var resp = new JObject
             {
                 ["status"] = status,
+                ["dryRun"] = dryRun,
                 ["restoredCount"] = restored.Count,
                 ["failedCount"] = failed.Count,
                 ["restored"] = restored,

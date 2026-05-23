@@ -20,7 +20,7 @@ namespace GxMcp.Worker.Helpers
     /// inside m_Document. Result: persisted XML matches the requested change WITHOUT us
     /// touching the raw Document.
     /// </summary>
-    internal static class WebFormTypedPropertyWriter
+    public static class WebFormTypedPropertyWriter
     {
         private const string HelperTypeName = "Artech.Genexus.Common.Parts.WebForm.WebFormHelper";
         private const string EditableTypeName = "Artech.Genexus.Common.Parts.WebForm.WebFormEditable";
@@ -470,9 +470,13 @@ namespace GxMcp.Worker.Helpers
 
                     // Remove the wrong-named XML attribute now that SDK has written the right one.
                     // Otherwise generator may see both and the HTML output is unpredictable.
+                    string elementName = node.LocalName;
                     foreach (var d in deltas)
                     {
                         try { node.Attributes.RemoveNamedItem(d.PropertyName); } catch { }
+                        // Item 77 — record the rename so the caller can surface a
+                        // GotchaWebFormTypedPropertyAutoRouted warning to the agent.
+                        RecordAutoRoute(elementName, ctrlId, d.PropertyName, ResolveCanonicalAttr(d.PropertyName, elementName));
                     }
                 }
 
@@ -497,11 +501,84 @@ namespace GxMcp.Worker.Helpers
         private static readonly HashSet<string> _descriptorPathProps =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
                 "OnClickEvent",      // gxButton → Event; gxAttribute/gxImage → eventGX
+                "OnEnterEvent",      // gxAttribute/gxButton → eventGX (Enter override)
+                "CaptionExpression", // gxButton/gxTextBlock → Caption (with Tokens XML)
             };
 
         private static bool NeedsDescriptorPath(string propertyName)
         {
             return !string.IsNullOrEmpty(propertyName) && _descriptorPathProps.Contains(propertyName);
+        }
+
+        // Friction-report 2026-05-22 item 77 — surface auto-routes to the caller.
+        // ApplyDescriptorPathFixup pushes a (from, to, element, control) record here
+        // each time it rewrites a descriptor-named XML attribute through the SDK.
+        // WebFormXmlHelper / WriteService drain the list after the call so the response
+        // can attach `GotchaWebFormTypedPropertyAutoRouted` warnings per rewrite.
+        [ThreadStatic] private static List<AutoRouteRecord> _autoRoutes;
+
+        public sealed class AutoRouteRecord
+        {
+            public string Element;
+            public string ControlId;
+            public string From;
+            public string To;
+        }
+
+        /// <summary>
+        /// Returns and clears the per-thread list of descriptor-name auto-routes
+        /// recorded by the most recent ApplyDescriptorPathFixup call. Returns an
+        /// empty list when nothing was routed; never null.
+        /// </summary>
+        public static List<AutoRouteRecord> DrainAutoRoutes()
+        {
+            var list = _autoRoutes;
+            _autoRoutes = null;
+            return list ?? new List<AutoRouteRecord>();
+        }
+
+        // Canonical XML-attr name table. Key: descriptor name. Value: element-name
+        // (case-insensitive) -> XML attr name. "*" is the fallback when the
+        // element-specific entry is absent.
+        private static readonly Dictionary<string, Dictionary<string, string>> _descriptorCanonical =
+            new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["OnClickEvent"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["gxButton"] = "Event",
+                    ["gxAttribute"] = "eventGX",
+                    ["gxImage"] = "eventGX",
+                    ["gxBitmap"] = "eventGX",
+                    ["*"] = "Event"
+                },
+                ["OnEnterEvent"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["*"] = "eventGX"
+                },
+                ["CaptionExpression"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["*"] = "Caption"
+                }
+            };
+
+        public static string ResolveCanonicalAttr(string descriptorName, string elementName)
+        {
+            if (string.IsNullOrEmpty(descriptorName)) return descriptorName;
+            if (!_descriptorCanonical.TryGetValue(descriptorName, out var byEl)) return descriptorName;
+            if (!string.IsNullOrEmpty(elementName) && byEl.TryGetValue(elementName, out var v)) return v;
+            return byEl.TryGetValue("*", out var any) ? any : descriptorName;
+        }
+
+        internal static void RecordAutoRoute(string element, string controlId, string from, string to)
+        {
+            if (_autoRoutes == null) _autoRoutes = new List<AutoRouteRecord>();
+            _autoRoutes.Add(new AutoRouteRecord
+            {
+                Element = element,
+                ControlId = controlId,
+                From = from,
+                To = to
+            });
         }
 
         // Apply deltas via Artech.Common.Properties.PropertiesObject.SetPropertyValueString(desc,

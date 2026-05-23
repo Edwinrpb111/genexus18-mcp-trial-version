@@ -80,6 +80,9 @@ namespace GxMcp.Gateway.Tests
             //   2026-05-23 friction items 45/50/65: 7000 → 7200 for genexus_apply_pattern
             //   mode=diagnose + new genexus_security + genexus_orient tools. Net ~+99 tokens
             //   measured (7099); budget set at 7200 with ~100 tokens of headroom.
+            //   2026-05-23 friction items 20/21/43/72: 7200 → 7400 for universal dryRun
+            //   (5 tools), autoFormat on genexus_edit, reorg_preview action + notifyOnFailure
+            //   on genexus_lifecycle. Net ~+110 tokens measured.
             Assert.True(approxTokens < 7400, $"tool_definitions.json is ~{approxTokens} tokens; budget 7400.");
         }
     }

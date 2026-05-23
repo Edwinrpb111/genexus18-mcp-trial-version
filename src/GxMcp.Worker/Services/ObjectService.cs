@@ -87,6 +87,10 @@ namespace GxMcp.Worker.Services
         public string CreateObject(string type, string name, JObject options)
         {
             var sw = Stopwatch.StartNew();
+            // Item 21 (friction 2026-05-22) — universal dryRun: report planned shape
+            // without calling Save(). Resolved type guid + pre-flight duplicate check
+            // still run so the agent sees the same validation failures as the live call.
+            bool dryRun = options?["dryRun"]?.ToObject<bool?>() ?? false;
             try
             {
                 var kb = _kbService.GetKB();
@@ -163,6 +167,23 @@ namespace GxMcp.Worker.Services
                 else if (type.Equals("Domain", StringComparison.OrdinalIgnoreCase))
                 {
                     domainMeta = InitializeDomain(newObj, name, options, kb);
+                }
+
+                if (dryRun)
+                {
+                    // Item 21 (friction 2026-05-22) — return planned shape without persisting.
+                    // SDK in-memory artefact is discarded (GC-collected) since we don't hold
+                    // a reference past this method. Pre-flight checks (type resolution,
+                    // duplicate name) already ran above so the LLM sees real validation.
+                    return new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["dryRun"] = true,
+                        ["type"] = type,
+                        ["name"] = name,
+                        ["seededDescription"] = seededDescription,
+                        ["hint"] = "Re-run without dryRun to call Save()."
+                    }.ToString(Newtonsoft.Json.Formatting.None);
                 }
 
                 newObj.Save();

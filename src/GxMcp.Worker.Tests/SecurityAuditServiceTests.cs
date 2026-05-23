@@ -27,5 +27,61 @@ namespace GxMcp.Worker.Tests
             var json = JObject.Parse(svc.AuditGam());
             Assert.Equal("info", (string)json["worstSeverity"]!);
         }
+
+        // Item 48 extension (friction-report 2026-05-22) — secret-pattern coverage.
+
+        [Fact]
+        public void ScanText_JwtLiteral_Detected()
+        {
+            var hits = SecurityAuditService.ScanText("token: eyJhbGciOiJIUzI1NiJ9aaaaaaaaaaaaa.payloadpayloadpayloadpayloadpayload.signaturesignaturesignaturesignature");
+            Assert.Contains(hits, h => h.code == "JwtLiteral");
+        }
+
+        [Fact]
+        public void ScanText_PemPrivateKey_Detected()
+        {
+            var hits = SecurityAuditService.ScanText("-----BEGIN RSA PRIVATE KEY-----\nMIIEvAIBADANBgkq\n-----END RSA PRIVATE KEY-----");
+            Assert.Contains(hits, h => h.code == "PemBlock");
+        }
+
+        [Fact]
+        public void ScanText_PemCertificate_Detected()
+        {
+            var hits = SecurityAuditService.ScanText("-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWg\n-----END CERTIFICATE-----");
+            Assert.Contains(hits, h => h.code == "PemBlock");
+        }
+
+        [Fact]
+        public void ScanText_ConnectionStringWithUserAndPassword_Detected()
+        {
+            var hits = SecurityAuditService.ScanText("conn = \"Data Source=db;User Id=admin;Password=hunter2;\"");
+            Assert.Contains(hits, h => h.code == "ConnectionStringWithUserAndPwd");
+        }
+
+        [Fact]
+        public void ScanText_GenericPassword_Detected()
+        {
+            var hits = SecurityAuditService.ScanText("password = 'sup3rsecret'");
+            Assert.Contains(hits, h => h.code == "GenericPassword");
+        }
+
+        [Fact]
+        public void ScanText_NoSecret_ReturnsEmpty()
+        {
+            var hits = SecurityAuditService.ScanText("nothing to see here, just a plain string");
+            // ConnectionString variants and password literals require their own shape; should not fire here.
+            Assert.DoesNotContain(hits, h =>
+                h.code == "JwtLiteral" ||
+                h.code == "PemBlock" ||
+                h.code == "ConnectionStringWithUserAndPwd" ||
+                h.code == "GenericPassword");
+        }
+
+        [Fact]
+        public void ScanText_EmptyInput_ReturnsEmpty()
+        {
+            Assert.Empty(SecurityAuditService.ScanText(null));
+            Assert.Empty(SecurityAuditService.ScanText(""));
+        }
     }
 }

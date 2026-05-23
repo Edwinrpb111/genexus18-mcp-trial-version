@@ -49,6 +49,58 @@ namespace GxMcp.Gateway
                 "Try one of: " + string.Join(", ", RecipeNames()));
         }
 
+        // Item 47 — dispatch for the new genexus_recipes (plural) tool.
+        //   action=list (default) → name, description, example, 1-line step preview.
+        //   action=describe       → full playbook (same shape as genexus_recipe).
+        public static JObject Dispatch(string action, string name)
+        {
+            string a = (action ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (string.IsNullOrEmpty(a) || a == "list" || a == "index")
+            {
+                var arr = new JArray();
+                foreach (var kvp in RecipeRegistry)
+                {
+                    JObject body = null;
+                    try { body = kvp.Value.Build(); } catch { }
+                    var stepSummaries = new JArray();
+                    if (body?["steps"] is JArray steps)
+                    {
+                        foreach (var s in steps)
+                        {
+                            stepSummaries.Add((s?["tool"]?.ToString() ?? string.Empty) +
+                                              ": " + (s?["why"]?.ToString() ?? string.Empty));
+                        }
+                    }
+
+                    arr.Add(new JObject
+                    {
+                        ["name"] = kvp.Key,
+                        ["description"] = kvp.Value.Description,
+                        ["example"] = kvp.Value.Example,
+                        ["goal"] = body?["goal"]?.ToString(),
+                        ["steps"] = stepSummaries
+                    });
+                }
+                return new JObject
+                {
+                    ["recipes"] = arr,
+                    ["hint"] = "Full playbook: genexus_recipes { action: 'describe', name: '<recipeName>' }."
+                };
+            }
+
+            if (a == "describe")
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                    return Error("name is required for action='describe'.",
+                                 "Try: genexus_recipes { action: 'describe', name: 'wwp_on_webpanel' }.");
+                return Get(name);
+            }
+
+            return Error($"Unknown action '{action}'.",
+                         "Supported actions: list, describe.");
+        }
+
         private static IEnumerable<string> RecipeNames()
         {
             return RecipeRegistry.Keys;

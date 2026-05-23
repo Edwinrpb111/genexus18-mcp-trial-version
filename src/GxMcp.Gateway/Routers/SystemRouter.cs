@@ -20,11 +20,16 @@ namespace GxMcp.Gateway.Routers
                             action = "Build",
                             target = target,
                             includeCallees = args?["includeCallees"]?.ToString(),
-                            buildPlanCap = args?["buildPlanCap"]?.ToObject<int?>()
+                            buildPlanCap = args?["buildPlanCap"]?.ToObject<int?>(),
+                            // Item 72 (friction 2026-05-22) — Slack/Discord webhook on terminal Failed state.
+                            notifyOnFailure = args?["notifyOnFailure"]?.ToString(),
+                            skipFullDeploy = args?["skipFullDeploy"]?.ToObject<bool?>() ?? false
                         };
                         case "cancel": return new { module = "Build", action = "Cancel", target = target };
                         case "rebuild": return new { module = "Build", action = "RebuildAll", target = target };
                         case "reorg": return new { module = "Build", action = "Reorg", target = target };
+                        // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.
+                        case "reorg_preview": return new { module = "Build", action = "ReorgPreview", target = target };
                         case "validate": return new { module = "Validation", action = "Check", target = target, payload = args?["code"]?.ToString() };
                         case "validate-kb": return new { module = "KB", action = "ValidateConditions", limit = args?["limit"]?.ToObject<int?>() };
                         case "snapshots-list": return new { module = "KB", action = "ListPatternSnapshots", target = target };

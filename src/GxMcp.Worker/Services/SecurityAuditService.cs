@@ -28,14 +28,50 @@ namespace GxMcp.Worker.Services
         // Item 48 — scan KB object sources for credential-shaped literals.
         // Heuristic regex set; designed to err on the side of false positives
         // (each match is reported with its location so a human can verify).
-        private static readonly (string code, string severity, string pattern, string remediation)[] _secretPatterns = new[]
+        // Item 48 (friction-report 2026-05-22) — hardcoded-credential heuristics.
+        // Patterns are matched against KB Source xml files. Each match is reported once
+        // per file (first hit), so the report stays scannable even on bulk scans.
+        //
+        // Set was extended in v2.6.9 with:
+        //   • PemBlock — broadened from "PRIVATE KEY" to any "-----BEGIN .* KEY-----" or
+        //     "-----BEGIN CERTIFICATE-----" block, since cert literals leak signing
+        //     material too.
+        //   • ConnectionStringWithUserAndPwd — tightens the connection-string detector
+        //     by requiring BOTH a User Id-style key and a Password-style key in the
+        //     same string, which is the canonical .NET / Oracle / SQL Server shape
+        //     and has far fewer false positives than just "Server=...;Password=".
+        //   • JwtThreeSegment — base64url-y triple separated by dots, no eyJ prefix
+        //     required (covers tokens that don't start with the JOSE header marker).
+        public static readonly (string code, string severity, string pattern, string remediation)[] _secretPatterns = new[]
         {
             ("JwtLiteral", "critical", "eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}", "Move JWT to env vars or a secret manager; rotate the leaked token."),
-            ("PemPrivateKey", "critical", "-----BEGIN [A-Z ]*PRIVATE KEY-----", "Move PEM to a secret manager; rotate the leaked key."),
+            ("JwtThreeSegment", "critical", "\\b[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}\\b", "Move token to a secret manager; rotate the leaked credential."),
+            ("PemBlock", "critical", "-----BEGIN (?:[A-Z ]*KEY|CERTIFICATE)-----", "Move PEM material to a secret manager; rotate any signing keys."),
             ("AwsAccessKey", "critical", "AKIA[0-9A-Z]{16}", "Rotate the AWS key immediately; move to env vars."),
             ("GenericPassword", "warn", "(?i)(password|pwd|secret)\\s*=\\s*['\"][^'\"\\s]{6,}['\"]", "Move credential to env var; never commit literals."),
+            ("ConnectionStringWithUserAndPwd", "warn", "(?i)(?:User\\s*Id|UID|Username)\\s*=[^;]+;.*?(?:Password|Pwd)\\s*=[^;\\s]+", "Use connection-string aliases from environment props; never commit User Id + Password pairs."),
             ("ConnectionStringInline", "warn", "(?i)(Server|Data\\s+Source|Host)\\s*=\\s*[^;]+;.*(Password|Pwd)\\s*=", "Use connection-string aliases from environment props rather than literals.")
         };
+
+        /// <summary>
+        /// Test-facing: scans raw text against the credential patterns and returns
+        /// the matched (code, line) tuples. Used by SecurityAuditServiceTests to
+        /// verify each pattern catches its intended shape without spinning up a KB.
+        /// </summary>
+        public static System.Collections.Generic.List<(string code, int line, string snippet)> ScanText(string text)
+        {
+            var hits = new System.Collections.Generic.List<(string, int, string)>();
+            if (string.IsNullOrEmpty(text)) return hits;
+            foreach (var pat in _secretPatterns)
+            {
+                var m = Regex.Match(text, pat.pattern);
+                if (!m.Success) continue;
+                int lineNo = text.Substring(0, m.Index).Count(c => c == '\n') + 1;
+                int len = System.Math.Min(80, m.Value.Length);
+                hits.Add((pat.code, lineNo, m.Value.Substring(0, len)));
+            }
+            return hits;
+        }
 
         public string ScanSecrets()
         {

@@ -402,6 +402,9 @@ namespace GxMcp.Worker.Services
             // build path is taken, skip the IdeWebBuildAndDeploy step. See
             // InProcessBuildRunner.Run for the safety story.
             [JsonIgnore] internal bool SkipFullDeploy { get; set; }
+            // Item 72 (friction 2026-05-22) — webhook URL to POST a failure summary
+            // to when terminal Status == "Failed". Empty / null disables the call.
+            [JsonIgnore] internal string NotifyOnFailureUrl { get; set; }
             // Friction 2026-05-22: "Build Failed: 0 errors, 0 warnings" with no
             // signal was forcing the agent to read the raw Output and guess what
             // happened. When ErrorCount=0 but ExitCode!=0 (a late MSBuild step
@@ -606,6 +609,9 @@ namespace GxMcp.Worker.Services
         }
 
         public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy)
+            => Build(action, target, includeCallees, buildPlanCap, skipFullDeploy, null);
+
+        public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy, string notifyOnFailure)
         {
             // Parse target: single name OR comma/semicolon-separated list for batch "Build With These Only"
             var targets = ParseTargets(target);
@@ -647,7 +653,8 @@ namespace GxMcp.Worker.Services
                 SkipFullDeploy = skipFullDeploy
                     && string.Equals(action, "Build", StringComparison.OrdinalIgnoreCase)
                     && targets.Count == 1
-                    && string.Equals(includeCallees ?? "transitive", "none", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(includeCallees ?? "transitive", "none", StringComparison.OrdinalIgnoreCase),
+                NotifyOnFailureUrl = notifyOnFailure
             };
 
             // Best-effort caller lookup for hint (only meaningful for single-object builds)
@@ -1068,6 +1075,8 @@ namespace GxMcp.Worker.Services
                         Logger.Info("Background Build " + status.TaskId + " " + status.Status
                                     + " (inproc, errors=" + status.ErrorCount + ", warnings=" + status.WarningCount
                                     + ", " + status.ElapsedSeconds + "s)");
+                        // Item 72 (friction 2026-05-22) — POST webhook on terminal Failed (not PartialSuccess).
+                        MaybeNotifyOnFailure(status);
                         return;
                     }
                     Logger.Warn("[BUILD-INPROCESS-FALLBACK] taskId=" + status.TaskId + " falling back to MSBuild.exe spawn");
@@ -1206,6 +1215,8 @@ namespace GxMcp.Worker.Services
                     Logger.Info("Background Build " + status.TaskId + " " + status.Status +
                                 " (errors=" + status.ErrorCount + ", warnings=" + status.WarningCount +
                                 ", " + status.ElapsedSeconds + "s)");
+                    // Item 72 (friction 2026-05-22) — POST webhook on terminal Failed (not PartialSuccess).
+                    MaybeNotifyOnFailure(status);
                 }
             }
             catch (Exception ex)
@@ -1352,6 +1363,99 @@ namespace GxMcp.Worker.Services
         public string GetKBPath()
         {
             return Environment.GetEnvironmentVariable("GX_KB_PATH") ?? "";
+        }
+
+        // Item 72 (friction 2026-05-22) — fire-and-forget POST to the configured
+        // Slack/Discord webhook on terminal Failed state. PartialSuccess is NOT
+        // notified (the build's downstream packaging step failed but the DLLs
+        // compiled — usually the agent doesn't care). No retries, no auth — by
+        // design (the spec asked for ~30 lines).
+        internal static void MaybeNotifyOnFailure(BuildTaskStatus status)
+        {
+            if (status == null) return;
+            string url = status.NotifyOnFailureUrl;
+            if (string.IsNullOrWhiteSpace(url)) return;
+            if (!string.Equals(status.Status, "Failed", StringComparison.OrdinalIgnoreCase)) return;
+            if (status.PartialSuccess == true) return;
+
+            try
+            {
+                var payload = BuildNotificationPayload(status);
+                PostWebhook(url, payload);
+            }
+            catch (Exception ex) { Logger.Warn("[NOTIFY-WEBHOOK] " + ex.Message); }
+        }
+
+        // Test seam: pure payload builder, no IO.
+        internal static string BuildNotificationPayload(BuildTaskStatus status)
+        {
+            var errorsArr = new JArray();
+            if (status.Errors != null)
+            {
+                foreach (var e in status.Errors.Take(10)) errorsArr.Add(e);
+            }
+            var detailedArr = new JArray();
+            if (status.ErrorsDetailed != null)
+            {
+                foreach (var d in status.ErrorsDetailed.Take(5))
+                {
+                    detailedArr.Add(JObject.FromObject(d));
+                }
+            }
+            var jo = new JObject
+            {
+                ["kb"] = Environment.GetEnvironmentVariable("GX_KB_PATH") ?? string.Empty,
+                ["target"] = status.Target ?? string.Empty,
+                ["jobId"] = status.TaskId ?? string.Empty,
+                ["durationSec"] = status.ElapsedSeconds ?? 0.0,
+                ["errors"] = errorsArr,
+                ["errorsDetailedHead"] = detailedArr
+            };
+            return jo.ToString(Formatting.None);
+        }
+
+        private static void PostWebhook(string url, string jsonBody)
+        {
+            // Synchronous one-shot post; the failure path is rare and we don't
+            // want to wedge the build thread on a slow network. 5s hard cap.
+            var req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
+            req.Method = "POST";
+            req.ContentType = "application/json";
+            req.Timeout = 5000;
+            byte[] bytes = Encoding.UTF8.GetBytes(jsonBody);
+            req.ContentLength = bytes.Length;
+            using (var stream = req.GetRequestStream()) { stream.Write(bytes, 0, bytes.Length); }
+            using (var resp = (System.Net.HttpWebResponse)req.GetResponse())
+            {
+                // Drain and discard — we don't care about the body.
+                using (var rs = resp.GetResponseStream())
+                {
+                    if (rs != null) { var buf = new byte[1024]; while (rs.Read(buf, 0, buf.Length) > 0) { } }
+                }
+            }
+        }
+
+        // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg. The SDK
+        // doesn't expose a clean "compute reorg plan, do not execute" entry
+        // point on net48 (CheckAndInstallDatabase always touches the live DB).
+        // Stub: return an empty plan + a hint pointing at the live reorg.
+        // Refined when the SDK surface probe finds a non-mutating entry point.
+        public string ReorgPreview(string target)
+        {
+            return new JObject
+            {
+                ["status"] = "Stub",
+                ["target"] = target ?? string.Empty,
+                ["ddl"] = new JArray(),
+                ["summary"] = new JObject
+                {
+                    ["tables_added"] = 0,
+                    ["tables_changed"] = 0,
+                    ["columns_added"] = 0,
+                    ["columns_dropped"] = 0
+                },
+                ["note"] = "reorg_preview is a stub. The CheckAndInstallDatabase MSBuild task that powers genexus_lifecycle action=reorg executes against the live DB; a non-mutating SDK plan API has not yet been wired. Run action=reorg on a non-production environment to obtain the actual ALTER TABLE statements, or use action=validate-kb to surface schema-drift findings without touching the DB."
+            }.ToString(Newtonsoft.Json.Formatting.None);
         }
     }
 }

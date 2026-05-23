@@ -59,7 +59,9 @@ namespace GxMcp.Worker.Services
             _backend = backend;
         }
 
-        public string CreatePopup(string name, JObject spec)
+        public string CreatePopup(string name, JObject spec) => CreatePopup(name, spec, false);
+
+        public string CreatePopup(string name, JObject spec, bool dryRun)
         {
             if (string.IsNullOrWhiteSpace(name))
                 return Err("name is required");
@@ -103,6 +105,32 @@ namespace GxMcp.Worker.Services
                     ["code"] = "LayoutGotcha",
                     ["message"] = "Generated layout XML failed LayoutGotchaScanner self-validation. Refusing to write.",
                     ["gotchas"] = arr
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            // Item 21 (friction 2026-05-22) — universal dryRun. Spec was parsed +
+            // layout XML rendered + LayoutGotchaScanner cleared above; short-circuit
+            // before the four mutating backend calls (CreateObject, AddVariable,
+            // WriteObject Rules/WebForm/Events). The agent gets the same shape as
+            // the live path but with the persisted bytes inlined so it can preview.
+            if (dryRun)
+            {
+                string rulesPreview = PopupLayoutBuilder.BuildRulesSource(pspec) ?? string.Empty;
+                string eventsPreview = PopupLayoutBuilder.BuildEventsSource(pspec) ?? string.Empty;
+                return new JObject
+                {
+                    ["status"] = "DryRun",
+                    ["dryRun"] = true,
+                    ["name"] = name,
+                    ["type"] = "WebPanel",
+                    ["layoutFormType"] = "layout",
+                    ["inputs"] = pspec.Inputs.Count,
+                    ["buttons"] = pspec.Buttons.Count,
+                    ["wouldCreateObject"] = !_backend.ObjectExists(name),
+                    ["webFormXml"] = layoutXml,
+                    ["rulesSource"] = rulesPreview,
+                    ["eventsSource"] = eventsPreview,
+                    ["hint"] = "Re-run without dryRun to persist."
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
 

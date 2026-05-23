@@ -31,7 +31,7 @@ namespace GxMcp.Worker.Services
         /// </summary>
         public string Execute(string target, string action, int versionId = 0,
                               string partName = null, string snapshotToken = null,
-                              bool discard = false)
+                              bool discard = false, bool dryRun = false)
         {
             try
             {
@@ -46,6 +46,10 @@ namespace GxMcp.Worker.Services
                     case "save":
                         return SaveSnapshot(target);
                     case "restore":
+                        // Item 21 (friction 2026-05-22): dryRun=true returns the diff
+                        // (current vs snapshot) without writing through SDK.
+                        if (dryRun)
+                            return DryRunRestore(target, partName, snapshotToken, discard);
                         if (!string.IsNullOrWhiteSpace(snapshotToken))
                             return RestoreEditSnapshot(target, partName, snapshotToken);
                         if (discard)
@@ -59,6 +63,80 @@ namespace GxMcp.Worker.Services
             {
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
+        }
+
+        /// <summary>
+        /// Item 21 (friction 2026-05-22) — universal dryRun for genexus_history
+        /// action=restore. Resolves the same snapshot the live restore would
+        /// pick, reads the current persisted source, and returns a unified
+        /// diff envelope — no SDK write.
+        /// </summary>
+        private string DryRunRestore(string target, string partName, string snapshotToken, bool discard)
+        {
+            var obj = _objectService.FindObject(target);
+            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            string guid;
+            try { guid = obj.Guid.ToString(); }
+            catch (Exception ex) { return Models.McpResponse.Error("DryRun failed", target, partName, ex.Message); }
+
+            string kbPath = null;
+            try { kbPath = _objectService.GetKbService().GetKbPath(); } catch { }
+            string root = EditSnapshotStore.ResolveRoot(kbPath);
+            string part = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+
+            string path;
+            if (!string.IsNullOrWhiteSpace(snapshotToken))
+            {
+                path = EditSnapshotStore.ResolveByTimestamp(root, guid, part, snapshotToken);
+            }
+            else
+            {
+                var files = EditSnapshotStore.List(root, guid, part);
+                path = files.Count > 0 ? files[0] : null;
+            }
+            if (string.IsNullOrEmpty(path))
+            {
+                return new JObject
+                {
+                    ["status"] = "NoSnapshot",
+                    ["target"] = target,
+                    ["part"] = part,
+                    ["dryRun"] = true,
+                    ["hint"] = "No snapshot to dry-run against. Edit this object first to capture a baseline."
+                }.ToString();
+            }
+
+            string snapshotContent = EditSnapshotStore.ReadSnapshot(path);
+            if (snapshotContent == null)
+            {
+                return Models.McpResponse.Error("Snapshot read failed", target, part, "File exists but could not be decoded: " + path);
+            }
+
+            string currentContent = string.Empty;
+            try
+            {
+                string readJson = _objectService.ReadObjectSource(target, part, null, null, "mcp", true, null);
+                if (!string.IsNullOrWhiteSpace(readJson))
+                {
+                    var parsed = JObject.Parse(readJson);
+                    currentContent = parsed["source"]?.ToString() ?? parsed["content"]?.ToString() ?? string.Empty;
+                }
+            }
+            catch { /* leave currentContent empty */ }
+
+            string diff = GxMcp.Worker.Helpers.DiffBuilder.UnifiedDiff(currentContent, snapshotContent, 3);
+            return new JObject
+            {
+                ["status"] = "DryRun",
+                ["target"] = target,
+                ["part"] = part,
+                ["dryRun"] = true,
+                ["discard"] = discard,
+                ["restoreSource"] = System.IO.Path.GetFileName(path),
+                ["restoreSourcePath"] = path,
+                ["diff"] = diff,
+                ["hint"] = "Re-run without dryRun to write these bytes through WriteService."
+            }.ToString();
         }
 
         private string ListEditSnapshots(string target, string partName)

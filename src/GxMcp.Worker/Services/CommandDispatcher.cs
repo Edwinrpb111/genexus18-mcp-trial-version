@@ -474,7 +474,12 @@ namespace GxMcp.Worker.Services
                         break;
                     case "object":
                         if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
-                        if (action == "Create") return _objectService.CreateObject(args?["type"]?.ToString(), target, args);
+                        if (action == "Create")
+                        {
+                            // Item 21 (friction 2026-05-22): dryRun=true returns the planned
+                            // shape without calling newObj.Save(). args carries the flag.
+                            return _objectService.CreateObject(args?["type"]?.ToString(), target, args);
+                        }
                         if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false);
                         if (action == "WorkerReload")
                         {
@@ -822,13 +827,17 @@ namespace GxMcp.Worker.Services
                             args?["page"]?.ToObject<int?>() ?? 1,
                             args?["pageSize"]?.ToObject<int?>() ?? 50);
                         if (action == "Cancel") return _buildService.Cancel(target);
+                        // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.
+                        if (action == "ReorgPreview") return _buildService.ReorgPreview(target);
                         {
                             // v2.3.8 (Task 5.2): forward includeCallees + buildPlanCap from gateway.
                             var includeCallees = args?["includeCallees"]?.ToString();
                             var cap = args?["buildPlanCap"]?.ToObject<int?>() ?? 200;
                             if (string.IsNullOrWhiteSpace(includeCallees)) includeCallees = "transitive";
                             bool skipFullDeploy = args?["skipFullDeploy"]?.ToObject<bool?>() ?? false;
-                            return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy);
+                            // Item 72 (friction 2026-05-22) — failure-webhook URL plumbed through to BuildService.
+                            string notifyOnFailure = args?["notifyOnFailure"]?.ToString();
+                            return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy, notifyOnFailure);
                         }
                     case "validation":
                         return _validationService.ValidateCode(target, action, payload);
@@ -848,13 +857,17 @@ namespace GxMcp.Worker.Services
                             string partName = args?["part"]?.ToString();
                             string snapshotToken = args?["snapshot"]?.ToString();
                             bool discard = args?["discard"]?.ToObject<bool?>() ?? false;
-                            return _historyService.Execute(target, action, verId, partName, snapshotToken, discard);
+                            // Item 21 (friction 2026-05-22): dryRun=true returns the
+                            // would-be diff without writing.
+                            bool historyDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                            return _historyService.Execute(target, action, verId, partName, snapshotToken, discard, historyDryRun);
                         }
                     // Item 16 — genexus_undo last=N
                     case "undo":
                         {
                             int last = args?["last"]?.ToObject<int?>() ?? 1;
-                            return _undoService.Undo(last);
+                            bool undoDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                            return _undoService.Undo(last, undoDryRun);
                         }
                     // Items 50 + 48 — genexus_security action=audit_gam|scan_secrets
                     case "security":
@@ -915,7 +928,9 @@ namespace GxMcp.Worker.Services
                         {
                             string popupName = target ?? args?["name"]?.ToString();
                             var popupSpec = args?["spec"] as JObject;
-                            return _popupTemplateService.CreatePopup(popupName, popupSpec);
+                            // Item 21 (friction 2026-05-22): dryRun=true previews layout XML without persisting.
+                            bool popupDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                            return _popupTemplateService.CreatePopup(popupName, popupSpec, popupDryRun);
                         }
                         break;
                     case "preview":
