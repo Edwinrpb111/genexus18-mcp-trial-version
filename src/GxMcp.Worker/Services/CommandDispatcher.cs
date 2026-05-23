@@ -33,6 +33,9 @@ namespace GxMcp.Worker.Services
         private readonly HealthService _healthService;
         private readonly NavigationService _navigationService;
         private readonly NavigationSqlService _navigationSqlService;
+        // Wave-3 items 42 + 92: sample-data generator + translations CSV importer.
+        private readonly SampleDataService _sampleDataService;
+        private readonly TranslationsService _translationsService;
         private readonly LinterService _linterService;
         private readonly PatternService _patternService;
         private readonly PatternApplyService _patternApplyService;
@@ -94,7 +97,9 @@ namespace GxMcp.Worker.Services
             _objectService = new ObjectService(_kbService, _buildService);
             _assetService = new AssetService(_buildService);
             _navigationService = new NavigationService(_kbService);
-            _navigationSqlService = new NavigationSqlService(_navigationService);
+            _navigationSqlService = new NavigationSqlService(_navigationService, _kbService, _objectService);
+            _sampleDataService = new SampleDataService(_objectService);
+            _translationsService = new TranslationsService(null); // writeService linked in Phase 2
             _listService = new ListService(_kbService, _indexCacheService);
             _uiService = new UIService(_kbService, _objectService);
             var callerGraphService = new CallerGraphService(_indexCacheService, _objectService);
@@ -747,7 +752,18 @@ namespace GxMcp.Worker.Services
                         if (action == "GetSqlForNavigation")
                         {
                             int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
-                            return _navigationSqlService.Generate(target, levelNumber);
+                            bool includeExecutionPlan = args?["includeExecutionPlan"]?.ToObject<bool?>() ?? false;
+                            bool includeIndexAdvisor = args?["includeIndexAdvisor"]?.ToObject<bool?>() ?? false;
+                            return _navigationSqlService.Generate(target, levelNumber, includeExecutionPlan, includeIndexAdvisor);
+                        }
+                        if (action == "GenerateSampleData")
+                        {
+                            int rows = args?["rows"]?.ToObject<int?>() ?? 5;
+                            return _sampleDataService.Generate(target, rows);
+                        }
+                        if (action == "TranslationsImport")
+                        {
+                            return _translationsService.Import(payload);
                         }
                         if (action == "GetParameters") return _analyzeService.GetSignature(target, analyzeType);
                         if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target, analyzeType);

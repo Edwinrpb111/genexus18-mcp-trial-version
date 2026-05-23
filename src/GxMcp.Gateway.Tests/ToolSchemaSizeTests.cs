@@ -103,7 +103,10 @@ namespace GxMcp.Gateway.Tests
             //   2026-05-23 friction items 39/60/97: 9300 → 9500 for genexus_preview
             //   emulate + network enums and genexus_recipe versioned-name hint.
             //   Net ~+125 tokens measured (~9426); budget set at 9500.
-            Assert.True(approxTokens < 9500, $"tool_definitions.json is ~{approxTokens} tokens; budget 9500.");
+            //   2026-05-23 wave3 items 34/42/44/92: 9500 → 9800 for genexus_sql
+            //   execution-plan + index-advisor flags, genexus_generate_sample_data,
+            //   genexus_translations.
+            Assert.True(approxTokens < 9800, $"tool_definitions.json is ~{approxTokens} tokens; budget 9800.");
         }
     }
 }

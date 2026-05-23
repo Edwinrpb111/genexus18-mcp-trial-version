@@ -3,19 +3,32 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Helpers;
 
 namespace GxMcp.Worker.Services
 {
     public class NavigationSqlService
     {
         private readonly NavigationService _navigation;
+        private readonly KbService _kbService;
+        private readonly ObjectService _objectService;
 
         public NavigationSqlService(NavigationService navigation)
+            : this(navigation, null, null)
+        {
+        }
+
+        public NavigationSqlService(NavigationService navigation, KbService kbService, ObjectService objectService)
         {
             _navigation = navigation;
+            _kbService = kbService;
+            _objectService = objectService;
         }
 
         public string Generate(string objectName, int? levelNumber = null)
+            => Generate(objectName, levelNumber, includeExecutionPlan: false, includeIndexAdvisor: false);
+
+        public string Generate(string objectName, int? levelNumber, bool includeExecutionPlan, bool includeIndexAdvisor)
         {
             try
             {
@@ -39,7 +52,7 @@ namespace GxMcp.Worker.Services
                         continue;
                     }
 
-                    var (where, parms, levelWarnings) = BuildWhere(l, num);
+                    var (where, parms, levelWarnings, structuredFilters) = BuildWhere(l, num);
                     foreach (var w in levelWarnings) warnings.Add(w);
 
                     var sql = new StringBuilder();
@@ -57,22 +70,43 @@ namespace GxMcp.Worker.Services
                     var parmsArr = new JArray();
                     foreach (var p in parms) parmsArr.Add(p);
 
-                    queries.Add(new JObject
+                    var q = new JObject
                     {
                         ["level"] = num,
                         ["baseTable"] = baseTable,
                         ["indexUsed"] = (string)l["index"],
                         ["sql"] = sql.ToString(),
-                        ["parametersExpected"] = parmsArr
-                    });
+                        ["parametersExpected"] = parmsArr,
+                    };
+                    if (structuredFilters != null && structuredFilters.Count > 0)
+                        q["filters"] = structuredFilters;
+                    queries.Add(q);
                 }
 
-                return new JObject
+                var result = new JObject
                 {
                     ["name"] = objectName,
                     ["queries"] = queries,
-                    ["warnings"] = warnings
-                }.ToString();
+                    ["warnings"] = warnings,
+                };
+
+                // Item 34: optional EXPLAIN annotation per query. Always
+                // planUnavailable=true here — the worker has no DB connection.
+                if (includeExecutionPlan)
+                {
+                    int dbmsType = TryGetDbmsType();
+                    ExecutionPlanFetcher.AttachExecutionPlans(queries, dbmsType);
+                    result["dbmsFamily"] = ExecutionPlanFetcher.ResolveDbmsFamily(dbmsType);
+                }
+
+                // Item 44: heuristic index advisor.
+                if (includeIndexAdvisor)
+                {
+                    var existing = CollectExistingIndexes(queries);
+                    result["indexAdvisor"] = IndexAdvisor.BuildAdvisor(queries, existing);
+                }
+
+                return result.ToString();
             }
             catch (Exception ex)
             {
@@ -80,16 +114,73 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private (string where, List<string> parms, List<string> warnings) BuildWhere(JToken level, int levelNum)
+        private int TryGetDbmsType()
+        {
+            try
+            {
+                if (_kbService == null) return 0;
+                dynamic kb = _kbService.GetKB();
+                if (kb == null) return 0;
+                dynamic ds = ((dynamic)kb.DesignModel.Environment.TargetModel).DataStore;
+                if (ds != null && ds.Dbms != 0) return (int)ds.Dbms;
+            }
+            catch { }
+            return 0;
+        }
+
+        private IDictionary<string, JArray> CollectExistingIndexes(JArray queries)
+        {
+            var map = new Dictionary<string, JArray>(StringComparer.OrdinalIgnoreCase);
+            if (_objectService == null) return map;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var q in queries)
+            {
+                string baseTable = (string)q["baseTable"];
+                if (string.IsNullOrEmpty(baseTable) || !seen.Add(baseTable)) continue;
+                try
+                {
+                    var tbl = _objectService.FindObject(baseTable) as Artech.Genexus.Common.Objects.Table;
+                    if (tbl == null) { map[baseTable] = new JArray(); continue; }
+                    var arr = new JArray();
+                    dynamic dIndexesPart = ((dynamic)tbl).TableIndexes;
+                    if (dIndexesPart != null && dIndexesPart.Indexes != null)
+                    {
+                        foreach (dynamic idxObj in dIndexesPart.Indexes)
+                        {
+                            dynamic idx = idxObj.Index; if (idx == null) continue;
+                            var cols = new JArray();
+                            if (idx.IndexStructure != null && idx.IndexStructure.Members != null)
+                            {
+                                foreach (dynamic m in idx.IndexStructure.Members)
+                                {
+                                    string n = m.Attribute != null ? (string)m.Attribute.Name : (string)m.Name;
+                                    if (!string.IsNullOrEmpty(n)) cols.Add(n);
+                                }
+                            }
+                            arr.Add(new JObject { ["name"] = (string)idx.Name, ["columns"] = cols });
+                        }
+                    }
+                    map[baseTable] = arr;
+                }
+                catch
+                {
+                    map[baseTable] = new JArray();
+                }
+            }
+            return map;
+        }
+
+        private (string where, List<string> parms, List<string> warnings, JArray structuredFilters) BuildWhere(JToken level, int levelNum)
         {
             var parms = new List<string>();
             var warnings = new List<string>();
+            var structured = new JArray();
 
             var filtersArr = level["filters"] as JArray;
             if (filtersArr == null || filtersArr.Count == 0)
             {
                 warnings.Add($"Level {levelNum}: OptimizedWhere not surfaced; SQL emitted without filters.");
-                return ("", parms, warnings);
+                return ("", parms, warnings, structured);
             }
 
             var clauses = new List<string>();
@@ -106,6 +197,7 @@ namespace GxMcp.Worker.Services
                 {
                     string rhs = string.IsNullOrWhiteSpace(value) ? "?" : ReplaceVarsWithBinds(value, parms);
                     clause = $"{attribute} {op} {rhs}";
+                    structured.Add(new JObject { ["attribute"] = attribute, ["op"] = op });
                 }
                 else if (!string.IsNullOrWhiteSpace(raw))
                 {
@@ -115,7 +207,7 @@ namespace GxMcp.Worker.Services
                 if (!string.IsNullOrWhiteSpace(clause)) clauses.Add(clause);
             }
 
-            return (string.Join(" AND ", clauses), parms, warnings);
+            return (string.Join(" AND ", clauses), parms, warnings, structured);
         }
 
         private static string ReplaceVarsWithBinds(string input, List<string> parms)

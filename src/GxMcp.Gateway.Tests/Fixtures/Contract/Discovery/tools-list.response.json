@@ -1068,6 +1068,29 @@
       "name": "genexus_format"
     },
     {
+      "description": "Emit INSERT statements with fake-but-typed data for a Transaction. SQL only; not executed.",
+      "inputSchema": {
+        "properties": {
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "rows": {
+            "description": "1-1000; default 5.",
+            "type": "integer"
+          },
+          "trn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trn"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_generate_sample_data"
+    },
+    {
       "description": "List/read/save/restore object history snapshots. restore + discard=true = IDE 'Discard changes' parity.",
       "inputSchema": {
         "properties": {
@@ -2140,6 +2163,14 @@
             ],
             "type": "string"
           },
+          "includeExecutionPlan": {
+            "description": "action=navigation: attach EXPLAIN preview per query (no live DB exec).",
+            "type": "boolean"
+          },
+          "includeIndexAdvisor": {
+            "description": "action=navigation: attach heuristic index suggestions.",
+            "type": "boolean"
+          },
           "includeSubordinated": {
             "description": "action=ddl only.",
             "type": "boolean"
@@ -2218,6 +2249,32 @@
         "type": "object"
       },
       "name": "genexus_test"
+    },
+    {
+      "description": "Translations import. action=import + inputPath=CSV with columns objectName,attribute,language,value. SDK write currently deferred; rows are parsed and reported.",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "import"
+            ],
+            "type": "string"
+          },
+          "inputPath": {
+            "type": "string"
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "inputPath"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_translations"
     },
     {
       "description": "Revert the last N edits from EditSnapshotStore (.gx/snapshots). Best-effort: reports which succeeded when any fail.",
