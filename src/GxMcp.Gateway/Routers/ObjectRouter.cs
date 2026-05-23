@@ -114,6 +114,10 @@ namespace GxMcp.Gateway.Routers
                     ValidateEditMode(mode);
                     bool returnPostState = args?["return_post_state"]?.ToObject<bool?>() ?? true;
                     bool verbose = args?["verbose"]?.ToObject<bool?>() ?? false;
+                    // Items 5 + 37 (friction 2026-05-22): forward visualVerify to the
+                    // worker so it can shell out to chrome-devtools-axi / playwright
+                    // after the edit lands and attach a screenshot + pixel-diff envelope.
+                    bool visualVerify = args?["visualVerify"]?.ToObject<bool?>() ?? false;
                     if (mode == "ops")
                     {
                         ValidateSemanticOps(args?["ops"]);
@@ -125,7 +129,8 @@ namespace GxMcp.Gateway.Routers
                             ops = args?["ops"],
                             dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                             return_post_state = returnPostState,
-                            verbose = verbose
+                            verbose = verbose,
+                            visualVerify = visualVerify
                         };
                     }
                     if (mode == "patch")
@@ -142,7 +147,8 @@ namespace GxMcp.Gateway.Routers
                                 patch = patchArr,
                                 dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                                 return_post_state = returnPostState,
-                                verbose = verbose
+                                verbose = verbose,
+                                visualVerify = visualVerify
                             };
                         }
 
@@ -191,7 +197,8 @@ namespace GxMcp.Gateway.Routers
                             validate = args?["validate"]?.ToString(),
                             // Item 9 (friction 2026-05-22): replaceAll=true applies patch to all
                             // occurrences instead of requiring expectedCount to match exactly.
-                            replaceAll = args?["replaceAll"]?.ToObject<bool?>() ?? false
+                            replaceAll = args?["replaceAll"]?.ToObject<bool?>() ?? false,
+                            visualVerify = visualVerify
                         };
                     }
                     else
@@ -202,7 +209,8 @@ namespace GxMcp.Gateway.Routers
                             target = target,
                             payload = args?["content"]?.ToString(),
                             type = args?["type"]?.ToString(),
-                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
+                            visualVerify = visualVerify
                         };
                     }
                 }
@@ -256,12 +264,18 @@ namespace GxMcp.Gateway.Routers
                     };
 
                 case "genexus_edit_and_build":
+                    // Items 5 + 37: hoist visualVerify + part to the top-level
+                    // of the worker command so the dispatcher's post-edit hook
+                    // can read them straight off `args` without unwrapping the
+                    // nested orchestrator envelope.
                     return new
                     {
                         module = "EditAndBuild",
                         action = "Orchestrate",
                         target = args?["name"]?.ToString(),
-                        args = args
+                        part = args?["part"]?.ToString(),
+                        args = args,
+                        visualVerify = args?["visualVerify"]?.ToObject<bool?>() ?? false
                     };
 
                 default:

@@ -88,7 +88,10 @@ namespace GxMcp.Gateway.Tests
             //   2026-05-23 improvements item 19: 7500 → 7700 for genexus_edit_form
             //   (semantic WebForm: add_textblock / add_button / set_visibility /
             //   remove_control / wrap_in_fieldset). Net ~+195 tokens.
-            Assert.True(approxTokens < 7700, $"tool_definitions.json is ~{approxTokens} tokens; budget 7700.");
+            //   2026-05-23 improvements items 11/15: 7700 → 8000 for genexus_run_object
+            //   (runtime URL + GAM cookies) and transactional flag on genexus_bulk_edit.
+            //   Measured 7851 with both; budget set at 8000 with ~150 tokens of headroom.
+            Assert.True(approxTokens < 8000, $"tool_definitions.json is ~{approxTokens} tokens; budget 8000.");
         }
     }
 }

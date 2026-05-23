@@ -196,7 +196,7 @@
       "name": "genexus_asset"
     },
     {
-      "description": "Apply N independent edits. Item: {name,part?,content,type?,dryRun?}. stopOnError halts at first fail.",
+      "description": "Apply N independent edits. Item: {name,part?,content,type?,dryRun?}. stopOnError halts at first fail. transactional=true snapshots all targets pre-edit and rolls back prior successes on first Error.",
       "inputSchema": {
         "properties": {
           "dryRun": {
@@ -214,6 +214,10 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "transactional": {
+            "description": "Atomic batch: rollback prior successes on first Error.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -647,10 +651,6 @@
           },
           "verifyRollback": {
             "type": "boolean"
-          },
-          "visualVerify": {
-            "description": "Post-edit screenshot via chrome-devtools-axi/playwright + pixel-diff vs last baseline.",
-            "type": "boolean"
           }
         },
         "type": "object"
@@ -724,10 +724,6 @@
           "type": {
             "description": "Disambiguates ambiguous names.",
             "type": "string"
-          },
-          "visualVerify": {
-            "description": "Post-edit screenshot + pixel-diff vs last baseline.",
-            "type": "boolean"
           },
           "waitForIndex": {
             "default": true,
@@ -1716,6 +1712,40 @@
         "type": "object"
       },
       "name": "genexus_refactor"
+    },
+    {
+      "description": "Resolve runtime URL for a KB object (active Environment webRoot + aspx + URL-encoded positional args). Optional gamSession='auto'|{user,pass,repository?} captures GAM session cookies via HTTP login. Does NOT open a browser — pipe the returned url into chrome-devtools-axi.",
+      "inputSchema": {
+        "properties": {
+          "args": {
+            "description": "Positional parameter values.",
+            "type": "array"
+          },
+          "gamSession": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "description": "'auto' (use GXMCP_GAM_USER/PASS env) or {user, pass, repository?, loginUrl?}."
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_run_object"
     },
     {
       "description": "Dump SDK surface (types/methods/props) to docs/sdk-probe/. Use when hunting for entry points.",

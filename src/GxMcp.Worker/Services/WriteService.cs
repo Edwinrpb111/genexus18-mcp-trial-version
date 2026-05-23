@@ -1668,6 +1668,73 @@ namespace GxMcp.Worker.Services
             return null;
         }
 
+        /// <summary>
+        /// Item 15 (mcp-improvements-2026-05-22) — descriptor passed to the
+        /// rollback replayer. Pure data so the replay logic is unit-testable
+        /// without spinning up a KB.
+        /// </summary>
+        internal class BulkRollbackItem
+        {
+            public string Name;
+            public string Part;
+            public string Type;
+            public string SnapshotPath;
+        }
+
+        /// <summary>
+        /// Item 15 (mcp-improvements-2026-05-22) — replay each successful write
+        /// in REVERSE order using the pre-snapshot bytes. Pure helper so unit
+        /// tests can drive it through fakes; the production caller wires
+        /// EditSnapshotStore.ReadSnapshot and WriteObject as the delegates.
+        /// </summary>
+        internal static JArray BulkRollbackReplay(
+            List<BulkRollbackItem> plan,
+            System.Func<string, string> snapshotReader,
+            System.Func<string, string, string, string, string> writer)
+        {
+            var rollbackResults = new JArray();
+            if (plan == null) return rollbackResults;
+            for (int i = plan.Count - 1; i >= 0; i--)
+            {
+                var item = plan[i];
+                string priorContent = snapshotReader?.Invoke(item.SnapshotPath);
+                if (priorContent == null)
+                {
+                    rollbackResults.Add(new JObject
+                    {
+                        ["target"] = item.Name,
+                        ["status"] = "Error",
+                        ["error"] = "Snapshot bytes unreadable; rollback skipped."
+                    });
+                    continue;
+                }
+                string raw;
+                try
+                {
+                    raw = writer(item.Name, item.Part, priorContent, item.Type);
+                }
+                catch (Exception rex)
+                {
+                    rollbackResults.Add(new JObject
+                    {
+                        ["target"] = item.Name,
+                        ["status"] = "Error",
+                        ["error"] = "Rollback write threw: " + rex.Message
+                    });
+                    continue;
+                }
+                var rparsed = GxMcp.Worker.Helpers.JsonUtil.SafeParse(raw);
+                var rstatus = (rparsed as JObject)?["status"]?.ToString();
+                rollbackResults.Add(new JObject
+                {
+                    ["target"] = item.Name,
+                    ["status"] = string.Equals(rstatus, "Error", StringComparison.OrdinalIgnoreCase) ? "Error" : "Restored",
+                    ["detail"] = rparsed
+                });
+            }
+            return rollbackResults;
+        }
+
         // Item shape: { name, part?, content, type?, dryRun? }. stopOnError halts at first failure.
         public string BulkWrite(JObject args)
         {
@@ -1677,12 +1744,22 @@ namespace GxMcp.Worker.Services
 
             bool stopOnError = args?["stopOnError"]?.ToObject<bool?>() ?? true;
             bool dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+            // Item 15 (mcp-improvements-2026-05-22): atomic multi-object batch.
+            // When transactional=true, pre-snapshot every target's prior content
+            // and roll back all successful writes on the first Error.
+            bool transactional = args?["transactional"]?.ToObject<bool?>() ?? false;
             var results = new JArray();
             int success = 0, failure = 0, skipped = 0;
 
+            // Track per-item rollback context (only populated when transactional=true).
+            // We capture pre-write snapshots BEFORE each write so a mid-batch failure
+            // can replay prior bytes in reverse order.
+            var rollbackPlan = new List<(string Name, string Part, string Type, GxMcp.Worker.Helpers.EditSnapshotStore.SnapshotInfo Snapshot)>();
+            string failedAt = null;
+
             foreach (var it in items)
             {
-                if (failure > 0 && stopOnError)
+                if (failure > 0 && stopOnError && !transactional)
                 {
                     results.Add(new JObject { ["status"] = "Skipped", ["target"] = it?["name"]?.ToString() });
                     skipped++;
@@ -1691,20 +1768,75 @@ namespace GxMcp.Worker.Services
                 var name = it?["name"]?.ToString();
                 var part = it?["part"]?.ToString() ?? "";
                 var content = it?["content"]?.ToString();
+                var itemType = it?["type"]?.ToString();
                 var itemDryRun = it?["dryRun"]?.ToObject<bool?>() ?? dryRun;
                 if (string.IsNullOrEmpty(name) || content == null)
                 {
                     results.Add(new JObject { ["status"] = "Error", ["error"] = "missing name or content", ["target"] = name });
                     failure++;
+                    if (transactional) { failedAt = name; break; }
                     continue;
                 }
-                string raw = WriteObject(name, part, content, it?["type"]?.ToString(), true, false, true, itemDryRun);
+
+                // Capture pre-write snapshot for transactional rollback. Dry-run
+                // items don't modify state, so they don't need rollback bytes.
+                GxMcp.Worker.Helpers.EditSnapshotStore.SnapshotInfo preSnap = null;
+                if (transactional && !itemDryRun)
+                {
+                    preSnap = TryCapturePreWriteSnapshot(name, part, itemType);
+                }
+
+                string raw = WriteObject(name, part, content, itemType, true, false, true, itemDryRun);
                 var parsed = GxMcp.Worker.Helpers.JsonUtil.SafeParse(raw);
                 results.Add(parsed);
 
                 var status = (parsed as JObject)?["status"]?.ToString();
-                if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase)) failure++;
-                else success++;
+                if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+                {
+                    failure++;
+                    if (transactional)
+                    {
+                        failedAt = name;
+                        break;
+                    }
+                }
+                else
+                {
+                    success++;
+                    if (transactional && preSnap != null)
+                    {
+                        rollbackPlan.Add((name, string.IsNullOrEmpty(part) ? "Source" : part, itemType, preSnap));
+                    }
+                }
+            }
+
+            // Transactional rollback path: replay each successful write in reverse
+            // using the pre-snapshot bytes. Each rollback is itself a WriteObject
+            // call, so it gets validated and persisted via the same SDK path that
+            // the original edit used — guaranteeing the same write semantics.
+            if (transactional && failure > 0)
+            {
+                var planForHelper = new List<BulkRollbackItem>();
+                foreach (var p in rollbackPlan)
+                {
+                    planForHelper.Add(new BulkRollbackItem { Name = p.Name, Part = p.Part, Type = p.Type, SnapshotPath = p.Snapshot?.Path });
+                }
+                var rollbackResults = BulkRollbackReplay(
+                    planForHelper,
+                    GxMcp.Worker.Helpers.EditSnapshotStore.ReadSnapshot,
+                    (name, part, content, type) => WriteObject(name, part, content, type, true, false, true, false));
+
+                var rollbackEnvelope = new JObject
+                {
+                    ["status"] = "RolledBack",
+                    ["failedAt"] = failedAt,
+                    ["successfulBeforeFailure"] = new JArray(rollbackPlan.Select(r => (JToken)r.Name).ToArray()),
+                    ["counts"] = new JObject { ["attempted"] = results.Count, ["rolledBack"] = rollbackPlan.Count, ["failed"] = failure },
+                    ["results"] = results,
+                    ["rollbackResults"] = rollbackResults
+                };
+                GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(rollbackEnvelope, SummarizeBulkSdkPath(results));
+                return rollbackEnvelope.ToString();
             }
 
             var bulkEnvelope = new JObject

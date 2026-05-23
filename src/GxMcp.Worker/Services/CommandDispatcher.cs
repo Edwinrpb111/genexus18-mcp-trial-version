@@ -64,6 +64,7 @@ namespace GxMcp.Worker.Services
         private readonly OrientService _orientService;
         private readonly DbDriftService _dbDriftService;
         private readonly WebFormEditService _webFormEditService;
+        private readonly RunObjectService _runObjectService;
 
         private CommandDispatcher()
         {
@@ -121,6 +122,7 @@ namespace GxMcp.Worker.Services
             _orientService = new OrientService(_kbService);
             _dbDriftService = new DbDriftService(_buildService);
             _webFormEditService = new WebFormEditService(_objectService, _writeService);
+            _runObjectService = new RunObjectService(_objectService, _kbService, _previewService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -947,6 +949,16 @@ namespace GxMcp.Worker.Services
                     case "webformedit":
                         // Item 19 (mcp-improvements-2026-05-22) — semantic WebForm edits.
                         return _webFormEditService.Execute(action, args);
+                    case "runobject":
+                        // Item 11 (mcp-improvements-2026-05-22) — runtime URL + optional GAM cookies.
+                        if (string.Equals(action, "Resolve", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string roName = target ?? args?["name"]?.ToString();
+                            var roArgs = args?["args"] as JArray;
+                            var gamToken = args?["gamSession"];
+                            return _runObjectService.Resolve(roName, roArgs, gamToken);
+                        }
+                        break;
                     case "preview":
                         if (action == "Render" || action == "Run")
                         {

@@ -1,0 +1,127 @@
+using System.Collections.Generic;
+using GxMcp.Worker.Services;
+using Newtonsoft.Json.Linq;
+using Xunit;
+
+namespace GxMcp.Worker.Tests
+{
+    /// <summary>
+    /// Item 11 (mcp-improvements-2026-05-22) — runtime URL resolution + optional
+    /// HTTP-level GAM login. Pure helper tests; no SDK access, no live HTTP.
+    /// </summary>
+    public class RunObjectServiceTests
+    {
+        // The service uses PreviewService.LoadConfig() for baseUrl. Passing null
+        // for objectService + a fresh PreviewService that points at a tempdir
+        // config gives us deterministic behavior without a KB.
+        private static RunObjectService MakeSvc()
+        {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RunObjSvcTest_" + System.Guid.NewGuid().ToString("N").Substring(0, 8));
+            System.IO.Directory.CreateDirectory(dir);
+            string cfg = System.IO.Path.Combine(dir, "preview.config.json");
+            var preview = new PreviewService(null, null, new FakeRunner(), cfg, dir);
+            return new RunObjectService(null, null, preview);
+        }
+
+        private class FakeRunner : PreviewService.ICliRunner
+        {
+            public PreviewService.CliResult Run(string fileName, string arguments, int timeoutMs)
+                => new PreviewService.CliResult { ExitCode = 0 };
+            public string Which(string command) => null;
+        }
+
+        [Fact]
+        public void Resolve_BuildsLowerCaseAspxUrlWithPositionalParms()
+        {
+            var svc = MakeSvc();
+            var args = new JArray { 27, 1, 6179 };
+            string json = svc.Resolve("ListaAtiCPAlunoUniGra", args, null);
+            var jo = JObject.Parse(json);
+            Assert.Equal("Success", jo["status"]?.ToString());
+            string url = jo["url"]?.ToString();
+            Assert.NotNull(url);
+            Assert.Contains("/listaaticpalunounigra.aspx", url);
+            Assert.Contains("p1=27", url);
+            Assert.Contains("p2=1", url);
+            Assert.Contains("p3=6179", url);
+            Assert.False(jo["signedIn"]?.ToObject<bool>() ?? true);
+        }
+
+        [Fact]
+        public void Resolve_NoArgs_ReturnsBareAspxUrl()
+        {
+            var svc = MakeSvc();
+            string json = svc.Resolve("Home", null, null);
+            var jo = JObject.Parse(json);
+            string url = jo["url"]?.ToString();
+            Assert.NotNull(url);
+            Assert.EndsWith("/home.aspx", url);
+            Assert.DoesNotContain("?", url);
+        }
+
+        [Fact]
+        public void Resolve_NameRequired()
+        {
+            var svc = MakeSvc();
+            string json = svc.Resolve(null, new JArray(), null);
+            var jo = JObject.Parse(json);
+            Assert.Equal("Error", jo["status"]?.ToString());
+            Assert.Contains("name", jo["error"]?.ToString() ?? "");
+        }
+
+        [Fact]
+        public void Resolve_GamSession_HookInvoked_SignedInTrue()
+        {
+            var svc = MakeSvc();
+            svc.LoginHook = (url, u, p) =>
+            {
+                Assert.Equal("alice", u);
+                Assert.Equal("secret", p);
+                return ("GAM_Session=abc123; ASP.NET_SessionId=xyz", true, null);
+            };
+            var gam = JObject.Parse("{\"user\":\"alice\",\"pass\":\"secret\"}");
+            string json = svc.Resolve("Home", null, gam);
+            var jo = JObject.Parse(json);
+            Assert.True(jo["signedIn"]?.ToObject<bool>() ?? false);
+            var cookies = jo["cookies"] as JObject;
+            Assert.NotNull(cookies);
+            Assert.Equal("abc123", cookies["GAM_Session"]?.ToString());
+        }
+
+        [Fact]
+        public void Resolve_GamSession_NoCreds_ReportsLoginError()
+        {
+            var svc = MakeSvc();
+            var gam = JObject.Parse("{\"user\":\"\",\"pass\":\"\"}");
+            string json = svc.Resolve("Home", null, gam);
+            var jo = JObject.Parse(json);
+            Assert.False(jo["signedIn"]?.ToObject<bool>() ?? true);
+        }
+
+        [Fact]
+        public void EncodeArgs_NullSafe_AndUrlEncodesSpecialChars()
+        {
+            string q = RunObjectService.EncodeArgs(new JArray { "hello world", "a&b" }, null);
+            Assert.Equal("p1=hello+world&p2=a%26b", q);
+            string empty = RunObjectService.EncodeArgs(null, null);
+            Assert.Equal("", empty);
+        }
+
+        [Fact]
+        public void EncodeArgs_UsesParmNamesWhenProvided()
+        {
+            var names = new List<string> { "PesCod", "Ano" };
+            string q = RunObjectService.EncodeArgs(new JArray { "5171369", "27" }, names);
+            Assert.Equal("PesCod=5171369&Ano=27", q);
+        }
+
+        [Fact]
+        public void ParseCookies_SplitsKeyValuePairs()
+        {
+            var jo = RunObjectService.ParseCookies("A=1; B=two; C=three=four");
+            Assert.Equal("1", jo["A"]?.ToString());
+            Assert.Equal("two", jo["B"]?.ToString());
+            Assert.Equal("three=four", jo["C"]?.ToString());
+        }
+    }
+}

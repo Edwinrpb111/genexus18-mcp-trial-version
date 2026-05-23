@@ -254,6 +254,18 @@ namespace GxMcp.Gateway.Routers
                     };
                 }
 
+                // Item 11 — resolve runtime URL + optional GAM cookies. No browser launch.
+                case "genexus_run_object":
+                    return new
+                    {
+                        module = "RunObject",
+                        action = "Resolve",
+                        target = args?["name"]?.ToString(),
+                        name = args?["name"]?.ToString(),
+                        args = args?["args"],
+                        gamSession = args?["gamSession"]
+                    };
+
                 // Item 65 — genexus_orient welcome card
                 case "genexus_orient":
                     return new
