@@ -22,10 +22,47 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
+        // SECURITY: `name` and `at` are LLM-controlled and reach `git`, plus
+        // (for `name`) Path.Combine on the KB working tree. Enforce a tight
+        // allowlist at the entrypoint so traversal / arg-confusion attempts
+        // never reach the shell-out or filesystem layers.
+        internal static bool IsSafeObjectName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 200) return false;
+            foreach (var c in name)
+            {
+                if (!(char.IsLetterOrDigit(c) || c == '_' || c == '.' || c == '-')) return false;
+            }
+            // Defence in depth — explicit traversal markers are never valid.
+            if (name == "." || name == "..") return false;
+            return true;
+        }
+
+        internal static bool IsSafeAtValue(string at)
+        {
+            if (string.IsNullOrWhiteSpace(at) || at.Length > 64) return false;
+            // Allowed shapes: 7-40 hex (sha), or an ISO-8601-ish timestamp / date.
+            // Both are far narrower than git's actual --before parser, but they
+            // cover every legitimate caller and keep meta-characters (' ', '"',
+            // '\\', ';', '&', '|', leading '-') out of the git command line.
+            foreach (var c in at)
+            {
+                bool ok = char.IsLetterOrDigit(c) || c == '-' || c == ':' || c == '.'
+                       || c == '+' || c == 'T' || c == 'Z' || c == ' ' || c == '/';
+                if (!ok) return false;
+            }
+            if (at.StartsWith("-")) return false;
+            return true;
+        }
+
         public string Recover(string name, string at)
         {
             if (string.IsNullOrWhiteSpace(name)) return Err("name is required.");
             if (string.IsNullOrWhiteSpace(at)) return Err("at is required (ISO timestamp or commit sha).");
+            if (!IsSafeObjectName(name))
+                return new JObject { ["status"] = "Error", ["code"] = "InvalidName", ["message"] = "name must match [A-Za-z0-9._-]{1,200}." }.ToString(Newtonsoft.Json.Formatting.None);
+            if (!IsSafeAtValue(at))
+                return new JObject { ["status"] = "Error", ["code"] = "InvalidAt", ["message"] = "at must be a commit sha (7-40 hex) or an ISO-8601 timestamp; metacharacters and leading '-' are rejected." }.ToString(Newtonsoft.Json.Formatting.None);
 
             string kbPath = null;
             try { kbPath = _kbService?.GetKbPath(); } catch { }
@@ -59,7 +96,8 @@ namespace GxMcp.Worker.Services
             string rel = MakeRelative(kbPath, objDir);
             int e2;
             string lsOut, lsErr;
-            e2 = RunGit(kbPath, new[] { "ls-tree", "-r", "--name-only", commit, rel }, out lsOut, out lsErr);
+            // `--` separator: keep the path positional even if `rel` starts with '-'.
+            e2 = RunGit(kbPath, new[] { "ls-tree", "-r", "--name-only", commit, "--", rel }, out lsOut, out lsErr);
             if (e2 != 0)
                 return new JObject { ["status"] = "Error", ["code"] = "GitLsTreeFailed", ["commit"] = commit, ["stderr"] = lsErr }.ToString(Newtonsoft.Json.Formatting.None);
 
@@ -130,10 +168,7 @@ namespace GxMcp.Worker.Services
             foreach (var a in args)
             {
                 sb.Append(' ');
-                if (a.IndexOfAny(new[] { ' ', '\t', '"' }) >= 0)
-                    sb.Append('"').Append(a.Replace("\"", "\\\"")).Append('"');
-                else
-                    sb.Append(a);
+                sb.Append(GithubService.ArgvQuote(a));
             }
             var psi = new ProcessStartInfo("git", sb.ToString())
             {
