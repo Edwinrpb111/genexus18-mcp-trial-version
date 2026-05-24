@@ -21,6 +21,16 @@ namespace GxMcp.Worker.Services
             if (string.IsNullOrWhiteSpace(title))
                 return Err("title is required.");
 
+            // SECURITY: title / body / baseBranch are LLM-controlled. They flow
+            // into a Windows command line; if any leading dash makes them look
+            // like a `gh` flag the call semantics change silently. Reject
+            // values that begin with '-' so they can't be re-parsed as flags
+            // (the legitimate values for these never start with '-').
+            if (title.TrimStart().StartsWith("-"))
+                return new JObject { ["status"] = "Error", ["code"] = "InvalidTitle", ["message"] = "title may not start with '-'." }.ToString(Newtonsoft.Json.Formatting.None);
+            if (!string.IsNullOrWhiteSpace(baseBranch) && baseBranch.TrimStart().StartsWith("-"))
+                return new JObject { ["status"] = "Error", ["code"] = "InvalidBaseBranch", ["message"] = "baseBranch may not start with '-'." }.ToString(Newtonsoft.Json.Formatting.None);
+
             string cwd = string.IsNullOrEmpty(workingDir) ? (TryGetKbPath() ?? Directory.GetCurrentDirectory()) : workingDir;
 
             var argList = new System.Collections.Generic.List<string> { "pr", "create", "--title", title };
@@ -67,16 +77,57 @@ namespace GxMcp.Worker.Services
         private string TryGetKbPath() { try { return _kbService?.GetKbPath(); } catch { return null; } }
         private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Newtonsoft.Json.Formatting.None);
 
+        /// <summary>
+        /// Windows CommandLineToArgv-compatible quoting per the rules at
+        /// https://learn.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/.
+        /// The naive `Replace("\"","\\\"")` pattern leaves trailing backslashes
+        /// unescaped, so a value ending in '\' lets the closing quote get
+        /// consumed and the next token bleeds into the argument — classic
+        /// Windows arg-confusion. This version doubles every run of
+        /// backslashes that precede a quote (and the closing quote).
+        /// </summary>
+        internal static string ArgvQuote(string arg)
+        {
+            if (arg == null) arg = string.Empty;
+            // If there are no problematic characters, no quoting needed.
+            if (arg.Length > 0 && arg.IndexOfAny(new[] { ' ', '\t', '\n', '\v', '"' }) < 0)
+                return arg;
+            var sb = new StringBuilder();
+            sb.Append('"');
+            for (int i = 0; i < arg.Length; i++)
+            {
+                int backslashes = 0;
+                while (i < arg.Length && arg[i] == '\\') { backslashes++; i++; }
+                if (i == arg.Length)
+                {
+                    // Escape all backslashes, but let the terminating quote be added below.
+                    sb.Append('\\', backslashes * 2);
+                    break;
+                }
+                if (arg[i] == '"')
+                {
+                    // Escape all backslashes and the following quote.
+                    sb.Append('\\', backslashes * 2 + 1);
+                    sb.Append(arg[i]);
+                }
+                else
+                {
+                    // Backslashes aren't special here.
+                    sb.Append('\\', backslashes);
+                    sb.Append(arg[i]);
+                }
+            }
+            sb.Append('"');
+            return sb.ToString();
+        }
+
         private static int Run(string exe, System.Collections.Generic.List<string> args, string cwd, out string stdout, out string stderr)
         {
             var sb = new StringBuilder();
             foreach (var a in args)
             {
                 if (sb.Length > 0) sb.Append(' ');
-                if (a.IndexOfAny(new[] { ' ', '\t', '"' }) >= 0)
-                    sb.Append('"').Append(a.Replace("\"", "\\\"")).Append('"');
-                else
-                    sb.Append(a);
+                sb.Append(ArgvQuote(a));
             }
             var psi = new ProcessStartInfo(exe, sb.ToString())
             {
