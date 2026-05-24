@@ -212,7 +212,14 @@ namespace GxMcp.Gateway.Tests
             using var h = new LiveGatewayHarness();
             await h.InitializeAsync();
 
-            string stamp = DateTime.UtcNow.Ticks.ToString("X").Substring(0, 6).ToLowerInvariant();
+            // v2.6.9 — `Substring(0, 6)` previously sliced the HIGH-order hex digits
+            // of Ticks, which change slowly (~hours). Two test runs in the same
+            // window collided on the same disposable name, and the second run
+            // failed at create_object with "Web Panel already exists". Take the
+            // LAST 6 hex digits (low-order, ~100ns granularity) so the name is
+            // unique across rapid re-runs.
+            string ticksHex = DateTime.UtcNow.Ticks.ToString("X");
+            string stamp = ticksHex.Substring(ticksHex.Length - 6).ToLowerInvariant();
             string wp = "TestVldWp" + stamp;
 
             var create = await h.CallToolAsync("genexus_create_object", new JObject
@@ -220,7 +227,16 @@ namespace GxMcp.Gateway.Tests
                 ["type"] = "WebPanel",
                 ["name"] = wp
             }, timeoutMs: 60_000);
-            Assert.False(LiveGatewayHarness.IsToolError(create), "WebPanel create must succeed");
+            // v2.6.9 — when create fails (transient SDK / leftover-state collision),
+            // surface the actual envelope so a follow-up triage doesn't have to
+            // re-run with a custom diagnostic harness.
+            if (LiveGatewayHarness.IsToolError(create))
+            {
+                var createPayload = LiveGatewayHarness.ParseToolPayload(create);
+                throw new Xunit.Sdk.XunitException(
+                    "WebPanel create must succeed. Envelope: "
+                    + (createPayload?.ToString(Newtonsoft.Json.Formatting.None) ?? "<null>"));
+            }
 
             var apply = await h.CallToolAsync("genexus_apply_pattern", new JObject
             {
@@ -231,6 +247,7 @@ namespace GxMcp.Gateway.Tests
             var payload = LiveGatewayHarness.ParseToolPayload(apply);
 
             Console.WriteLine($"[E2E disposable] WebPanel={wp} host={payload?["patternHost"]} — delete manually in IDE if leaked.");
+            Console.WriteLine($"[E2E apply payload] {payload?.ToString(Newtonsoft.Json.Formatting.None)}");
 
             Assert.Equal("WebPanel", payload?["parentType"]?.ToString());
             Assert.Equal("webpanel-direct-attach", payload?["bindingMode"]?.ToString());

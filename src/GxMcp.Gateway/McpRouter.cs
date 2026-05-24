@@ -1183,6 +1183,23 @@ namespace GxMcp.Gateway
             trimmed["message"] = firstLine;
             if (error["code"] != null) trimmed["code"] = error["code"];
             if (error["hint"] != null) trimmed["hint"] = error["hint"];
+            // v2.6.9: preserve a small allowlist of routing/diagnosis fields that
+            // an LLM needs to self-correct on the next call. Without them the
+            // agent sees "WorkWithPlus cannot be applied to a Procedure." and has
+            // to guess what IS valid; `validParentTypes` answers that in one hop.
+            // `status` is preserved when it carries a non-Error semantic
+            // (NotImplemented, NotApplicable, etc.) so the LLM can branch on it.
+            string[] routingKeys = { "parentType", "validParentTypes", "patternKey", "target", "type" };
+            foreach (var k in routingKeys)
+            {
+                if (error[k] != null) trimmed[k] = error[k];
+            }
+            string status = error["status"]?.ToString();
+            if (!string.IsNullOrEmpty(status) &&
+                !string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed["status"] = status;
+            }
             // Friction 2026-05-22 #63: surface a structured "what to do next"
             // hint on every error envelope. Pre-existing suggested_next_step
             // (e.g. from the worker's write_not_persisted path) is preserved;
