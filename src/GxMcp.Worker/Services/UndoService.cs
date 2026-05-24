@@ -109,12 +109,36 @@ namespace GxMcp.Worker.Services
                     continue;
                 }
 
-                // Resolve object name from the sanitized GUID. dryRun skips this:
-                // the name is only required to call WriteObject; for a dryRun envelope
-                // we surface the raw guid + part + bytes preview without any SDK round-trip.
-                // Live restore path still resolves, but with a hard cap to avoid the
-                // full-index iteration that was costing ~60s on a 38k-object KB.
-                string objectName = dryRun ? meta.RawGuid : (ResolveObjectNameFromGuid(meta.RawGuid) ?? meta.RawGuid);
+                // Resolve object name from the sanitized GUID.
+                //   - dryRun skips the resolver entirely (name is only needed for WriteObject).
+                //   - live path resolves via IndexEntry.Guid (no SDK round-trip).
+                //   - if the GUID is no longer in the index (object deleted between edit
+                //     and undo, or the snapshot predates indexing), surface a typed
+                //     UnresolvedGuid envelope instead of attempting a doomed WriteObject
+                //     that would emit a generic "Object not found" error.
+                string objectName;
+                if (dryRun)
+                {
+                    objectName = meta.RawGuid;
+                }
+                else
+                {
+                    objectName = ResolveObjectNameFromGuid(meta.RawGuid);
+                    if (string.IsNullOrEmpty(objectName))
+                    {
+                        failed.Add(new JObject
+                        {
+                            ["snapshotGuid"] = meta.RawGuid,
+                            ["part"] = meta.Part,
+                            ["snapshotTimestamp"] = meta.Timestamp,
+                            ["snapshotPath"] = path,
+                            ["code"] = "UnresolvedGuid",
+                            ["error"] = "Snapshot GUID is not in the current index. The object may have been deleted, or the snapshot predates indexing. Read " + path + " manually and recreate the object before restoring.",
+                            ["hint"] = "genexus_create_object with the same name, then run genexus_undo again."
+                        });
+                        continue;
+                    }
+                }
 
                 string content = EditSnapshotStore.ReadSnapshot(path);
                 if (content == null)
@@ -124,6 +148,7 @@ namespace GxMcp.Worker.Services
                         ["object"] = objectName,
                         ["part"] = meta.Part,
                         ["snapshotTimestamp"] = meta.Timestamp,
+                        ["code"] = "SnapshotUnreadable",
                         ["error"] = "Could not read snapshot file"
                     });
                     continue;

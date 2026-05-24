@@ -321,22 +321,26 @@ namespace GxMcp.Worker.Services
             {
                 var obj = _objects.FindObject(sourceName, null);
                 if (obj == null) return null;
-                // PatternApplyService.HasPatternInstance is not part of the
-                // public surface in every build — guard reflectively so we
-                // don't break compilation if it gets renamed. The fallback
-                // (no instance detected) is the safe behaviour.
-                var mi = _patterns?.GetType().GetMethod("HasWorkWithPlusInstance",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (mi != null)
+                // Walk the source object's parts looking for a PatternInstance member.
+                // Mirrors the detection in PatternApplyService.ApplyPattern (~line 357)
+                // so the two paths agree on what constitutes an "already-patterned" object.
+                bool hasInstance = false;
+                try
                 {
-                    bool has = (bool)mi.Invoke(_patterns, new object[] { obj });
-                    if (!has) return null;
+                    foreach (var part in obj.Parts)
+                    {
+                        var p = part as Artech.Architecture.Common.Objects.KBObjectPart;
+                        if (p == null) continue;
+                        if (string.Equals(p.Name, "PatternInstance", StringComparison.OrdinalIgnoreCase) ||
+                            p.GetType().Name.IndexOf("PatternInstance", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            hasInstance = true;
+                            break;
+                        }
+                    }
                 }
-                else
-                {
-                    // No detection helper available — caller will see no patternInstance block.
-                    return null;
-                }
+                catch { /* best-effort */ }
+                if (!hasInstance) return null;
                 return new SaveAsService.PatternInstanceDescriptor
                 {
                     PatternKey = "WorkWithPlus",
@@ -348,34 +352,21 @@ namespace GxMcp.Worker.Services
 
         public string ApplyWwpPattern(string newName, SaveAsService.PatternInstanceDescriptor sourceInstance)
         {
-            // Delegate to the existing pattern-apply pipeline. settings=null
-            // means "use defaults", which is the IDE's Save-As behaviour too.
+            // Direct call to the canonical PatternApplyService.ApplyPattern signature.
+            // settings=null means "use defaults" — same behaviour as the IDE's Save-As.
+            if (_patterns == null)
+            {
+                return new JObject
+                {
+                    ["status"] = "Error",
+                    ["error"] = "PatternApplyService is not wired in this worker build."
+                }.ToString();
+            }
             try
             {
-                var argsObj = new JObject
-                {
-                    ["name"] = newName,
-                    ["pattern"] = sourceInstance?.PatternKey ?? "WorkWithPlus"
-                };
-                var mi = _patterns?.GetType().GetMethod("Apply",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                if (mi == null)
-                {
-                    return new JObject
-                    {
-                        ["status"] = "Error",
-                        ["error"] = "PatternApplyService.Apply not available on this worker build."
-                    }.ToString();
-                }
-                var parms = mi.GetParameters();
-                object result;
-                if (parms.Length == 1 && parms[0].ParameterType == typeof(JObject))
-                    result = mi.Invoke(_patterns, new object[] { argsObj });
-                else if (parms.Length == 1)
-                    result = mi.Invoke(_patterns, new object[] { argsObj.ToString() });
-                else
-                    return new JObject { ["status"] = "Error", ["error"] = "Unrecognised PatternApplyService.Apply signature." }.ToString();
-                return result?.ToString() ?? "{\"status\":\"Success\"}";
+                string key = sourceInstance?.PatternKey ?? "WorkWithPlus";
+                string result = _patterns.ApplyPattern(newName, key, settings: null);
+                return string.IsNullOrEmpty(result) ? "{\"status\":\"Success\"}" : result;
             }
             catch (Exception ex)
             {

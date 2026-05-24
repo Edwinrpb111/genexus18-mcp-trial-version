@@ -72,51 +72,14 @@ namespace GxMcp.Gateway.Tests
             //   v2.6.8: 6500 → 6700 for sort/since/modifiedBefore/cursor declarations on
             //   genexus_list_objects + genexus_query. Net ~+55 tokens; budget set with
             //   ~140 tokens of headroom for the next small batch.
-            //   2026-05-22 friction items 4/9/17: 6700 → 7000 for replaceAll flag on
-            //   genexus_edit + genexus_inspect runtimeIds enum addition. Net ~+155 tokens.
-            //   2026-05-23 wave3 items 62/63/64: 7200 → 7400 for projection enum on
-            //   genexus_inspect/list_objects plus docUrl/suggested_next_step inflation
-            //   in error envelopes. Measured 7337; budget set at 7400 with ~60 headroom.
-            //   2026-05-23 friction items 45/50/65: 7000 → 7200 for genexus_apply_pattern
-            //   mode=diagnose + new genexus_security + genexus_orient tools. Net ~+99 tokens
-            //   measured (7099); budget set at 7200 with ~100 tokens of headroom.
-            //   2026-05-23 friction items 20/21/43/72: 7200 → 7400 for universal dryRun
-            //   (5 tools), autoFormat on genexus_edit, reorg_preview action + notifyOnFailure
-            //   on genexus_lifecycle. Net ~+110 tokens measured.
-            //   2026-05-23 improvements item 41: 7400 → 7500 for genexus_db_drift
-            //   (Transaction↔DB schema drift detection). Net ~+30 tokens.
-            //   2026-05-23 improvements item 19: 7500 → 7700 for genexus_edit_form
-            //   (semantic WebForm: add_textblock / add_button / set_visibility /
-            //   remove_control / wrap_in_fieldset). Net ~+195 tokens.
-            //   2026-05-23 improvements items 11/15: 7700 → 8000 for genexus_run_object
-            //   (runtime URL + GAM cookies) and transactional flag on genexus_bulk_edit.
-            //   Measured 7851 with both; budget set at 8000 with ~150 tokens of headroom.
-            //   2026-05-23 wave3 Tier-S items 28/51: 8000 → 8600 for fastIncremental
-            //   on genexus_lifecycle + warm mode on genexus_worker_reload (EXPERIMENTAL),
-            //   plus genexus_kb startup actions added in parallel.
-            //   2026-05-23 wave3 IDE right-click sweep: 8600 → 9000 for genexus_kb_explorer
-            //   (Locate parity), genexus_navigation (View Navigation parity), genexus_blame
-            //   (foundation wiring), and doc-explain tools (genexus_explain / genexus_diff_generated
-            //   / genexus_kb_readme) added in parallel. Measured ~8853; budget set at 9000.
-            //   2026-05-23 wave3 browser-verify: 9000 → 9300 for genexus_browser_capture,
-            //   genexus_smoke_test, genexus_a11y_audit. Net ~+220 tokens.
-            //   2026-05-23 friction items 39/60/97: 9300 → 9500 for genexus_preview
-            //   emulate + network enums and genexus_recipe versioned-name hint.
-            //   Net ~+125 tokens measured (~9426); budget set at 9500.
-            //   2026-05-23 wave3 items 34/42/44/92: 9500 → 9800 for genexus_sql
-            //   execution-plan + index-advisor flags, genexus_generate_sample_data,
-            //   genexus_translations.
-            //   2026-05-23 wave3 items 30/87/36/94: 9800 → 10200 for two new tools
-            //   (genexus_build_plan, genexus_execution_history) + dependency_heatmap
-            //   mode + format param on genexus_analyze.
-            //   2026-05-23 wave3 future-stubs sweep (18 tools — items 35/53/54/55/56/
-            //   66/71/76/78/81/82/83/84/86/91/95/96/98): 10200 → 11500. Each entry is a
-            //   short DEFERRED-stub description routed through FutureItemRouter →
-            //   FutureItemStub.Deferred. Measured ~11351; budget set at 11500 with
-            //   ~150 tokens of headroom.
-            //   2026-05-23 wave3 items 40/85/89/93/99: 11500 → 13000 for OCR stub,
-            //   pr_description, screenshot_publish, friction_log, wcag_check landing
-            //   alongside the XL stubs sweep.
+            //
+            //   v2.6.9 (2026-05-22 → 2026-05-24): cumulative bump 6700 → 13000 across the
+            //   friction-wishlist sweep. Net ~+6300 tokens spread over ~75 new tools/fields
+            //   and a 23-item DEFERRED-stub sweep (FutureItemRouter → FutureItemStub).
+            //   Per-batch detail is captured in CHANGELOG.md v2.6.9 — the prior per-bump
+            //   comment trail churned in parallel from many worktree branches and ended up
+            //   non-chronological / contradictory, so it was collapsed into this single
+            //   line. Future bumps should add ONE entry below this one with rationale.
             Assert.True(approxTokens < 13000, $"tool_definitions.json is ~{approxTokens} tokens; budget 13000.");
         }
     }
