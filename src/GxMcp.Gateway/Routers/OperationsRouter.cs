@@ -76,6 +76,35 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_refactor":
                     return ConvertRefactorToolCall(args);
 
+                // Item 91: genexus_rename_across_kb — thin wrapper that routes to the
+                // existing RefactorService.Refactor(action=RenameObject|RenameAttribute)
+                // path. The service already iterates the index's CalledBy edges and
+                // patches every source-text call-site, so KB-wide rename is just the
+                // RenameAttribute/RenameObject flow under a more discoverable name.
+                case "genexus_rename_across_kb":
+                {
+                    string? from = args?["from"]?.ToString() ?? args?["oldName"]?.ToString();
+                    string? to = args?["to"]?.ToString() ?? args?["newName"]?.ToString();
+                    string? type = args?["type"]?.ToString();
+                    // RenameAttribute path is the index-driven one (writes attribute then
+                    // updates every CalledBy edge). For non-Attribute types, RenameObject
+                    // currently falls into the same code path (line 64 of RefactorService).
+                    string refactorAction = string.Equals(type, "Attribute", System.StringComparison.OrdinalIgnoreCase)
+                        ? "RenameAttribute"
+                        : "RenameObject";
+                    return new
+                    {
+                        module = "Refactor",
+                        action = refactorAction,
+                        target = from,
+                        payload = new JObject
+                        {
+                            ["oldName"] = from,
+                            ["newName"] = to
+                        }.ToString()
+                    };
+                }
+
                 case "genexus_add_variable":
                     return new
                     {

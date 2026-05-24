@@ -24,6 +24,14 @@ namespace GxMcp.Gateway
         private readonly Configuration _config;
         private readonly ConcurrentDictionary<string, Entry> _entries =
             new ConcurrentDictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+
+        // Item 53: configured warm-spare count. Pre-spawn up to N workers
+        // (bound to declared KBs in config.Environment.KBs[]) so the first
+        // client tool call after process start doesn't pay the cold-start
+        // cost. Capped at 5 to avoid runaway memory.
+        public const int MaxWarmSpareCount = 5;
+        private int _warmSpareCount;
+        public int WarmSpareCount => _warmSpareCount;
         // PERFORMANCE (G-A1): previously a single `_spawnLock` serialised every Acquire across
         // all KBs. Now each KB has its own SpawnGate (per-Entry SemaphoreSlim), so two clients
         // opening different KBs proceed in parallel. The narrow `_capacityLock` still
@@ -193,6 +201,60 @@ namespace GxMcp.Gateway
             try { entry.Worker?.Stop(); } catch { }
             _entries.TryRemove(entry.Handle.NormalizedAlias, out _);
         }
+
+        // Item 53: configure warm-spare count + optionally pre-spawn against the
+        // supplied declared KBs. Caps at MaxWarmSpareCount. Returns:
+        //   configured  – the count actually persisted (clamped + capped),
+        //   requested   – the original requested value (so the agent sees the clamp),
+        //   capped      – true if the request exceeded MaxWarmSpareCount,
+        //   prespawned  – aliases of KBs the gateway successfully pre-spawned a worker for,
+        //   skipped     – aliases skipped because they were already open or the spawn failed.
+        public WarmSpareResult ConfigureWarmSpares(int requested, System.Collections.Generic.IReadOnlyList<KbHandle> declaredKbs)
+        {
+            int requestedOrig = requested;
+            bool capped = false;
+            if (requested < 0) requested = 0;
+            if (requested > MaxWarmSpareCount) { requested = MaxWarmSpareCount; capped = true; }
+            Interlocked.Exchange(ref _warmSpareCount, requested);
+
+            var prespawned = new System.Collections.Generic.List<string>();
+            var skipped = new System.Collections.Generic.List<string>();
+            if (requested == 0 || declaredKbs == null)
+            {
+                return new WarmSpareResult(requestedOrig, requested, capped, prespawned, skipped);
+            }
+
+            int budget = requested;
+            foreach (var kb in declaredKbs)
+            {
+                if (budget <= 0) break;
+                if (_entries.TryGetValue(kb.NormalizedAlias, out var existing) && existing.Worker != null)
+                {
+                    skipped.Add(kb.Alias);
+                    continue;
+                }
+                try
+                {
+                    // Block on AcquireAsync — pre-spawn is a one-shot setup call.
+                    var task = AcquireAsync(kb, CancellationToken.None);
+                    task.Wait();
+                    prespawned.Add(kb.Alias);
+                    budget--;
+                }
+                catch
+                {
+                    skipped.Add(kb.Alias);
+                }
+            }
+            return new WarmSpareResult(requestedOrig, requested, capped, prespawned, skipped);
+        }
+
+        public sealed record WarmSpareResult(
+            int Requested,
+            int Configured,
+            bool Capped,
+            System.Collections.Generic.IReadOnlyList<string> Prespawned,
+            System.Collections.Generic.IReadOnlyList<string> Skipped);
 
         internal void RegisterForTest(KbHandle h, DateTime? lastActivity = null)
         {

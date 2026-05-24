@@ -17,10 +17,8 @@ namespace GxMcp.Gateway.Routers
             new Dictionary<string, (int, string)>
             {
                 ["genexus_watch_event"]            = (35, "Set breakpoints in Events; capture variable state when triggered."),
-                ["genexus_worker_pool"]            = (53, "Maintain N warm workers for instant spawn."),
-                ["genexus_sandbox"]                = (54, "Clone the KB for sandboxed edits; merge-back manual."),
-                ["genexus_kb_diff"]                = (55, "Object-level diff between two KBs."),
-                ["genexus_kb_import"]              = (56, "Import an object plus deps from another KB."),
+                // Items 53, 54, 55, 56 promoted to real tools (gateway-side handlers
+                // in Program.cs; KB-infrastructure batch). No longer routes here.
                 ["genexus_tutorial"]               = (66, "Interactive onboarding tutorial."),
                 ["genexus_github"]                 = (71, "Auto-create PR from current branch."),
                 ["genexus_learning"]               = (76, "Cross-session friction-learning loop."),
@@ -30,7 +28,8 @@ namespace GxMcp.Gateway.Routers
                 ["genexus_voice"]                  = (83, "Voice-driven edits via NL command."),
                 ["genexus_multi_agent_lock"]       = (84, "Granular lock for parallel multi-agent edits."),
                 ["genexus_what_if"]                = (86, "Simulate a type/schema change; report breakage without persisting."),
-                ["genexus_rename_across_kb"]       = (91, "Rename across every call site / attribute / index in the KB."),
+                // Item 91 promoted to real tool — routes through OperationsRouter to
+                // RefactorService.Refactor(action=RenameObject|RenameAttribute).
                 ["genexus_auto_test"]              = (95, "Generate tests from real production invocation patterns."),
                 ["genexus_reverse_pattern"]        = (96, "Infer a pattern (WWP-like) from existing similar objects."),
                 ["genexus_cross_browser"]          = (98, "Render in parallel browsers; diff screenshots.")

@@ -1948,6 +1948,227 @@ namespace GxMcp.Gateway
                     return BuildToolTextResponse(idToken, payload, isError, "genexus_kb", args);
                 }
 
+                // Item 53: genexus_worker_pool action=warm_spares — gateway-side
+                // meta-tool. Configures N pre-spawned workers bound to declared KBs
+                // so the first KB-bound call doesn't pay cold-start. Capped at
+                // WorkerPool.MaxWarmSpareCount; spareCount<0 disables. Never reaches
+                // a worker — purely a gateway lifecycle knob.
+                if (string.Equals(toolName, "genexus_worker_pool", StringComparison.OrdinalIgnoreCase))
+                {
+                    JObject payload;
+                    bool isError = false;
+                    try
+                    {
+                        if (_workerPool == null) throw new InvalidOperationException("WorkerPool not initialised.");
+                        string action = args?["action"]?.ToString()?.ToLowerInvariant() ?? "warm_spares";
+                        if (action != "warm_spares")
+                            throw new ArgumentException($"Unknown action '{action}'. Use warm_spares.");
+                        int spareCount = args?["spareCount"]?.ToObject<int?>() ?? args?["count"]?.ToObject<int?>() ?? 0;
+                        var declared = (_activeConfig?.Environment?.KBs ?? new List<KbEntry>())
+                            .Select(k => new KbHandle(k.Alias, k.Path))
+                            .ToList();
+                        var result = _workerPool.ConfigureWarmSpares(spareCount, declared);
+                        payload = new JObject
+                        {
+                            ["status"] = result.Configured == 0 ? "Disabled" : "Configured",
+                            ["requested"] = result.Requested,
+                            ["configured"] = result.Configured,
+                            ["capped"] = result.Capped,
+                            ["maxAllowed"] = WorkerPool.MaxWarmSpareCount,
+                            ["prespawned"] = JArray.FromObject(result.Prespawned),
+                            ["skipped"] = JArray.FromObject(result.Skipped),
+                            ["declaredKbCount"] = declared.Count
+                        };
+                        if (result.Capped)
+                            payload["warning"] = $"spareCount={result.Requested} exceeded cap {WorkerPool.MaxWarmSpareCount}; clamped to {result.Configured}.";
+                        if (result.Configured > declared.Count)
+                            payload["note"] = $"requested {result.Configured} spares but only {declared.Count} KBs declared in config.Environment.KBs[]; declare more aliases to use the full budget.";
+                    }
+                    catch (Exception ex)
+                    {
+                        isError = true;
+                        payload = new JObject { ["error"] = ex.Message, ["code"] = "BadRequest" };
+                    }
+                    return BuildToolTextResponse(idToken, payload, isError, "genexus_worker_pool", args);
+                }
+
+                // Item 54: genexus_sandbox — gateway-side filesystem clone of a KB.
+                // No SDK touch; pure file copy under <configRoot>/sandboxes/<name>/.
+                // remove is idempotent. create on an existing target returns
+                // {status:"AlreadyExists"} unless overwrite=true.
+                if (string.Equals(toolName, "genexus_sandbox", StringComparison.OrdinalIgnoreCase))
+                {
+                    JObject payload;
+                    bool isError = false;
+                    try
+                    {
+                        string action = args?["action"]?.ToString()?.ToLowerInvariant() ?? "create";
+                        string name = args?["name"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Missing 'name'.");
+                        // Sanitize: alphanumeric + dash/underscore only.
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(name, "^[A-Za-z0-9_-]+$"))
+                            throw new ArgumentException("name must match [A-Za-z0-9_-]+ (no spaces/path-separators).");
+
+                        string configDir = !string.IsNullOrEmpty(Configuration.CurrentConfigPath)
+                            ? System.IO.Path.GetDirectoryName(Configuration.CurrentConfigPath!)!
+                            : AppContext.BaseDirectory;
+                        string sandboxRoot = System.IO.Path.Combine(configDir, "sandboxes");
+                        string targetPath = System.IO.Path.Combine(sandboxRoot, name);
+
+                        if (action == "remove")
+                        {
+                            bool existed = System.IO.Directory.Exists(targetPath);
+                            if (existed)
+                            {
+                                try { System.IO.Directory.Delete(targetPath, true); }
+                                catch (Exception ex) { throw new InvalidOperationException($"Failed to remove sandbox: {ex.Message}"); }
+                            }
+                            payload = new JObject
+                            {
+                                ["status"] = existed ? "Removed" : "NotFound",
+                                ["name"] = name,
+                                ["path"] = targetPath
+                            };
+                        }
+                        else if (action == "create")
+                        {
+                            string from = args?["from"]?.ToString();
+                            if (string.IsNullOrWhiteSpace(from)) throw new ArgumentException("Missing 'from' (source KB alias or path).");
+                            bool overwrite = args?["overwrite"]?.ToObject<bool?>() ?? false;
+
+                            // Resolve `from` as alias against config, else treat as path.
+                            string sourcePath = null;
+                            var fromKb = _activeConfig?.Environment?.KBs?.FirstOrDefault(
+                                k => string.Equals(k.Alias, from, StringComparison.OrdinalIgnoreCase));
+                            if (fromKb != null) sourcePath = fromKb.Path;
+                            else if (System.IO.Directory.Exists(from)) sourcePath = from;
+                            else throw new ArgumentException($"'from'='{from}' is not a declared KB alias and not an existing directory.");
+
+                            if (System.IO.Directory.Exists(targetPath))
+                            {
+                                if (!overwrite)
+                                {
+                                    payload = new JObject
+                                    {
+                                        ["status"] = "AlreadyExists",
+                                        ["name"] = name,
+                                        ["path"] = targetPath,
+                                        ["hint"] = "Pass overwrite=true to replace, or action=remove first."
+                                    };
+                                    return BuildToolTextResponse(idToken, payload, false, "genexus_sandbox", args);
+                                }
+                                try { System.IO.Directory.Delete(targetPath, true); }
+                                catch (Exception ex) { throw new InvalidOperationException($"Failed to remove existing sandbox before overwrite: {ex.Message}"); }
+                            }
+
+                            System.IO.Directory.CreateDirectory(sandboxRoot);
+                            var copy = SandboxCopyHelper.CopyDirectory(sourcePath, targetPath);
+                            payload = new JObject
+                            {
+                                ["status"] = "Created",
+                                ["name"] = name,
+                                ["path"] = targetPath,
+                                ["from"] = sourcePath,
+                                ["filesCopied"] = copy.Files,
+                                ["bytesCopied"] = copy.Bytes,
+                                ["durationMs"] = copy.DurationMs,
+                                ["alias"] = "sandbox-" + name,
+                                ["hint"] = $"Open with: genexus_kb action=open path=\"{targetPath}\" alias=sandbox-{name}"
+                            };
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"Unknown action '{action}'. Use create|remove.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        isError = true;
+                        payload = new JObject { ["error"] = ex.Message, ["code"] = "BadRequest" };
+                    }
+                    return BuildToolTextResponse(idToken, payload, isError, "genexus_sandbox", args);
+                }
+
+                // Item 55: genexus_kb_diff — gateway-side object-index diff between two
+                // KB directories. No SDK touch. Walks each KB's filesystem Objects/<Type>/<Name>/
+                // tree (and .gx/index-snapshot.bin if present) and returns
+                // {onlyInA, onlyInB, modified[]}.
+                if (string.Equals(toolName, "genexus_kb_diff", StringComparison.OrdinalIgnoreCase))
+                {
+                    JObject payload;
+                    bool isError = false;
+                    try
+                    {
+                        string kbA = args?["kbA"]?.ToString();
+                        string kbB = args?["kbB"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(kbA) || string.IsNullOrWhiteSpace(kbB))
+                            throw new ArgumentException("Both 'kbA' and 'kbB' are required (alias or path).");
+                        string pathA = ResolveKbPath(kbA) ?? throw new ArgumentException($"'kbA'='{kbA}' not a declared alias and not an existing directory.");
+                        string pathB = ResolveKbPath(kbB) ?? throw new ArgumentException($"'kbB'='{kbB}' not a declared alias and not an existing directory.");
+                        if (string.Equals(System.IO.Path.GetFullPath(pathA), System.IO.Path.GetFullPath(pathB), StringComparison.OrdinalIgnoreCase))
+                            throw new ArgumentException("kbA and kbB resolve to the same path.");
+                        payload = KbDiffHelper.Diff(pathA, pathB);
+                    }
+                    catch (Exception ex)
+                    {
+                        isError = true;
+                        payload = new JObject { ["error"] = ex.Message, ["code"] = "BadRequest" };
+                    }
+                    return BuildToolTextResponse(idToken, payload, isError, "genexus_kb_diff", args);
+                }
+
+                // Item 56: genexus_kb_import — limited filesystem-level copy of an
+                // object's files between two KBs. Full SDK-level import would require
+                // opening a second KB inside the worker (one SDK can only host one
+                // KB at a time), so this ships as a directory-copy + index-rescan
+                // recommendation. Callers should run genexus_lifecycle action=index
+                // afterwards.
+                if (string.Equals(toolName, "genexus_kb_import", StringComparison.OrdinalIgnoreCase))
+                {
+                    JObject payload;
+                    bool isError = false;
+                    try
+                    {
+                        string from = args?["from"]?.ToString();
+                        string name = args?["name"]?.ToString();
+                        string type = args?["type"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(from)) throw new ArgumentException("Missing 'from' (source KB alias or path).");
+                        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Missing 'name' (object name to import).");
+                        if (string.IsNullOrWhiteSpace(type)) throw new ArgumentException("Missing 'type' (object type, e.g. WebPanel, Procedure).");
+                        string sourcePath = ResolveKbPath(from) ?? throw new ArgumentException($"'from'='{from}' not a declared alias and not an existing directory.");
+                        // Active KB resolution: use first open KB or default.
+                        string targetPath = null;
+                        var openKbs = _workerPool?.ListOpen();
+                        if (openKbs != null && openKbs.Count > 0) targetPath = openKbs[0].Path;
+                        else if (!string.IsNullOrEmpty(_activeConfig?.Environment?.DefaultKb))
+                        {
+                            var d = _activeConfig.Environment.KBs?.FirstOrDefault(k =>
+                                string.Equals(k.Alias, _activeConfig.Environment.DefaultKb, StringComparison.OrdinalIgnoreCase));
+                            targetPath = d?.Path;
+                        }
+                        if (string.IsNullOrEmpty(targetPath))
+                        {
+                            payload = new JObject
+                            {
+                                ["status"] = "MissingFeature",
+                                ["code"] = "NoActiveKb",
+                                ["error"] = "kb_import requires an open active KB. Open one via genexus_kb action=open."
+                            };
+                            isError = true;
+                            return BuildToolTextResponse(idToken, payload, isError, "genexus_kb_import", args);
+                        }
+                        if (string.Equals(System.IO.Path.GetFullPath(sourcePath), System.IO.Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+                            throw new ArgumentException("source and target KB resolve to the same path.");
+                        payload = KbImportHelper.ImportObject(sourcePath, targetPath, name, type);
+                    }
+                    catch (Exception ex)
+                    {
+                        isError = true;
+                        payload = new JObject { ["error"] = ex.Message, ["code"] = "BadRequest" };
+                    }
+                    return BuildToolTextResponse(idToken, payload, isError, "genexus_kb_import", args);
+                }
+
                 if (string.Equals(toolName, "genexus_lifecycle", StringComparison.OrdinalIgnoreCase))
                 {
                     string? lifecycleAction = args?["action"]?.ToString();
@@ -3265,6 +3486,19 @@ namespace GxMcp.Gateway
             }
 
             return false;
+        }
+
+        // Items 54/55/56: resolve a "KB ref" argument that may be either an alias
+        // declared in config.Environment.KBs[] or a literal filesystem path.
+        // Returns the resolved absolute path, or null if neither match.
+        private static string? ResolveKbPath(string aliasOrPath)
+        {
+            if (string.IsNullOrWhiteSpace(aliasOrPath)) return null;
+            var declared = _activeConfig?.Environment?.KBs?.FirstOrDefault(
+                k => string.Equals(k.Alias, aliasOrPath, StringComparison.OrdinalIgnoreCase));
+            if (declared != null) return declared.Path;
+            if (System.IO.Directory.Exists(aliasOrPath)) return aliasOrPath;
+            return null;
         }
 
         private static JObject BuildToolTextResponse(JToken? idToken, JToken payload, bool isError, string? toolName = null, JObject? toolArgs = null)

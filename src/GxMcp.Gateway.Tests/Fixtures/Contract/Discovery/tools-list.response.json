@@ -1449,13 +1449,15 @@
       "name": "genexus_kb"
     },
     {
-      "description": "DEFERRED stub: object-level diff between two KBs. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Object-index diff between two KBs at the filesystem level (no SDK). Walks Objects/<Type>/<Name>/; returns {onlyInA, onlyInB, modified[]}.",
       "inputSchema": {
         "properties": {
           "kbA": {
+            "description": "KB alias or path.",
             "type": "string"
           },
           "kbB": {
+            "description": "KB alias or path.",
             "type": "string"
           }
         },
@@ -1491,10 +1493,11 @@
       "name": "genexus_kb_explorer"
     },
     {
-      "description": "DEFERRED stub: import an object plus deps from another KB. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Filesystem-level import of an object's part files from another KB into the active KB. Limited: dependencies NOT resolved. Run genexus_lifecycle action=index force=true afterwards.",
       "inputSchema": {
         "properties": {
           "from": {
+            "description": "Source KB alias or path.",
             "type": "string"
           },
           "kb": {
@@ -1502,6 +1505,10 @@
             "type": "string"
           },
           "name": {
+            "type": "string"
+          },
+          "type": {
+            "description": "Object type (case-sensitive: WebPanel, Procedure, Transaction, ...).",
             "type": "string"
           }
         },
@@ -2290,10 +2297,11 @@
       "name": "genexus_refactor"
     },
     {
-      "description": "DEFERRED stub: rename across every call site / attribute / index in the KB. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Rename an object or attribute KB-wide. Renames the target and patches every call-site found via the index's CalledBy edges. Pass type=Attribute for attributes; defaults to non-attribute object rename.",
       "inputSchema": {
         "properties": {
           "from": {
+            "description": "Current name.",
             "type": "string"
           },
           "kb": {
@@ -2301,6 +2309,11 @@
             "type": "string"
           },
           "to": {
+            "description": "New name.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Object type; pass 'Attribute' for attribute renames.",
             "type": "string"
           }
         },
@@ -2368,20 +2381,26 @@
       "name": "genexus_run_object"
     },
     {
-      "description": "DEFERRED stub: clone the KB for sandboxed edits; merge-back manual. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Filesystem clone of a KB to <configRoot>/sandboxes/<name>/ for sandboxed edits. action=create copies (overwrite=true replaces); action=remove deletes idempotently.",
       "inputSchema": {
         "properties": {
           "action": {
             "enum": [
-              "create"
+              "create",
+              "remove"
             ],
             "type": "string"
           },
           "from": {
+            "description": "Source KB alias or path (create only).",
             "type": "string"
           },
           "name": {
+            "description": "Sandbox name; [A-Za-z0-9_-]+.",
             "type": "string"
+          },
+          "overwrite": {
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -2848,7 +2867,7 @@
       "name": "genexus_whoami"
     },
     {
-      "description": "DEFERRED stub: maintain N warm workers for instant spawn. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Pre-spawn N warm workers bound to declared KBs so the first call doesn't pay cold-start. spareCount<=0 disables; capped at 5.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -2857,7 +2876,8 @@
             ],
             "type": "string"
           },
-          "count": {
+          "spareCount": {
+            "description": "Number of spares to pre-spawn (0 disables; capped at 5).",
             "type": "integer"
           }
         },
