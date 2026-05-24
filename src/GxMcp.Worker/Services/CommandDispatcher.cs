@@ -106,6 +106,8 @@ namespace GxMcp.Worker.Services
         private readonly VisualVerifyService _visualVerifyService;
         // Wave-3 item 30: per-target build-plan with per-tool p95-derived estimates.
         private readonly BuildPlanService _buildPlanService;
+        // genexus_doctor: one-call health/triage envelope.
+        private readonly DoctorService _doctorService;
 
         private CommandDispatcher()
         {
@@ -198,6 +200,7 @@ namespace GxMcp.Worker.Services
             _a11yAuditService = new A11yAuditService(_browserDriverInvoker);
             _visualVerifyService = new VisualVerifyService(_kbService, _objectService);
             _buildPlanService = new BuildPlanService(_indexCacheService, _objectService, callerGraphService);
+            _doctorService = new DoctorService(_kbService, _indexCacheService, null);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -1230,6 +1233,9 @@ namespace GxMcp.Worker.Services
                         if (string.Equals(action, "Step", StringComparison.OrdinalIgnoreCase))
                             return _tutorialService.GetStep(args?["step"]?.ToObject<int?>() ?? 1);
                         break;
+                    case "doctor":
+                        // genexus_doctor — health/triage envelope. No args.
+                        return _doctorService.Diagnose();
                     case "github":
                         if (string.Equals(action, "CreatePr", StringComparison.OrdinalIgnoreCase))
                             return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString());

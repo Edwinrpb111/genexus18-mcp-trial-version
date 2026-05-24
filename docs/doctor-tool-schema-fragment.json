@@ -1,0 +1,10 @@
+{
+  "_note": "INSERT INTO src/GxMcp.Gateway/tool_definitions.json. Keep alphabetical (between genexus_diff_generated and genexus_edit). Also regenerate src/GxMcp.Gateway.Tests/Fixtures/Contract/Discovery/tools-list.response.json.",
+  "name": "genexus_doctor",
+  "description": "Health check: GX install, KB state, worker process, cache freshness, recent telemetry. Paste the output for triage when something feels off.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}

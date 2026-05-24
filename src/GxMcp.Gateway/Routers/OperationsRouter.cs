@@ -397,6 +397,15 @@ namespace GxMcp.Gateway.Routers
                         change = args?["change"]
                     };
 
+                // genexus_doctor — health-check triage envelope. No args.
+                case "genexus_doctor":
+                    return new
+                    {
+                        module = "Doctor",
+                        action = "Diagnose",
+                        target = "_self"
+                    };
+
                 // Item 66 — static step-by-step onboarding walkthrough.
                 case "genexus_tutorial":
                     return new { module = "Tutorial", action = "Step", step = args?["step"]?.ToObject<int?>() ?? 1 };
