@@ -377,6 +377,69 @@ namespace GxMcp.Gateway
             };
         }
 
+        // Item 35: genexus_watch_event proxy. Filters OperationRecord history for
+        // invocations against <target> where the tool is event-relevant (genexus_edit /
+        // genexus_run_object / genexus_lifecycle) AND the payload (args + response)
+        // mentions <eventName>. Returns the practical proxy promised by tool docs —
+        // NOT a real source-level breakpoint (that needs generator changes).
+        public JObject BuildWatchEvent(string targetName, string eventName, int last)
+        {
+            if (last <= 0) last = 10;
+            if (last > 50) last = 50;
+            var watchTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "genexus_edit",
+                "genexus_run_object",
+                "genexus_lifecycle"
+            };
+            var matches = new List<OperationRecord>();
+            foreach (var rec in _operations.Values)
+            {
+                if (!watchTools.Contains(rec.ToolName)) continue;
+                if (!string.IsNullOrWhiteSpace(targetName))
+                {
+                    string recTarget = rec.ToolArguments?["target"]?.ToString()
+                                   ?? rec.ToolArguments?["name"]?.ToString();
+                    if (string.IsNullOrEmpty(recTarget)) continue;
+                    if (!string.Equals(recTarget, targetName, StringComparison.OrdinalIgnoreCase)) continue;
+                }
+                if (!string.IsNullOrWhiteSpace(eventName))
+                {
+                    string argsBlob = rec.ToolArguments?.ToString(Newtonsoft.Json.Formatting.None) ?? string.Empty;
+                    string respBlob = rec.WorkerPayload?.ToString(Newtonsoft.Json.Formatting.None) ?? string.Empty;
+                    if (argsBlob.IndexOf(eventName, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        respBlob.IndexOf(eventName, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+                }
+                matches.Add(rec);
+            }
+            var runs = new JArray();
+            foreach (var rec in matches.OrderByDescending(r => r.StartedAtUtc).Take(last))
+            {
+                long durMs = rec.CompletedAtUtc.HasValue
+                    ? Math.Max(0L, (long)(rec.CompletedAtUtc.Value - rec.StartedAtUtc).TotalMilliseconds)
+                    : 0L;
+                runs.Add(new JObject
+                {
+                    ["atUtc"] = rec.StartedAtUtc,
+                    ["tool"] = rec.ToolName,
+                    ["eventName"] = eventName ?? string.Empty,
+                    ["durationMs"] = durMs,
+                    ["result"] = rec.Status,
+                    ["error"] = string.IsNullOrEmpty(rec.LastError) ? (JToken)JValue.CreateNull() : new JValue(rec.LastError)
+                });
+            }
+            return new JObject
+            {
+                ["status"] = "Success",
+                ["target"] = targetName ?? string.Empty,
+                ["event"] = eventName ?? string.Empty,
+                ["runs"] = runs,
+                ["totalMatches"] = matches.Count,
+                ["note"] = "Proxy view: filtered from in-memory OperationTracker (edits + runs + lifecycle ops on target whose payload references the event name). Resets on gateway restart. Not a source-level breakpoint."
+            };
+        }
+
         // Item 30: surface per-tool p95 (ms) so BuildPlanService can estimate per-node duration.
         // Returns { toolName -> p95Ms } drained from the live metric ring buffer.
         public JObject BuildToolP95Map()

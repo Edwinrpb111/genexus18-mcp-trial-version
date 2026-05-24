@@ -77,6 +77,20 @@ namespace GxMcp.Worker.Services
         private readonly ScreenshotPublishService _screenshotPublishService;
         private readonly FrictionLogService _frictionLogService;
         private readonly WcagCheckService _wcagCheckService;
+        // Wave-3 (items 76 / 78 / 84 / 86): friction-report aggregation, SDPanel proxy,
+        // multi-agent file lock, what-if typed-change simulator.
+        private readonly LearningReportService _learningReportService;
+        private readonly SdPanelService _sdPanelService;
+        private readonly MultiAgentLockService _multiAgentLockService;
+        private readonly WhatIfService _whatIfService;
+        private readonly TutorialService _tutorialService;
+        private readonly GithubService _githubService;
+        private readonly AiCompleteService _aiCompleteService;
+        private readonly TimeTravelService _timeTravelService;
+        private readonly VoiceIntentService _voiceIntentService;
+        private readonly AutoTestService _autoTestService;
+        private readonly ReversePatternService _reversePatternService;
+        private readonly CrossBrowserService _crossBrowserService;
         private readonly BlameService _blameService;
         private readonly KbExplorerService _kbExplorerService;
         private readonly NavigationViewService _navigationViewService;
@@ -161,6 +175,18 @@ namespace GxMcp.Worker.Services
             _screenshotPublishService = new ScreenshotPublishService(_kbService);
             _frictionLogService = new FrictionLogService(_kbService);
             _wcagCheckService = new WcagCheckService(_objectService);
+            _learningReportService = new LearningReportService(_kbService);
+            _sdPanelService = new SdPanelService(_objectService, _writeService);
+            _multiAgentLockService = new MultiAgentLockService(_kbService);
+            _whatIfService = new WhatIfService(_analyzeService, _objectService);
+            _tutorialService = new TutorialService();
+            _githubService = new GithubService(_kbService);
+            _aiCompleteService = new AiCompleteService();
+            _timeTravelService = new TimeTravelService(_kbService, _objectService);
+            _voiceIntentService = new VoiceIntentService();
+            _autoTestService = new AutoTestService();
+            _reversePatternService = new ReversePatternService(_objectService, _uiService);
+            _crossBrowserService = new CrossBrowserService(_runObjectService);
             _blameService = new BlameService(_kbService, _objectService);
             _kbExplorerService = new KbExplorerService(_objectService, _indexCacheService);
             _navigationViewService = new NavigationViewService(_navigationService, _kbService);
@@ -1182,6 +1208,55 @@ namespace GxMcp.Worker.Services
                     case "wcagcheck":
                         if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
                             return _wcagCheckService.Check(target ?? args?["target"]?.ToString() ?? args?["name"]?.ToString());
+                        break;
+                    case "learning":
+                        if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
+                            return _learningReportService.Report(args?["since"]?.ToString(), args?["until"]?.ToString());
+                        break;
+                    case "sdpanel":
+                        return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
+                    case "multiagentlock":
+                        return _multiAgentLockService.Dispatch(
+                            action,
+                            target ?? args?["target"]?.ToString(),
+                            args?["part"]?.ToString(),
+                            args?["ownerId"]?.ToString(),
+                            args?["ttlSec"]?.ToObject<int?>() ?? 300);
+                    case "whatif":
+                        if (string.Equals(action, "Simulate", StringComparison.OrdinalIgnoreCase))
+                            return _whatIfService.Simulate(args?["change"] as JObject);
+                        break;
+                    case "tutorial":
+                        if (string.Equals(action, "Step", StringComparison.OrdinalIgnoreCase))
+                            return _tutorialService.GetStep(args?["step"]?.ToObject<int?>() ?? 1);
+                        break;
+                    case "github":
+                        if (string.Equals(action, "CreatePr", StringComparison.OrdinalIgnoreCase))
+                            return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString());
+                        break;
+                    case "aicomplete":
+                        if (string.Equals(action, "Complete", StringComparison.OrdinalIgnoreCase))
+                            return _aiCompleteService.Complete(args?["name"]?.ToString(), args?["part"]?.ToString(), args?["context"]?.ToString(), args?["maxTokens"]?.ToObject<int?>() ?? 200).ToString(Newtonsoft.Json.Formatting.None);
+                        break;
+                    case "timetravel":
+                        if (string.Equals(action, "Recover", StringComparison.OrdinalIgnoreCase))
+                            return _timeTravelService.Recover(target ?? args?["name"]?.ToString(), args?["at"]?.ToString());
+                        break;
+                    case "voice":
+                        if (string.Equals(action, "Intent", StringComparison.OrdinalIgnoreCase))
+                            return _voiceIntentService.Map(args?["transcript"]?.ToString()).ToString(Newtonsoft.Json.Formatting.None);
+                        break;
+                    case "autotest":
+                        if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
+                            return _autoTestService.Generate(args?["path"]?.ToString());
+                        break;
+                    case "reversepattern":
+                        if (string.Equals(action, "Infer", StringComparison.OrdinalIgnoreCase))
+                            return _reversePatternService.Infer(args?["source"] as JArray);
+                        break;
+                    case "crossbrowser":
+                        if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
+                            return _crossBrowserService.Run(target ?? args?["target"]?.ToString(), args?["browsers"] as JArray, args?["capture"] as JArray);
                         break;
                     case "preview":
                         if (action == "Render" || action == "Run")

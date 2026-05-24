@@ -356,6 +356,108 @@ namespace GxMcp.Gateway.Routers
                     };
                 }
 
+                // Item 76 — friction-journal aggregation.
+                case "genexus_learning":
+                    return new
+                    {
+                        module = "Learning",
+                        action = "Report",
+                        since = args?["since"]?.ToString(),
+                        until = args?["until"]?.ToString()
+                    };
+
+                // Item 78 — SDPanel parity proxy.
+                case "genexus_sd_panel":
+                    return new
+                    {
+                        module = "SdPanel",
+                        action = args?["action"]?.ToString() ?? "inspect",
+                        target = args?["name"]?.ToString() ?? args?["target"]?.ToString(),
+                        @params = args
+                    };
+
+                // Item 84 — multi-agent file lock.
+                case "genexus_multi_agent_lock":
+                    return new
+                    {
+                        module = "MultiAgentLock",
+                        action = args?["action"]?.ToString() ?? "status",
+                        target = args?["target"]?.ToString(),
+                        part = args?["part"]?.ToString(),
+                        ownerId = args?["ownerId"]?.ToString(),
+                        ttlSec = args?["ttlSec"]?.ToObject<int?>() ?? 300
+                    };
+
+                // Item 86 — typed-change impact simulator (no mutation).
+                case "genexus_what_if":
+                    return new
+                    {
+                        module = "WhatIf",
+                        action = "Simulate",
+                        change = args?["change"]
+                    };
+
+                // Item 66 — static step-by-step onboarding walkthrough.
+                case "genexus_tutorial":
+                    return new { module = "Tutorial", action = "Step", step = args?["step"]?.ToObject<int?>() ?? 1 };
+
+                // Item 71 — gh CLI passthrough.
+                case "genexus_github":
+                    return new
+                    {
+                        module = "Github",
+                        action = "CreatePr",
+                        title = args?["title"]?.ToString(),
+                        body = args?["body"]?.ToString(),
+                        @base = args?["base"]?.ToString(),
+                        workingDir = args?["workingDir"]?.ToString()
+                    };
+
+                // Item 81 — OpenAI-compatible LLM endpoint forward.
+                case "genexus_ai_complete":
+                    return new
+                    {
+                        module = "AiComplete",
+                        action = "Complete",
+                        name = args?["name"]?.ToString(),
+                        part = args?["part"]?.ToString(),
+                        context = args?["context"]?.ToString(),
+                        maxTokens = args?["maxTokens"]?.ToObject<int?>() ?? 200
+                    };
+
+                // Item 82 — git-based time travel for a KB object.
+                case "genexus_time_travel":
+                    return new
+                    {
+                        module = "TimeTravel",
+                        action = "Recover",
+                        target = args?["name"]?.ToString(),
+                        at = args?["at"]?.ToString()
+                    };
+
+                // Item 83 — voice transcript → intent mapping.
+                case "genexus_voice":
+                    return new { module = "Voice", action = "Intent", transcript = args?["transcript"]?.ToString() };
+
+                // Item 95 — generate GXtest stubs from production JSONL log.
+                case "genexus_auto_test":
+                    return new { module = "AutoTest", action = "Generate", path = args?["path"]?.ToString() };
+
+                // Item 96 — surface structural commonalities across N objects.
+                case "genexus_reverse_pattern":
+                    return new { module = "ReversePattern", action = "Infer", source = args?["source"] };
+
+                // Item 98 — parallel multi-browser render.
+                case "genexus_cross_browser":
+                    return new
+                    {
+                        module = "CrossBrowser",
+                        action = "Run",
+                        target = args?["target"]?.ToString(),
+                        browsers = args?["browsers"],
+                        capture = args?["capture"]
+                    };
+
                 case "genexus_wcag_check":
                     return new
                     {

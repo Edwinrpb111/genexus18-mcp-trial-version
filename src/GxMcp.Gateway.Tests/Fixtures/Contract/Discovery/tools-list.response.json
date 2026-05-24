@@ -46,15 +46,20 @@
       "name": "genexus_add_variable"
     },
     {
-      "description": "DEFERRED stub: AI-prompted code completion in Events Source. Stub for upstream LLM integration. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Forward a code-completion prompt to an OpenAI-compatible endpoint (env: GXMCP_AI_COMPLETE_URL, GXMCP_AI_COMPLETE_KEY). Returns the completion + token usage, or AiEndpointNotConfigured if env unset.",
       "inputSchema": {
         "properties": {
           "context": {
+            "description": "Prompt sent to the LLM.",
             "type": "string"
           },
           "kb": {
             "description": "KB alias (multi-KB only).",
             "type": "string"
+          },
+          "maxTokens": {
+            "description": "Default 200, max 4000.",
+            "type": "integer"
           },
           "name": {
             "type": "string"
@@ -63,6 +68,9 @@
             "type": "string"
           }
         },
+        "required": [
+          "context"
+        ],
         "type": "object"
       },
       "name": "genexus_ai_complete"
@@ -246,7 +254,7 @@
       "name": "genexus_asset"
     },
     {
-      "description": "DEFERRED stub: generate tests from real production invocation patterns. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Generate GXtest stubs from a JSONL log of past invocations (one {atUtc,tool,target,params} per line). Returns the generated source; nothing is written to the KB.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -256,9 +264,14 @@
             "type": "string"
           },
           "path": {
+            "description": "Absolute path to a JSONL log file.",
             "type": "string"
           }
         },
+        "required": [
+          "action",
+          "path"
+        ],
         "type": "object"
       },
       "name": "genexus_auto_test"
@@ -546,7 +559,7 @@
       "name": "genexus_create_popup"
     },
     {
-      "description": "DEFERRED stub: render in parallel browsers; diff screenshots. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Render the target in chrome (via chrome-devtools-axi) and firefox/webkit (via npx playwright) in parallel; capture per-browser screenshot + console errors. Missing drivers → per-browser skipped envelope; other browsers still run.",
       "inputSchema": {
         "properties": {
           "browsers": {
@@ -554,16 +567,34 @@
               "enum": [
                 "chrome",
                 "firefox",
-                "safari"
+                "safari",
+                "webkit"
               ],
               "type": "string"
             },
             "type": "array"
           },
+          "capture": {
+            "items": {
+              "enum": [
+                "screenshot",
+                "console"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
           "target": {
             "type": "string"
           }
         },
+        "required": [
+          "target"
+        ],
         "type": "object"
       },
       "name": "genexus_cross_browser"
@@ -1251,7 +1282,7 @@
       "name": "genexus_generate_sample_data"
     },
     {
-      "description": "DEFERRED stub: auto-create PR from current branch. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Create a GitHub PR via the `gh` CLI. Returns the PR URL on success, or GhCliNotInstalled.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -1259,8 +1290,25 @@
               "create_pr"
             ],
             "type": "string"
+          },
+          "base": {
+            "description": "Base branch.",
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workingDir": {
+            "type": "string"
           }
         },
+        "required": [
+          "action",
+          "title"
+        ],
         "type": "object"
       },
       "name": "genexus_github"
@@ -1629,7 +1677,7 @@
       "name": "genexus_layout"
     },
     {
-      "description": "DEFERRED stub: cross-session friction-learning loop. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Aggregate <kbPath>/.gx/friction.jsonl into a summary: top friction tools, common error codes, severity histogram. Read-only.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -1637,8 +1685,23 @@
               "report"
             ],
             "type": "string"
+          },
+          "kb": {
+            "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "since": {
+            "description": "ISO-8601 lower bound (optional).",
+            "type": "string"
+          },
+          "until": {
+            "description": "ISO-8601 upper bound (optional).",
+            "type": "string"
           }
         },
+        "required": [
+          "action"
+        ],
         "type": "object"
       },
       "name": "genexus_learning"
@@ -1888,11 +1951,23 @@
       "name": "genexus_modify_variable"
     },
     {
-      "description": "DEFERRED stub: granular lock for parallel multi-agent edits. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "File-based advisory lock per (kbPath,target,part) under <kbPath>/.gx/locks. Auto-expires when atUtc+ttlSec passes.",
       "inputSchema": {
         "properties": {
+          "action": {
+            "enum": [
+              "acquire",
+              "release",
+              "status"
+            ],
+            "type": "string"
+          },
           "kb": {
             "description": "KB alias (multi-KB only).",
+            "type": "string"
+          },
+          "ownerId": {
+            "description": "Required for acquire/release.",
             "type": "string"
           },
           "part": {
@@ -1900,8 +1975,16 @@
           },
           "target": {
             "type": "string"
+          },
+          "ttlSec": {
+            "description": "Default 300, max 86400.",
+            "type": "integer"
           }
         },
+        "required": [
+          "action",
+          "target"
+        ],
         "type": "object"
       },
       "name": "genexus_multi_agent_lock"
@@ -2322,7 +2405,7 @@
       "name": "genexus_rename_across_kb"
     },
     {
-      "description": "DEFERRED stub: infer a pattern (WWP-like) from existing similar objects. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Identify structural commonalities (shared variables, events, parm signatures) across N similar objects. Doesn't generate a real pattern — flags candidates for one.",
       "inputSchema": {
         "properties": {
           "action": {
@@ -2336,12 +2419,17 @@
             "type": "string"
           },
           "source": {
+            "description": "≥2 object names.",
             "items": {
               "type": "string"
             },
             "type": "array"
           }
         },
+        "required": [
+          "action",
+          "source"
+        ],
         "type": "object"
       },
       "name": "genexus_reverse_pattern"
@@ -2479,10 +2567,23 @@
       "name": "genexus_sdk_probe"
     },
     {
-      "description": "DEFERRED stub: SDPanel parity for mobile. Most existing tools assume WebPanel. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "SDPanel-typed entry point: inspect|create|edit. Resolves target as SDPanel and tags response with kind='SDPanel'.",
       "inputSchema": {
         "properties": {
           "action": {
+            "enum": [
+              "inspect",
+              "create",
+              "edit"
+            ],
+            "type": "string"
+          },
+          "content": {
+            "description": "Part source for edit.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Object description for create.",
             "type": "string"
           },
           "kb": {
@@ -2490,9 +2591,17 @@
             "type": "string"
           },
           "name": {
+            "description": "SDPanel name.",
+            "type": "string"
+          },
+          "part": {
+            "description": "Part name for edit (default Events).",
             "type": "string"
           }
         },
+        "required": [
+          "action"
+        ],
         "type": "object"
       },
       "name": "genexus_sd_panel"
@@ -2697,10 +2806,11 @@
       "name": "genexus_test"
     },
     {
-      "description": "DEFERRED stub: restore object state from a past timestamp without losing intermediate edits. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Recover an object's part bytes from a git history point. at=<ISO> resolves to the most-recent commit <= that timestamp; at=<sha> uses the commit directly. Read-only — no KB write.",
       "inputSchema": {
         "properties": {
           "at": {
+            "description": "ISO-8601 timestamp or commit sha.",
             "type": "string"
           },
           "kb": {
@@ -2711,6 +2821,10 @@
             "type": "string"
           }
         },
+        "required": [
+          "name",
+          "at"
+        ],
         "type": "object"
       },
       "name": "genexus_time_travel"
@@ -2742,13 +2856,17 @@
       "name": "genexus_translations"
     },
     {
-      "description": "DEFERRED stub: interactive onboarding tutorial. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Step-by-step onboarding walkthrough. Static deterministic content; each step returns title + narrative + suggested next call.",
       "inputSchema": {
         "properties": {
           "step": {
+            "description": "Step number (1-based).",
             "type": "integer"
           }
         },
+        "required": [
+          "step"
+        ],
         "type": "object"
       },
       "name": "genexus_tutorial"
@@ -2798,26 +2916,41 @@
       "name": "genexus_validate_payload"
     },
     {
-      "description": "DEFERRED stub: voice-driven edits via NL command. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Map a natural-language transcript to a tool call via built-in regex intents. Returns the suggested {dispatchedTool, dispatchedArgs} without invoking — the agent confirms.",
       "inputSchema": {
         "properties": {
-          "command": {
+          "transcript": {
             "type": "string"
           }
         },
+        "required": [
+          "transcript"
+        ],
         "type": "object"
       },
       "name": "genexus_voice"
     },
     {
-      "description": "DEFERRED stub: set breakpoints in Events; capture variable state when triggered. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Proxy view of edits/runs/lifecycle ops against target whose payload mentions the named event. Reads in-memory OperationTracker; resets on gateway restart. Not a source-level breakpoint.",
       "inputSchema": {
         "properties": {
-          "kb": {
-            "description": "KB alias (multi-KB only).",
+          "event": {
+            "description": "Event name substring to match in args/response.",
+            "type": "string"
+          },
+          "last": {
+            "description": "Max runs (default 10, max 50).",
+            "type": "integer"
+          },
+          "target": {
+            "description": "Object name to filter on.",
             "type": "string"
           }
         },
+        "required": [
+          "target",
+          "event"
+        ],
         "type": "object"
       },
       "name": "genexus_watch_event"
@@ -2843,10 +2976,11 @@
       "name": "genexus_wcag_check"
     },
     {
-      "description": "DEFERRED stub: simulate a type/schema change; report breakage without persisting. Returns {status:'Future',code:'ItemDeferred'}.",
+      "description": "Simulate a typed change (e.g. attribute type) and categorise callers as breaks / probably_safe / unknown. Strictly read-only.",
       "inputSchema": {
         "properties": {
           "change": {
+            "description": "{kind,target,attribute?,oldType?,newType?}",
             "type": "object"
           },
           "kb": {
@@ -2854,6 +2988,9 @@
             "type": "string"
           }
         },
+        "required": [
+          "change"
+        ],
         "type": "object"
       },
       "name": "genexus_what_if"

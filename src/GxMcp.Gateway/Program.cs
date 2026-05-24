@@ -1800,6 +1800,19 @@ namespace GxMcp.Gateway
                     return BuildToolTextResponse(idToken, historyPayload, isError: false, toolName: "genexus_execution_history", toolArgs: args);
                 }
 
+                // Item 35: genexus_watch_event — gateway-only proxy view of recent
+                // edits/runs/lifecycle ops against <target> mentioning <eventName>.
+                // Not a real source-level breakpoint (that needs generator changes).
+                if (string.Equals(toolName, "genexus_watch_event", StringComparison.OrdinalIgnoreCase))
+                {
+                    string watchTarget = args?["target"]?.ToString() ?? args?["name"]?.ToString();
+                    string watchEvent = args?["event"]?.ToString();
+                    int watchLast = args?["last"]?.ToObject<int?>() ?? 10;
+                    JObject watchPayload = _operationTracker?.BuildWatchEvent(watchTarget, watchEvent, watchLast)
+                        ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
+                    return BuildToolTextResponse(idToken, watchPayload, isError: false, toolName: "genexus_watch_event", toolArgs: args);
+                }
+
                 // genexus_kb — meta-tool for managing the WorkerPool (list/open/close).
                 // Handled entirely in the Gateway; never reaches a Worker. The
                 // set_startup/get_startup actions are SDK-bound and fall through

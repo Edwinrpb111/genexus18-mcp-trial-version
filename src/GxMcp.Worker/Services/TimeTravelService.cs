@@ -1,0 +1,163 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using Newtonsoft.Json.Linq;
+
+namespace GxMcp.Worker.Services
+{
+    /// <summary>
+    /// Item 82 — `genexus_time_travel name=&lt;obj&gt; at=&lt;ISO-or-commit&gt;`.
+    /// Restores an object's part bytes from a git history point. NO write to the KB.
+    /// </summary>
+    public class TimeTravelService
+    {
+        private readonly KbService _kbService;
+        private readonly ObjectService _objectService;
+
+        public TimeTravelService(KbService kbService, ObjectService objectService)
+        {
+            _kbService = kbService;
+            _objectService = objectService;
+        }
+
+        public string Recover(string name, string at)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return Err("name is required.");
+            if (string.IsNullOrWhiteSpace(at)) return Err("at is required (ISO timestamp or commit sha).");
+
+            string kbPath = null;
+            try { kbPath = _kbService?.GetKbPath(); } catch { }
+            if (string.IsNullOrEmpty(kbPath) || !Directory.Exists(kbPath))
+                return Err("KB path not resolvable.");
+            if (!Directory.Exists(Path.Combine(kbPath, ".git")))
+                return new JObject { ["status"] = "Error", ["code"] = "KbNotInGit", ["hint"] = "Initialise git in the KB directory (git init) to enable time-travel." }.ToString(Newtonsoft.Json.Formatting.None);
+
+            // Resolve `at` → commit sha. ISO timestamp uses `git log --before=<iso> -1`.
+            string commit;
+            if (System.Text.RegularExpressions.Regex.IsMatch(at, "^[0-9a-fA-F]{7,40}$"))
+            {
+                commit = at;
+            }
+            else
+            {
+                int exit;
+                string so, se;
+                exit = RunGit(kbPath, new[] { "log", "--before=" + at, "-1", "--pretty=%H" }, out so, out se);
+                if (exit != 0 || string.IsNullOrWhiteSpace(so))
+                    return new JObject { ["status"] = "Error", ["code"] = "NoCommitBefore", ["at"] = at, ["stderr"] = se }.ToString(Newtonsoft.Json.Formatting.None);
+                commit = so.Trim();
+            }
+
+            // Find the object's directory on disk via SDK or by walking the KB.
+            string objDir = TryFindObjectDirectory(kbPath, name);
+            if (string.IsNullOrEmpty(objDir))
+                return new JObject { ["status"] = "Error", ["code"] = "ObjectNotFoundOnDisk", ["name"] = name }.ToString(Newtonsoft.Json.Formatting.None);
+
+            // Make objDir relative to git root for `git show`.
+            string rel = MakeRelative(kbPath, objDir);
+            int e2;
+            string lsOut, lsErr;
+            e2 = RunGit(kbPath, new[] { "ls-tree", "-r", "--name-only", commit, rel }, out lsOut, out lsErr);
+            if (e2 != 0)
+                return new JObject { ["status"] = "Error", ["code"] = "GitLsTreeFailed", ["commit"] = commit, ["stderr"] = lsErr }.ToString(Newtonsoft.Json.Formatting.None);
+
+            var parts = new JArray();
+            foreach (var line in lsOut.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string path = line.Trim();
+                int rc;
+                string content, ce;
+                rc = RunGit(kbPath, new[] { "show", commit + ":" + path }, out content, out ce);
+                if (rc != 0) continue;
+                parts.Add(new JObject { ["path"] = path, ["bytes"] = content.Length, ["content"] = content });
+            }
+
+            return new JObject
+            {
+                ["status"] = "Success",
+                ["name"] = name,
+                ["recoveredFromCommit"] = commit,
+                ["parts"] = parts,
+                ["hint"] = "Parts are returned read-only. Call genexus_edit mode=full to restore any of them."
+            }.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private string TryFindObjectDirectory(string kbPath, string name)
+        {
+            try
+            {
+                var obj = _objectService?.FindObject(name);
+                if (obj != null)
+                {
+                    string typeName = "";
+                    try { typeName = obj.TypeDescriptor?.Name ?? ""; } catch { }
+                    var dir = Path.Combine(kbPath, "Objects", typeName, name);
+                    if (Directory.Exists(dir)) return dir;
+                }
+            }
+            catch { }
+            // Best-effort fallback: search for any */<name>/ under kbPath/Objects/
+            try
+            {
+                var objects = Path.Combine(kbPath, "Objects");
+                if (Directory.Exists(objects))
+                {
+                    foreach (var typeDir in Directory.EnumerateDirectories(objects))
+                    {
+                        var cand = Path.Combine(typeDir, name);
+                        if (Directory.Exists(cand)) return cand;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string MakeRelative(string root, string full)
+        {
+            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var p = Path.GetFullPath(full);
+            return p.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? p.Substring(rootFull.Length).Replace('\\', '/') : full;
+        }
+
+        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Newtonsoft.Json.Formatting.None);
+
+        private static int RunGit(string cwd, string[] args, out string stdout, out string stderr)
+        {
+            var sb = new StringBuilder("--no-pager -c color.ui=false");
+            foreach (var a in args)
+            {
+                sb.Append(' ');
+                if (a.IndexOfAny(new[] { ' ', '\t', '"' }) >= 0)
+                    sb.Append('"').Append(a.Replace("\"", "\\\"")).Append('"');
+                else
+                    sb.Append(a);
+            }
+            var psi = new ProcessStartInfo("git", sb.ToString())
+            {
+                WorkingDirectory = cwd,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+            psi.EnvironmentVariables["GIT_PAGER"] = "cat";
+            using (var p = Process.Start(psi))
+            {
+                if (p == null) { stdout = ""; stderr = "Process.Start returned null"; return -1; }
+                try { p.StandardInput.Close(); } catch { }
+                var outSb = new StringBuilder();
+                var errSb = new StringBuilder();
+                p.OutputDataReceived += (_, e) => { if (e.Data != null) outSb.AppendLine(e.Data); };
+                p.ErrorDataReceived += (_, e) => { if (e.Data != null) errSb.AppendLine(e.Data); };
+                p.BeginOutputReadLine(); p.BeginErrorReadLine();
+                if (!p.WaitForExit(30000)) { try { p.Kill(); } catch { } stdout = outSb.ToString(); stderr = "git timed out"; return -1; }
+                p.WaitForExit();
+                stdout = outSb.ToString(); stderr = errSb.ToString();
+                return p.ExitCode;
+            }
+        }
+    }
+}

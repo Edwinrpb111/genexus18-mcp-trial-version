@@ -144,6 +144,53 @@ namespace GxMcp.Gateway.Tests
             Assert.Empty((JArray)result["runs"]!);
             Assert.Equal(0, result["totalMatches"]?.ToObject<int>());
         }
+
+        // Wave-3 item 35 — watch_event filters by target + event name in payload.
+        [Fact]
+        public void BuildWatchEvent_FiltersByTargetAndToolWhitelist()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            // matching tool + target + event substring in args
+            tracker.RecordSyntheticCompletion("genexus_edit", 10, isError: false,
+                new JObject { ["target"] = "InvoicePanel", ["body"] = "set OnClick = 'MyEvent'" });
+            // matching tool but wrong target
+            tracker.RecordSyntheticCompletion("genexus_edit", 10, isError: false,
+                new JObject { ["target"] = "OtherPanel", ["body"] = "MyEvent" });
+            // matching target but non-event tool
+            tracker.RecordSyntheticCompletion("genexus_read", 10, isError: false,
+                new JObject { ["target"] = "InvoicePanel", ["body"] = "MyEvent" });
+
+            JObject result = tracker.BuildWatchEvent("InvoicePanel", "MyEvent", last: 50);
+            var runs = (JArray)result["runs"]!;
+            Assert.Single(runs);
+            Assert.Equal("genexus_edit", runs[0]["tool"]?.ToString());
+            Assert.Equal("MyEvent", result["event"]?.ToString());
+        }
+
+        [Fact]
+        public void BuildWatchEvent_NoMatch_ReturnsEmptyRuns()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            tracker.RecordSyntheticCompletion("genexus_edit", 10, isError: false,
+                new JObject { ["target"] = "Panel" });
+            JObject result = tracker.BuildWatchEvent("Panel", "NotPresentEvent", last: 10);
+            Assert.Empty((JArray)result["runs"]!);
+            Assert.Equal(0, result["totalMatches"]?.ToObject<int>());
+        }
+
+        [Fact]
+        public void BuildWatchEvent_ClampsLastTo50()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            for (int i = 0; i < 80; i++)
+            {
+                tracker.RecordSyntheticCompletion("genexus_edit", 5, isError: false,
+                    new JObject { ["target"] = "Panel", ["body"] = "tick" });
+            }
+            JObject result = tracker.BuildWatchEvent("Panel", "tick", last: 100);
+            Assert.Equal(50, ((JArray)result["runs"]!).Count);
+            Assert.Equal(80, result["totalMatches"]?.ToObject<int>());
+        }
     }
 }
 
