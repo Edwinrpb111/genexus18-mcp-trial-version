@@ -80,7 +80,10 @@ namespace GxMcp.Gateway.Tests
             //   comment trail churned in parallel from many worktree branches and ended up
             //   non-chronological / contradictory, so it was collapsed into this single
             //   line. Future bumps should add ONE entry below this one with rationale.
-            Assert.True(approxTokens < 13000, $"tool_definitions.json is ~{approxTokens} tokens; budget 13000.");
+            //   v2.6.9 (2026-05-24): 13000 → 13100 for genexus_doctor (~31 tokens). New
+            //   triage tool that consolidates health checks the user previously had to
+            //   chain across genexus_whoami + genexus_logs + manual psutil.
+            Assert.True(approxTokens < 13100, $"tool_definitions.json is ~{approxTokens} tokens; budget 13100.");
         }
     }
 }

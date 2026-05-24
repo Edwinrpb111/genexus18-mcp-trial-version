@@ -761,6 +761,15 @@
       "name": "genexus_doc"
     },
     {
+      "description": "Health check: GX install, KB state, worker, cache age, recent telemetry. Paste output for triage when something feels off.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "genexus_doctor"
+    },
+    {
       "description": "Edit object part. name or targets (exclusive). mode: full|patch|ops. dryRun first. For WWP edit host's PatternInstance NOT the parent WebForm (gets overwritten on reapply).",
       "inputSchema": {
         "properties": {
