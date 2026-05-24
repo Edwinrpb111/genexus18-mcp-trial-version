@@ -888,7 +888,13 @@ namespace GxMcp.Worker.Services
             "\"" + (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
         private static string EscapeJs(string s) =>
-            (s ?? "").Replace("\\", "\\\\").Replace("'", "\\'");
+            (s ?? "")
+                .Replace("\\", "\\\\")
+                .Replace("'", "\\'")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n")
+                .Replace("</", "<\\/");
 
         // ---- FR#17 GAM session injection helpers ----------------------------
 
