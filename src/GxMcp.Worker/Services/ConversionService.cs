@@ -43,7 +43,7 @@ namespace GxMcp.Worker.Services
 
                 return "{\"status\":\"Success\", \"code\":\"" + CommandDispatcher.EscapeJsonString(result) + "\"}";
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 

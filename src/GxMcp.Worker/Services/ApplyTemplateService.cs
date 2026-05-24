@@ -95,6 +95,6 @@ namespace GxMcp.Worker.Services
 
         private static string Esc(string s) => System.Security.SecurityElement.Escape(s ?? "");
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["error"] = m }.ToString();
+        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString();
     }
 }

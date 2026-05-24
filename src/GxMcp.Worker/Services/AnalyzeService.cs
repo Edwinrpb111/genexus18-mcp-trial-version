@@ -95,7 +95,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -275,7 +275,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\": \"Impact Analysis failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"Impact Analysis failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -410,11 +410,11 @@ namespace GxMcp.Worker.Services
                         return json.ToString();
                     }
                 }
-                return "{\"status\":\"Error\",\"error\":\"Attribute not found\"}";
+                return "{\"status\":\"Error\",\"message\":\"Attribute not found\"}";
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -451,7 +451,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -609,7 +609,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -1013,7 +1013,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -1109,7 +1109,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -1253,7 +1253,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(target))
-                    return "{\"status\":\"Error\",\"error\":\"target is required\"}";
+                    return "{\"status\":\"Error\",\"message\":\"target is required\"}";
 
                 var index = _indexCacheService?.GetIndex();
                 if (index == null || index.Objects == null)
@@ -1353,7 +1353,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -1546,7 +1546,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(targetName))
-                    return "{\"status\":\"Error\",\"error\":\"target is required\"}";
+                    return "{\"status\":\"Error\",\"message\":\"target is required\"}";
 
                 var index = _indexCacheService?.GetIndex();
                 if (index == null || index.Objects == null)
@@ -1641,7 +1641,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -1760,7 +1760,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 

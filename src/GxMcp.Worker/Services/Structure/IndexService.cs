@@ -61,7 +61,7 @@ namespace GxMcp.Worker.Services.Structure
                 result["indexes"] = indexes;
                 return result.ToString();
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
     }

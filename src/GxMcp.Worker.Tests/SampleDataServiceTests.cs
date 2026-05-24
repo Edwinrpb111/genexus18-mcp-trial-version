@@ -16,7 +16,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new SampleDataService(objectService: null);
             var j = JObject.Parse(svc.Generate("", 5));
-            Assert.NotNull(j["error"]);
+            Assert.NotNull(j["message"]);
         }
 
         [Fact]
@@ -25,8 +25,8 @@ namespace GxMcp.Worker.Tests
             var svc = new SampleDataService(objectService: null);
             var j = JObject.Parse(svc.Generate("Aluno", 5));
             // With no ObjectService FindObject returns null → "Transaction not found"
-            Assert.NotNull(j["error"]);
-            Assert.Contains("not found", (string)j["error"], StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(j["message"]);
+            Assert.Contains("not found", (string)j["message"], StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

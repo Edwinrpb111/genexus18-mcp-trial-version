@@ -84,7 +84,7 @@ namespace GxMcp.Worker.Tests
 
             Assert.Single(results);
             Assert.Equal("Error", results[0]["status"]?.ToString());
-            Assert.Contains("Snapshot bytes unreadable", results[0]["error"]?.ToString() ?? "");
+            Assert.Contains("Snapshot bytes unreadable", results[0]["message"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -102,7 +102,7 @@ namespace GxMcp.Worker.Tests
 
             Assert.Single(results);
             Assert.Equal("Error", results[0]["status"]?.ToString());
-            Assert.Contains("boom", results[0]["error"]?.ToString() ?? "");
+            Assert.Contains("boom", results[0]["message"]?.ToString() ?? "");
         }
 
         [Fact]

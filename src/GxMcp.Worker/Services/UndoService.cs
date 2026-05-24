@@ -78,7 +78,7 @@ namespace GxMcp.Worker.Services
                 return new JObject
                 {
                     ["status"] = "Error",
-                    ["error"] = "Failed to enumerate snapshots: " + ex.Message
+                    ["message"] = "Failed to enumerate snapshots: " + ex.Message
                 }.ToString();
             }
 
@@ -175,7 +175,7 @@ namespace GxMcp.Worker.Services
                     var writeJson = TryParseJson(writeResult);
                     bool success = writeJson != null
                         && (string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase)
-                            || writeJson["error"] == null);
+                            || (writeJson["error"] == null && writeJson["message"] == null));
 
                     if (success)
                     {
@@ -194,7 +194,7 @@ namespace GxMcp.Worker.Services
                             ["object"] = objectName,
                             ["part"] = meta.Part,
                             ["snapshotTimestamp"] = meta.Timestamp,
-                            ["error"] = writeJson?["error"]?.ToString() ?? writeResult
+                            ["error"] = writeJson?["message"]?.ToString() ?? writeJson?["error"]?.ToString() ?? writeResult
                         });
                     }
                 }

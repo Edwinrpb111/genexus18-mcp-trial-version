@@ -41,7 +41,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(name))
-                    return new JObject { ["status"] = "Error", ["error"] = "name is required" }.ToString();
+                    return new JObject { ["status"] = "Error", ["message"] = "name is required" }.ToString();
 
                 // 1) Resolve aspx filename. GeneXus generates lowercase <name>.aspx.
                 string aspxName = name.ToLowerInvariant() + ".aspx";
@@ -100,7 +100,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["error"] = ex.Message }.ToString();
+                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
             }
         }
 

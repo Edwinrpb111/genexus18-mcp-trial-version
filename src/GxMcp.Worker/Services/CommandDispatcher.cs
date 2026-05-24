@@ -945,7 +945,7 @@ namespace GxMcp.Worker.Services
                             }
                             catch (Exception ex)
                             {
-                                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
                             }
                         }
                         break;
@@ -1357,7 +1357,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"" + EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + EscapeJsonString(ex.Message) + "\"}";
             }
         }
 

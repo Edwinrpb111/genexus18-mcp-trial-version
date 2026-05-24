@@ -76,7 +76,7 @@ namespace GxMcp.Worker.Tests
             string result = ws.WriteObject("InvoiceProc", "Source", "// code");
             var json = JObject.Parse(result);
 
-            Assert.Contains("Ambiguous", json["error"]?.ToString());
+            Assert.Contains("Ambiguous", json["message"]?.ToString());
         }
 
         [Fact]

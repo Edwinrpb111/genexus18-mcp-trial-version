@@ -115,7 +115,7 @@ namespace GxMcp.Worker.Tests
             var obj = JObject.Parse(json);
 
             Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Contains("not found", obj["error"]?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("not found", obj["message"]?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
             Assert.Equal(0, engine.ApplyCalls);
         }
 
@@ -204,7 +204,7 @@ namespace GxMcp.Worker.Tests
             var obj = JObject.Parse(json);
 
             Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Contains("boom", obj["error"]?.ToString() ?? "");
+            Assert.Contains("boom", obj["message"]?.ToString() ?? "");
         }
 
         // Live integration smokes. Opt-in via GXMCP_TEST_KB=<path-to-kb> and

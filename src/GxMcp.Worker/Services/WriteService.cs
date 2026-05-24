@@ -578,7 +578,7 @@ namespace GxMcp.Worker.Services
             var errorRes = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = enrichedError
+                ["message"] = enrichedError
             };
             if (!string.Equals(enrichedError, (ex.Message ?? string.Empty).Trim(), System.StringComparison.Ordinal))
             {
@@ -1067,7 +1067,7 @@ namespace GxMcp.Worker.Services
                         return new JObject
                         {
                             ["status"] = "Error",
-                            ["error"] = "Ambiguous object name",
+                            ["message"] = "Ambiguous object name",
                             ["target"] = target,
                             ["suggestion"] = "Disambiguate by passing 'type' or by using a fully-qualified parentPath.",
                             ["alternatives"] = alternatives,
@@ -1578,7 +1578,7 @@ namespace GxMcp.Worker.Services
             var payload = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = display
+                ["message"] = display
             };
             if (!string.Equals(enriched, baseMessage.Trim(), System.StringComparison.Ordinal))
             {
@@ -1602,7 +1602,7 @@ namespace GxMcp.Worker.Services
             var response = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = error
+                ["message"] = error
             };
 
             if (structuredDiff != null)
@@ -1704,7 +1704,7 @@ namespace GxMcp.Worker.Services
                     {
                         ["target"] = item.Name,
                         ["status"] = "Error",
-                        ["error"] = "Snapshot bytes unreadable; rollback skipped."
+                        ["message"] = "Snapshot bytes unreadable; rollback skipped."
                     });
                     continue;
                 }
@@ -1719,7 +1719,7 @@ namespace GxMcp.Worker.Services
                     {
                         ["target"] = item.Name,
                         ["status"] = "Error",
-                        ["error"] = "Rollback write threw: " + rex.Message
+                        ["message"] = "Rollback write threw: " + rex.Message
                     });
                     continue;
                 }
@@ -1740,7 +1740,7 @@ namespace GxMcp.Worker.Services
         {
             var items = args?["targets"] as JArray;
             if (items == null || items.Count == 0)
-                return new JObject { ["status"] = "Error", ["error"] = "targets[] required" }.ToString();
+                return new JObject { ["status"] = "Error", ["message"] = "targets[] required" }.ToString();
 
             bool stopOnError = args?["stopOnError"]?.ToObject<bool?>() ?? true;
             bool dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
@@ -1772,7 +1772,7 @@ namespace GxMcp.Worker.Services
                 var itemDryRun = it?["dryRun"]?.ToObject<bool?>() ?? dryRun;
                 if (string.IsNullOrEmpty(name) || content == null)
                 {
-                    results.Add(new JObject { ["status"] = "Error", ["error"] = "missing name or content", ["target"] = name });
+                    results.Add(new JObject { ["status"] = "Error", ["message"] = "missing name or content", ["target"] = name });
                     failure++;
                     if (transactional) { failedAt = name; break; }
                     continue;
@@ -1895,7 +1895,7 @@ namespace GxMcp.Worker.Services
             out global::Artech.Genexus.Common.Variable existing)
         {
             obj = null; varPart = null; existing = null;
-            if (string.IsNullOrEmpty(varName)) return "{\"status\":\"Error\",\"error\": \"Variable name is required.\"}";
+            if (string.IsNullOrEmpty(varName)) return "{\"status\":\"Error\",\"message\": \"Variable name is required.\"}";
             varName = varName.TrimStart('&');
 
             obj = _objectService.FindObject(target);
@@ -1966,7 +1966,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -2052,7 +2052,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -2236,7 +2236,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -2439,12 +2439,12 @@ namespace GxMcp.Worker.Services
                     // when the message doesn't match the heuristic.
                     var boundResp = TryBuildBoundToControlsError(ex, obj, varName, existingVarId);
                     if (boundResp != null) return boundResp;
-                    return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                    return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
                 }
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 

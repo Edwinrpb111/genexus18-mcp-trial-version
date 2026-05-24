@@ -83,6 +83,6 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private static string Error(string msg) => new JObject { ["status"] = "Error", ["error"] = msg }.ToString();
+        private static string Error(string msg) => new JObject { ["status"] = "Error", ["message"] = msg }.ToString();
     }
 }

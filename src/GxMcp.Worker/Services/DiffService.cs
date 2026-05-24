@@ -63,6 +63,6 @@ namespace GxMcp.Worker.Services
             return PartAccessor.GetFirstSourceText(obj);
         }
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["error"] = m }.ToString();
+        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString();
     }
 }

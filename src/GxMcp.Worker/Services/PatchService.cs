@@ -596,7 +596,7 @@ namespace GxMcp.Worker.Services
                                 }
                                 else
                                 {
-                                    writePayload["error"] = classification.Message;
+                                    writePayload["message"] = classification.Message;
                                     writePayload["fallbackWriteError"] = fallbackErrText;
                                     writePayload["suggested_next_step"] = "Retry the same patch — on-disk source is the same as before the attempt.";
                                 }
@@ -607,7 +607,7 @@ namespace GxMcp.Worker.Services
                                 // we don't lose the signal. Keep status=Error.
                                 Logger.Debug("[PATCH] post-fallback verify failed: " + verifyEx.Message);
                                 writePayload["status"] = "Error";
-                                writePayload["error"] = "Patch write fallback failed after persistence mismatch.";
+                                writePayload["message"] = "Patch write fallback failed after persistence mismatch.";
                                 writePayload["fallbackWriteError"] = fallbackErrText;
                             }
                         }
@@ -645,7 +645,7 @@ namespace GxMcp.Worker.Services
                                 else
                                 {
                                 writePayload["status"] = "Error";
-                                writePayload["error"] = "Patch write verification mismatch after fallback write.";
+                                writePayload["message"] = "Patch write verification mismatch after fallback write.";
                                 AttachPersistedSnippet(writePayload, target, partName, typeFilter, finalCode);
 
                                 // Restore original source: without this, a fallback write that reports
@@ -663,7 +663,7 @@ namespace GxMcp.Worker.Services
                                         rbVerified = VerifyPersistedSource(target, partName, typeFilter, originalSource, out _);
                                     }
                                     writePayload["autoRollbackStatus"] = rbSuccess ? (rbVerified ? "Restored" : "WriteSucceededVerifyFailed") : "Failed";
-                                    writePayload["error"] = rbVerified
+                                    writePayload["message"] = rbVerified
                                         ? "Patch write verification mismatch after fallback write. Original source restored — re-read and retry."
                                         : "Patch write verification mismatch after fallback write. Auto-rollback could not be verified — re-read source to confirm state.";
                                     if (rbVerified)
@@ -694,7 +694,7 @@ namespace GxMcp.Worker.Services
                     if (!string.IsNullOrWhiteSpace(verifyReadError))
                     {
                         writePayload["status"] = "Error";
-                        writePayload["error"] = "Apply verification read failed: " + verifyReadError;
+                        writePayload["message"] = "Apply verification read failed: " + verifyReadError;
                         writePayload["verifyRollback"] = true;
                     }
                     else
@@ -707,7 +707,7 @@ namespace GxMcp.Worker.Services
                         if (!applyVerified)
                         {
                             writePayload["status"] = "Error";
-                            writePayload["error"] = "Apply verification mismatch: persisted content differs from patched content.";
+                            writePayload["message"] = "Apply verification mismatch: persisted content differs from patched content.";
                         }
                     }
 
@@ -719,7 +719,7 @@ namespace GxMcp.Worker.Services
                     if (!rollbackSuccess)
                     {
                         writePayload["status"] = "Error";
-                        writePayload["rollbackError"] = rollbackPayload["error"]?.ToString() ?? "Rollback failed.";
+                        writePayload["rollbackError"] = rollbackPayload["message"]?.ToString() ?? rollbackPayload["error"]?.ToString() ?? "Rollback failed.";
                     }
                     else
                     {
@@ -1214,7 +1214,7 @@ namespace GxMcp.Worker.Services
         private static JObject ParseWriteResult(string writeResult)
         {
             try { return JObject.Parse(writeResult); }
-            catch { return new JObject { ["status"] = "Error", ["error"] = writeResult }; }
+            catch { return new JObject { ["status"] = "Error", ["message"] = writeResult }; }
         }
 
         private static string TryExtractError(string response)

@@ -245,7 +245,7 @@ namespace GxMcp.Worker.Services
         {
             ["status"] = "Error",
             ["code"] = "InvalidArgs",
-            ["error"] = message
+            ["message"] = message
         }.ToString(Newtonsoft.Json.Formatting.None);
     }
 }

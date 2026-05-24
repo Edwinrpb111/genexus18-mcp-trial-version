@@ -99,7 +99,7 @@ namespace GxMcp.Worker.Tests
             // Either "Object not found in index" message OR a synthesised empty envelope.
             // The contract: caller never has to retry on a stub.
             Assert.True(
-                obj["error"]?.ToString() == "Object not found in index"
+                obj["message"]?.ToString() == "Object not found in index"
                 || obj["status"]?.ToString() == "Ready",
                 "Resolver must return a deterministic answer, not a polling stub.");
         }

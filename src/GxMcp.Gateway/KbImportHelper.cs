@@ -24,7 +24,7 @@ namespace GxMcp.Gateway
                 {
                     ["status"] = "Error",
                     ["code"] = "ObjectNotFound",
-                    ["error"] = $"Object '{type}:{name}' not found at {sourceObjDir}.",
+                    ["message"] = $"Object '{type}:{name}' not found at {sourceObjDir}.",
                     ["hint"] = "Check 'type' (case-sensitive) and 'name'; pass exact directory names from Objects/<Type>/<Name>/."
                 };
             }
@@ -68,7 +68,7 @@ namespace GxMcp.Gateway
                 {
                     ["status"] = "Error",
                     ["code"] = "IoError",
-                    ["error"] = ex.Message
+                    ["message"] = ex.Message
                 };
             }
         }

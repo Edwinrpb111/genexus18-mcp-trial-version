@@ -37,7 +37,7 @@ namespace GxMcp.Worker.Services
                 }
                 else
                 {
-                    return "{\"status\":\"Error\",\"error\":\"Scaffold for type '" + type + "' not implemented.\"}";
+                    return "{\"status\":\"Error\",\"message\":\"Scaffold for type '" + type + "' not implemented.\"}";
                 }
 
                 Logger.Info("[DEBUG-SCAFFOLD] Step 2: Instantiated");
@@ -68,7 +68,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error($"Scaffold Error: {ex.Message}");
-                return "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.ToString()) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.ToString()) + "\"}";
             }
         }
     }

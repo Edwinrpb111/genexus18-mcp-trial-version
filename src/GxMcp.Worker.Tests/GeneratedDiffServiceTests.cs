@@ -39,7 +39,7 @@ namespace GxMcp.Worker.Tests
             var svc = new GeneratedDiffService(kbService: null, git: new FakeGitShell());
             var json = JObject.Parse(svc.Diff("Foo", "yesterday"));
             Assert.Equal("Error", (string)json["status"]!);
-            Assert.Equal("InvalidAgainst", (string)json["error"]!);
+            Assert.Equal("InvalidAgainst", (string)json["message"]!);
         }
 
         [Fact]

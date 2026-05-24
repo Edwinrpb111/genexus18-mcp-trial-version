@@ -71,7 +71,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"BatchEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"BatchEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
@@ -103,7 +103,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (items == null || items.Count == 0)
-                    return "{\"status\":\"Error\",\"error\":\"No items provided\"}";
+                    return "{\"status\":\"Error\",\"message\":\"No items provided\"}";
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var allResults = new JArray();
@@ -136,7 +136,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"MultiEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"MultiEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
         /// <summary>
@@ -219,7 +219,7 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                if (items == null || items.Count == 0) return "{\"status\":\"Error\",\"error\":\"No items provided\"}";
+                if (items == null || items.Count == 0) return "{\"status\":\"Error\",\"message\":\"No items provided\"}";
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var results = new JArray();
@@ -250,7 +250,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"error\":\"BatchRead failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return "{\"status\":\"Error\",\"message\":\"BatchRead failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
     }

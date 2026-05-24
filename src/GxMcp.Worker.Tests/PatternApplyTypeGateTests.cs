@@ -75,7 +75,7 @@ namespace GxMcp.Worker.Tests
             Assert.NotNull(r);
             var env = JObject.Parse(r);
             Assert.Equal("Error", env["status"]!.ToString());
-            Assert.Contains("NotInCatalog", env["error"]!.ToString());
+            Assert.Contains("NotInCatalog", env["message"]!.ToString());
             var available = (JArray)env["availableTemplates"]!;
             Assert.Equal(3, available.Count);
             Assert.Contains("MatIsoTemplate", available);

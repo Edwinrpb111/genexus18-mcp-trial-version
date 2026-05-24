@@ -215,7 +215,7 @@ namespace GxMcp.Worker.Services
                     ["status"] = "Error",
                     ["target"] = errName,
                     ["patternKey"] = patternKey,
-                    ["error"] = ex.Message
+                    ["message"] = ex.Message
                 };
                 return err.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -509,7 +509,7 @@ namespace GxMcp.Worker.Services
                     ["target"] = objName,
                     ["patternKey"] = patternKey,
                     ["parentType"] = parentType,
-                    ["error"] = $"WorkWithPlus cannot be applied to a {parentType}.",
+                    ["message"] = $"WorkWithPlus cannot be applied to a {parentType}.",
                     ["validParentTypes"] = new JArray("Transaction", "WebPanel", "SDPanel"),
                     ["hint"] = "Apply WorkWithPlus only to a Transaction (generates WW/View/Export family) or to a WebPanel/SDPanel (direct-attach with a Template; pass settings.template or let the MCP auto-discover one)."
                 };
@@ -528,7 +528,7 @@ namespace GxMcp.Worker.Services
                     ["target"] = objName,
                     ["patternKey"] = patternKey,
                     ["parentType"] = parentType,
-                    ["error"] = $"Template '{callerTemplate}' is not a registered `WorkWithPlus for Web Template` in this KB.",
+                    ["message"] = $"Template '{callerTemplate}' is not a registered `WorkWithPlus for Web Template` in this KB.",
                     ["availableTemplates"] = new JArray(availableTemplates),
                     ["hint"] = "Pass settings.template equal to one of availableTemplates, or omit it to auto-discover."
                 };

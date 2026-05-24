@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Tests
             var raw = svc.Explain("DoesNotExist", null, null);
             var json = JObject.Parse(raw);
             Assert.Equal("Error", (string)json["status"]!);
-            Assert.Equal("ObjectNotFound", (string)json["error"]!);
+            Assert.Equal("ObjectNotFound", (string)json["message"]!);
         }
 
         [Fact]

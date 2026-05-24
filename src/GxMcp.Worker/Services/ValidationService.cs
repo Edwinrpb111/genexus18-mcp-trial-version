@@ -53,7 +53,7 @@ namespace GxMcp.Worker.Services
                     }
                     return new JObject {
                         ["status"] = "Error",
-                        ["error"] = structuralErrors[0],
+                        ["message"] = structuralErrors[0],
                         ["errors"] = errorList,
                         ["isPreflight"] = true
                     }.ToString();
@@ -146,7 +146,7 @@ namespace GxMcp.Worker.Services
                             }
                             return new JObject {
                                 ["status"] = "Error",
-                                ["error"] = topError,
+                                ["message"] = topError,
                                 ["errors"] = errors
                             }.ToString();
                         }

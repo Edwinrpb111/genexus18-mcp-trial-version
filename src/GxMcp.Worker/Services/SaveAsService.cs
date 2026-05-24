@@ -88,7 +88,7 @@ namespace GxMcp.Worker.Services
                 {
                     ["status"] = "Error",
                     ["code"] = "NotFound",
-                    ["error"] = "Source object not found: " + sourceName,
+                    ["message"] = "Source object not found: " + sourceName,
                     ["sourceName"] = sourceName
                 }.ToString();
             }
@@ -103,7 +103,7 @@ namespace GxMcp.Worker.Services
                 {
                     ["status"] = "Error",
                     ["code"] = "TargetExists",
-                    ["error"] = "An object named '" + newName + "' already exists.",
+                    ["message"] = "An object named '" + newName + "' already exists.",
                     ["hint"] = overwrite
                         ? "overwrite=true is reserved for a future revision. For now, delete the existing object first via genexus_delete_object name=" + newName + " confirm=true, then re-run genexus_save_as."
                         : "Pick a different newName, or delete the existing object via genexus_delete_object name=" + newName + " confirm=true.",
@@ -211,7 +211,7 @@ namespace GxMcp.Worker.Services
             {
                 ["status"] = "Error",
                 ["code"] = code,
-                ["error"] = message
+                ["message"] = message
             };
             if (sourceName != null) j["sourceName"] = sourceName;
             return j.ToString();
@@ -359,7 +359,7 @@ namespace GxMcp.Worker.Services
                 return new JObject
                 {
                     ["status"] = "Error",
-                    ["error"] = "PatternApplyService is not wired in this worker build."
+                    ["message"] = "PatternApplyService is not wired in this worker build."
                 }.ToString();
             }
             try
@@ -370,7 +370,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["error"] = ex.Message }.ToString();
+                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
             }
         }
     }

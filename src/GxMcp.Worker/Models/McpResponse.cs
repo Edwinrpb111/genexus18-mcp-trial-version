@@ -30,17 +30,14 @@ namespace GxMcp.Worker.Models
             // v2.3.8 (Task 7.1) — translate SDK PT-BR messages to canonical EN;
             // keep the original under _meta.sourceMessage so support tooling can
             // still grep for the literal SDK string.
-            // v2.6.9 — also emit ["message"] as an alias of ["error"] so LLM
-            // clients trained on either convention (JSON-RPC-style 'error' vs
-            // REST-style 'message') resolve the human-readable string without
-            // a fallback chain. The split exists historically in the codebase
-            // (~27 services use 'error', ~28 use 'message'); unifying via the
-            // helper is the cheapest way to give every caller both keys.
+            // v2.6.10 — canonical key is ["message"] (REST / JSON-Schema convention).
+            // The legacy ["error"] alias was dropped; it duplicated bytes on every
+            // error envelope. Gateway's TrimErrorEnvelope still falls back to
+            // ["error"] for back-compat with any path that hasn't migrated.
             string en = GxMcp.Worker.Helpers.ErrorMessages.Translate(message);
             var err = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = en,
                 ["message"] = en
             };
             if (!string.IsNullOrEmpty(target)) err["target"] = target;
@@ -65,7 +62,6 @@ namespace GxMcp.Worker.Models
             var err = new JObject
             {
                 ["status"] = "Error",
-                ["error"] = enMsg,
                 ["message"] = enMsg
             };
 

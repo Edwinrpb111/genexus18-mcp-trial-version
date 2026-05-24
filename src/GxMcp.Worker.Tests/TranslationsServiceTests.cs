@@ -16,7 +16,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new TranslationsService(null);
             var j = JObject.Parse(svc.Import(""));
-            Assert.NotNull(j["error"]);
+            Assert.NotNull(j["message"]);
         }
 
         [Fact]
@@ -24,7 +24,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new TranslationsService(null);
             var j = JObject.Parse(svc.Import(@"Z:\does\not\exist.csv"));
-            Assert.NotNull(j["error"]);
+            Assert.NotNull(j["message"]);
         }
 
         [Fact]

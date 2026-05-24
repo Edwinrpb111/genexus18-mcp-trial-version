@@ -149,7 +149,7 @@ namespace GxMcp.Worker.Tests
 
             Assert.Equal("Error", json["status"]?.ToString());
             Assert.Equal("NotFound", json["code"]?.ToString());
-            Assert.Contains("Nope", json["error"]?.ToString() ?? "");
+            Assert.Contains("Nope", json["message"]?.ToString() ?? "");
         }
 
         [Fact]

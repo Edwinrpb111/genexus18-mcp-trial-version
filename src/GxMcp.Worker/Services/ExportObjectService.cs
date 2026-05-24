@@ -20,7 +20,7 @@ namespace GxMcp.Worker.Services
             {
                 var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null)
-                    return new JObject { ["status"] = "Error", ["error"] = "Object not found: " + target }.ToString();
+                    return new JObject { ["status"] = "Error", ["message"] = "Object not found: " + target }.ToString();
 
                 var available = PartAccessor.GetAvailableParts(obj);
                 var raw = _objectService.ReadObjectSourceParts(obj.Name, available, typeFilter);
@@ -32,7 +32,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["error"] = ex.Message }.ToString();
+                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
             }
         }
     }

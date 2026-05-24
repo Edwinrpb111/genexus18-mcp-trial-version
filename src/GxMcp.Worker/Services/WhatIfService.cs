@@ -47,7 +47,7 @@ namespace GxMcp.Worker.Services
                 }
                 catch (Exception ex)
                 {
-                    impact = new JObject { ["status"] = "Error", ["error"] = ex.Message };
+                    impact = new JObject { ["status"] = "Error", ["message"] = ex.Message };
                 }
 
                 var callers = impact["callers"] as JArray ?? new JArray();

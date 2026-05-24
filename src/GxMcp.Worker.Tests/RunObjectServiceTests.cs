@@ -66,7 +66,7 @@ namespace GxMcp.Worker.Tests
             string json = svc.Resolve(null, new JArray(), null);
             var jo = JObject.Parse(json);
             Assert.Equal("Error", jo["status"]?.ToString());
-            Assert.Contains("name", jo["error"]?.ToString() ?? "");
+            Assert.Contains("name", jo["message"]?.ToString() ?? "");
         }
 
         [Fact]

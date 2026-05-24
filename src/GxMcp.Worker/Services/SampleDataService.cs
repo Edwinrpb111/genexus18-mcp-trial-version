@@ -146,7 +146,7 @@ namespace GxMcp.Worker.Services
         }
 
         private static string Error(string msg)
-            => "{\"status\":\"Error\",\"error\":\"" + CommandDispatcher.EscapeJsonString(msg ?? "") + "\"}";
+            => "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(msg ?? "") + "\"}";
 
         internal class AttrInfo
         {
