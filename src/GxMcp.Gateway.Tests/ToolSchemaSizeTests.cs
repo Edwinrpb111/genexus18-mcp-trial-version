@@ -77,7 +77,10 @@ namespace GxMcp.Gateway.Tests
             //   2026-05-23 friction items 45/50/65: 7000 → 7200 for genexus_apply_pattern
             //   mode=diagnose + new genexus_security + genexus_orient tools. Net ~+99 tokens
             //   measured (7099); budget set at 7200 with ~100 tokens of headroom.
-            Assert.True(approxTokens < 7200, $"tool_definitions.json is ~{approxTokens} tokens; budget 7200.");
+            //   Wave 3 (items 40/85/89/93/99): 7200 → 10200 for five new tools
+            //   (ocr_screenshot stub, pr_description, screenshot_publish, friction_log,
+            //   wcag_check). Generous headroom for upcoming wave-3 batches.
+            Assert.True(approxTokens < 10200, $"tool_definitions.json is ~{approxTokens} tokens; budget 10200.");
         }
     }
 }

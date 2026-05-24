@@ -62,6 +62,12 @@ namespace GxMcp.Worker.Services
         private readonly UndoService _undoService;
         private readonly SecurityAuditService _securityAuditService;
         private readonly OrientService _orientService;
+        // Wave 3 — items 40 / 85 / 89 / 93 / 99
+        private readonly OcrScreenshotService _ocrScreenshotService;
+        private readonly PrDescriptionService _prDescriptionService;
+        private readonly ScreenshotPublishService _screenshotPublishService;
+        private readonly FrictionLogService _frictionLogService;
+        private readonly WcagCheckService _wcagCheckService;
 
         private CommandDispatcher()
         {
@@ -117,6 +123,11 @@ namespace GxMcp.Worker.Services
             _undoService = new UndoService(_objectService, _writeService, _indexCacheService);
             _securityAuditService = new SecurityAuditService(_kbService);
             _orientService = new OrientService(_kbService);
+            _ocrScreenshotService = new OcrScreenshotService();
+            _prDescriptionService = new PrDescriptionService(_kbService);
+            _screenshotPublishService = new ScreenshotPublishService(_kbService);
+            _frictionLogService = new FrictionLogService(_kbService);
+            _wcagCheckService = new WcagCheckService(_objectService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -914,6 +925,44 @@ namespace GxMcp.Worker.Services
                             var popupSpec = args?["spec"] as JObject;
                             return _popupTemplateService.CreatePopup(popupName, popupSpec);
                         }
+                        break;
+                    // Wave 3 — item 40: genexus_ocr_screenshot (stub envelope)
+                    case "ocr":
+                        if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
+                            return _ocrScreenshotService.Run(args?["path"]?.ToString());
+                        break;
+                    // Wave 3 — item 85: genexus_pr_description action=generate
+                    case "prdescription":
+                        if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int last = args?["last"]?.ToObject<int?>() ?? 10;
+                            return _prDescriptionService.Generate(last, args?["workingDir"]?.ToString());
+                        }
+                        break;
+                    // Wave 3 — item 89: genexus_screenshot_publish
+                    case "screenshotpublish":
+                        if (string.Equals(action, "Publish", StringComparison.OrdinalIgnoreCase))
+                            return _screenshotPublishService.Publish(args?["path"]?.ToString());
+                        break;
+                    // Wave 3 — item 93: genexus_friction_log append/tail
+                    case "frictionlog":
+                        if (string.Equals(action, "Append", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return _frictionLogService.Append(
+                                args?["tool"]?.ToString(),
+                                args?["message"]?.ToString(),
+                                args?["severity"]?.ToString());
+                        }
+                        if (string.Equals(action, "Tail", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int n = args?["n"]?.ToObject<int?>() ?? 20;
+                            return _frictionLogService.Tail(n);
+                        }
+                        break;
+                    // Wave 3 — item 99: genexus_wcag_check
+                    case "wcagcheck":
+                        if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
+                            return _wcagCheckService.Check(target ?? args?["target"]?.ToString() ?? args?["name"]?.ToString());
                         break;
                     case "preview":
                         if (action == "Render" || action == "Run")

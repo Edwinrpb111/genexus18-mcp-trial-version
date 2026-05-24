@@ -223,6 +223,59 @@ namespace GxMcp.Gateway.Routers
                         action = "Welcome"
                     };
 
+                // Wave 3 — item 40: genexus_ocr_screenshot (stub envelope)
+                case "genexus_ocr_screenshot":
+                    return new
+                    {
+                        module = "Ocr",
+                        action = "Run",
+                        path = args?["path"]?.ToString()
+                    };
+
+                // Wave 3 — item 85: genexus_pr_description
+                case "genexus_pr_description":
+                    return new
+                    {
+                        module = "PrDescription",
+                        action = "Generate",
+                        last = args?["last"]?.ToObject<int?>() ?? 10,
+                        workingDir = args?["workingDir"]?.ToString()
+                    };
+
+                // Wave 3 — item 89: genexus_screenshot_publish
+                case "genexus_screenshot_publish":
+                    return new
+                    {
+                        module = "ScreenshotPublish",
+                        action = "Publish",
+                        path = args?["path"]?.ToString()
+                    };
+
+                // Wave 3 — item 93: genexus_friction_log
+                case "genexus_friction_log":
+                    {
+                        string fAction = args?["action"]?.ToString();
+                        bool isTail = string.Equals(fAction, "tail", StringComparison.OrdinalIgnoreCase);
+                        return new
+                        {
+                            module = "FrictionLog",
+                            action = isTail ? "Tail" : "Append",
+                            tool = args?["tool"]?.ToString(),
+                            message = args?["message"]?.ToString(),
+                            severity = args?["severity"]?.ToString(),
+                            n = args?["n"]?.ToObject<int?>() ?? 20
+                        };
+                    }
+
+                // Wave 3 — item 99: genexus_wcag_check
+                case "genexus_wcag_check":
+                    return new
+                    {
+                        module = "WcagCheck",
+                        action = "Check",
+                        target = args?["target"]?.ToString() ?? args?["name"]?.ToString()
+                    };
+
                 case "genexus_structure":
                     return ConvertStructureToolCall(args);
                 case "genexus_layout":
