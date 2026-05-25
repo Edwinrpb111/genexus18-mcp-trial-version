@@ -126,6 +126,26 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // v2.6.9 perf: signal that the lite walk has emitted enough entries to
+        // make list_objects / query / inspect useful, even though it hasn't
+        // walked the full catalogue yet. Status stays at "UltraLiteReady" until
+        // MarkLitePassComplete promotes it to "LiteReady". Partial flag lets
+        // ListService surface a `partial:true` hint so the agent knows the
+        // catalogue is still growing.
+        public void MarkUltraLiteReady(int objectsSoFar)
+        {
+            lock (_stateLock)
+            {
+                // Don't downgrade if we've already advanced past UltraLite.
+                if (_state.Status == "LiteReady" || _state.Status == "Enriching" || _state.Status == "Ready")
+                    return;
+                _state.Status = "UltraLiteReady";
+                _state.TotalObjects = objectsSoFar;
+                _state.Progress = null;
+                _state.EtaMs = null;
+            }
+        }
+
         public void MarkEnrichmentStarted()
         {
             lock (_stateLock)

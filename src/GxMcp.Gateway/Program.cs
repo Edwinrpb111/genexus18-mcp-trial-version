@@ -2512,19 +2512,22 @@ namespace GxMcp.Gateway
                     {
                         IndexStateSnapshot idxSnap;
                         lock (_lastKnownIndexStateLock) { idxSnap = _lastKnownIndexState; }
-                        // v2.6.9 perf: accept LiteReady + Enriching as usable too.
-                        // The lite pass populates name/type/description/lifecycle for
-                        // every object — enough for list_objects, query, inspect,
-                        // read, explain, edit. Only mode=impact-style call-graph
-                        // analysis needs the enrichment; those paths do on-demand
-                        // promotion via IndexEntryEnricher when a target's CallGraph
-                        // isn't populated yet. Time-to-productivity for new users
-                        // drops from ~65 s (full enrichment) to ~25 s (lite walk).
+                        // v2.6.9 perf: accept UltraLiteReady + LiteReady + Enriching
+                        // as usable too. The lite pass streams partial snapshots
+                        // every 500-1000 objects (UltraLiteReady), then completes
+                        // (LiteReady), then enrichment runs in background (Enriching
+                        // → Ready). All three states have name/type/path/lifecycle
+                        // populated — enough for list_objects, query, inspect, read,
+                        // explain, edit. mode=impact does on-demand per-target
+                        // enrichment via IndexEntryEnricher. Time-to-productive for
+                        // a new user drops from ~108 s (LiteReady) to ~10 s
+                        // (UltraLiteReady first flush).
                         string idxStatusUpper = idxSnap?.Status ?? string.Empty;
                         bool indexUsable = idxSnap != null && idxSnap.TotalObjects > 0
                             && (string.Equals(idxStatusUpper, "Ready", StringComparison.OrdinalIgnoreCase)
                                 || string.Equals(idxStatusUpper, "LiteReady", StringComparison.OrdinalIgnoreCase)
-                                || string.Equals(idxStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase));
+                                || string.Equals(idxStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(idxStatusUpper, "UltraLiteReady", StringComparison.OrdinalIgnoreCase));
                         if (!indexUsable)
                         {
                             // Kick a fresh state probe so the gateway notices when the

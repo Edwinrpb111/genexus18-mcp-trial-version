@@ -107,15 +107,19 @@ namespace GxMcp.Worker.Services
                 // "Indexing" envelope so the agent retries in a few seconds.
                 var index = _indexCacheService.TryGetLoadedIndex();
                 var indexState = _indexCacheService.GetState();
-                // v2.6.9 perf: LiteReady + Enriching are usable for list_objects —
-                // the lite pass populates every field we project (name/type/path/
-                // lastUpdate). Only Cold/Reindexing should fast-fail.
+                // v2.6.9 perf: UltraLiteReady / LiteReady / Enriching are all
+                // usable for list_objects — lite pass populates every field we
+                // project (name/type/path/lastUpdate). UltraLiteReady means the
+                // walk is still in progress and the index is growing; we surface
+                // `partial:true` so the agent knows to retry for the full set.
                 string indexStatusUpper = indexState?.Status ?? string.Empty;
+                bool isUltraLite = string.Equals(indexStatusUpper, "UltraLiteReady", StringComparison.OrdinalIgnoreCase);
                 bool indexNotReady = index == null
                     || index.Objects.Count == 0
                     || !(string.Equals(indexStatusUpper, "Ready", StringComparison.OrdinalIgnoreCase)
                         || string.Equals(indexStatusUpper, "LiteReady", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(indexStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase));
+                        || string.Equals(indexStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase)
+                        || isUltraLite);
                 if (indexNotReady)
                 {
                     _indexCacheService.EnsureLoadStarted();
@@ -304,6 +308,14 @@ namespace GxMcp.Worker.Services
                     }
 
                     var paged = BuildPagedResponseInternal(array, totalIndex, startIndex, pageSize);
+                    // v2.6.9 perf: surface partial-catalogue signal while the lite
+                    // walk is still streaming entries.
+                    if (isUltraLite)
+                    {
+                        paged["partial"] = true;
+                        paged["indexStatus"] = "UltraLiteReady";
+                        paged["partialHint"] = "Index walk is in progress; the visible catalogue is still growing. Re-issue when whoami reports indexStatus=LiteReady or Ready for the full set.";
+                    }
                     if (lastEmitted != null && (startIndex + array.Count) < totalIndex)
                     {
                         // v2.6.8 (review C1+C9): encode (ts, name, guid) so the

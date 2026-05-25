@@ -329,6 +329,22 @@ namespace GxMcp.Worker.Services
                             IsEnriched = false
                         });
 
+                        // v2.6.9 perf: stream partial snapshots during the lite walk
+                        // so list_objects / query / inspect become usable while the
+                        // walk is still in progress. SDK property reads run ~30ms
+                        // each over COM marshal so we flush early (first at 100,
+                        // then every 500) — first flush lands in ~15-20s on a
+                        // 5k-object KB vs ~108s for the full lite pass.
+                        if (_totalCount == 100 || (_totalCount > 100 && _totalCount % 500 == 0))
+                        {
+                            try
+                            {
+                                _indexCacheService.ReplaceAll(new List<SearchIndex.IndexEntry>(liteEntries));
+                                _indexCacheService.MarkUltraLiteReady(_totalCount);
+                            }
+                            catch { /* best-effort; full ReplaceAll at end is authoritative */ }
+                        }
+
                         if (_totalCount % 500 == 0) Thread.Sleep(1);
 
                         if (_totalCount % 1000 == 0)
