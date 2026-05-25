@@ -171,12 +171,38 @@ namespace GxMcp.Worker.Services
                 string cacheKey = BuildCacheKey(target, partName, typeFilter);
                 bool sourceFromCache = false;
                 long readMs = 0;
-                // Stale-cache prevention: every patch starts from a fresh authoritative read.
-                // Writes that bypass PatchService (or external IDE edits) can leave _sourceCache
-                // holding pre-write text; trusting it produced silent NoChange / wrong-base patches.
-                _sourceCache.TryRemove(cacheKey, out _);
-                _objectService.MarkReadCacheDirty(_objectService.FindObject(target, typeFilter), partName);
                 string originalSource = null;
+                // v2.6.9 perf: reuse a fresh cache entry when no write has landed
+                // since we filled it. WriteService._lastWriteAtUtc tracks every
+                // write path; if WasTargetWrittenSince(target, entry.UpdatedUtc)
+                // is false AND the entry is within TTL, the cache is authoritative
+                // and we can skip the SDK round-trip entirely.
+                //
+                // Stale-cache prevention still kicks in on the false path:
+                // writes that bypass PatchService (or external IDE edits) tracked
+                // via _lastWriteAtUtc flip WasTargetWrittenSince to true, and
+                // we drop the cache + force a fresh read. The 20s TTL is the
+                // last-resort safety net for edits the worker didn't observe
+                // at all (e.g. straight filesystem touches).
+                if (_sourceCache.TryGetValue(cacheKey, out var cacheEntry) && cacheEntry != null)
+                {
+                    bool ttlOk = (DateTime.UtcNow - cacheEntry.UpdatedUtc) < SourceCacheTtl;
+                    bool noConcurrentWrite = !WriteService.WasTargetWrittenSince(target, cacheEntry.UpdatedUtc);
+                    if (ttlOk && noConcurrentWrite)
+                    {
+                        originalSource = cacheEntry.Source;
+                        sourceFromCache = true;
+                    }
+                    else
+                    {
+                        _sourceCache.TryRemove(cacheKey, out _);
+                        _objectService.MarkReadCacheDirty(_objectService.FindObject(target, typeFilter), partName);
+                    }
+                }
+                else
+                {
+                    _objectService.MarkReadCacheDirty(_objectService.FindObject(target, typeFilter), partName);
+                }
                 if (originalSource == null)
                 {
                     var readStopwatch = Stopwatch.StartNew();
@@ -196,10 +222,6 @@ namespace GxMcp.Worker.Services
                         return Models.McpResponse.Error("Patch read failed", target, partName, "Could not retrieve source for requested part.");
                     }
                     UpdateCachedSource(cacheKey, originalSource);
-                }
-                else
-                {
-                    sourceFromCache = true;
                 }
 
                 // Normalize line endings for internal processing

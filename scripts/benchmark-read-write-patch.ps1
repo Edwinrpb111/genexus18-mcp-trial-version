@@ -98,12 +98,20 @@ try {
     Send-Rpc @{jsonrpc="2.0";id=(Next-Id);method="tools/call";params=@{name="genexus_whoami";arguments=@{}}} 180 | Out-Null
 
     # Capture baseline source per target (for write/patch restore)
+    Start-Sleep -Seconds 5  # extra settle so index is ready
     $baselines = @{}
     foreach ($t in $Targets) {
-        $r = Send-Rpc @{jsonrpc="2.0";id=(Next-Id);method="tools/call";params=@{name="genexus_read";arguments=@{ name=$t; part="Source"; limit=0 }}} 60
+        $r = $null
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $r = Send-Rpc @{jsonrpc="2.0";id=(Next-Id);method="tools/call";params=@{name="genexus_read";arguments=@{ name=$t; part="Source"; limit=0 }}} 120
+            if ($r.resp -and $r.resp.result -and $r.resp.result.content) { break }
+            Write-Host "  retry $attempt for $t (resp null)" -ForegroundColor DarkYellow
+            Start-Sleep -Seconds 2
+        }
+        if (-not $r.resp -or -not $r.resp.result.content) { throw "Could not read baseline for $t (3 attempts)" }
         $txt = $r.resp.result.content[0].text
         $jo = $txt | ConvertFrom-Json
-        if (-not $jo.source) { throw "Could not read baseline for $t" }
+        if (-not $jo.source) { throw "Could not read baseline for $t (empty source)" }
         $baselines[$t] = $jo.source
         Write-Host ("  baseline {0} = {1} chars" -f $t, $jo.source.Length)
     }
