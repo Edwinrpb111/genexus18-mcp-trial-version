@@ -227,6 +227,11 @@ fixes (in order) are:
 
 ### CHANGELOG voice — release-facing, not roadmap-internal
 
+**HARD RULE.** When this rule and any AI-agent generation reflex conflict,
+this rule wins. Re-edit until each bullet survives a "would the end user
+care?" reread. The same rule is mirrored at `~/.claude/CLAUDE.md` so it
+applies to every project that ships a CHANGELOG.
+
 Entries in `CHANGELOG.md` are read by users on GitHub Releases / npm /
 package pages — they should describe **what the user gets**, not how the
 sausage was made. Follow these rules:

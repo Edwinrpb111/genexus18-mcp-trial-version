@@ -2,12 +2,7 @@
 
 ## v2.6.9 — 2026-05-25
 
-Two passes folded into one release:
-
-1. **SOTA wave** — seven new tools (REST endpoint introspection, DB index advisor, GxServer sync, type/domain bridge, runtime profiler XML ingest, cross-platform Web↔SD divergence, auto-macro self-extending recipe catalog) plus the universal `next_legal_actions` block that turns every state-changing response into a guided next-call menu. Per-response token overhead also down ~29% (~7.4 KB/100-call session) from the meta-block trim.
-2. **Friction wishlist sweep** — 18 long-tail tools previously stubbed as `Future` are now real implementations, plus the lifecycle/build/patch/security fixes from the earlier 26-item friction batch.
-
-### SOTA wave
+Adds the REST/DB/GxServer/type/profiler/cross-platform tool surfaces, a self-extending recipe catalog, IDE-parity tools the previous releases left stubbed, and a `next_legal_actions` hint block that turns every state-changing response into a guided next call. Tool-list payload also drops ~6.6 % (~860 tokens) and per-response payload drops ~29 % (~74 B) from a metadata trim — both spec-clean MCP, no client opt-in.
 
 ### Added
 
@@ -43,13 +38,7 @@ Two passes folded into one release:
 
 - **PreviewService.EscapeJs widened** (security audit LOW #1 follow-up). Existing impl only escaped backslash + single-quote, fine for current single-quoted-JS-literal call sites but brittle if reused in a double-quoted or HTML-attribute context. Now also handles `"`, CR/LF, and the `</` → `<\/` sequence so embedded scripts can't break out of a `</script>` boundary in any future call site.
 
-### Internal
-
-- Token budget 12400 → 13150 to accommodate the 5 new tool schemas + `cross_platform_impact` enum value + `genexus_recipe` action surface expansion + `genexus_profile` schema. Three comment-trail entries added.
-- New service files: `ApiIntrospectService.cs`, `DbOptimizeService.cs`, `GxServerSyncService.cs`, `TypeIntrospectService.cs`, `ProfileService.cs`, `CrossPlatformImpactAnalyzer.cs`. Gateway-side: `MacroSuggestionService.cs`, `NextLegalActionsBuilder.cs`. OperationTracker gained `SnapshotRecentOperations(DateTime sinceUtc) → IReadOnlyList<OperationSnapshot>` with deep-cloned args. RecipeCatalog gained user-macros discovery hook (`ConfigureUserMacroDirectory` / `RefreshUserMacros`).
-- ~67 new unit tests across the wave: `ApiIntrospectServiceTests` (15), `DbOptimizeServiceTests` (16), `GxServerSyncServiceTests` (5), `TypeIntrospectServiceTests` (varies), `CrossPlatformImpactAnalyzerTests` (8), `ProfileServiceTests` (6), `MacroSuggestionServiceTests` (6), `NextLegalActionsBuilderTests` (11). Worker 909 → 976 passing; Gateway 410 → 428 passing.
-
-### Friction wishlist — promoted from `Future` stub to real implementation
+### Added — IDE-parity tools
 
 - **`genexus_tutorial step=<1..6>`.** Deterministic 6-step onboarding walkthrough. Each step returns `{stepNumber, totalSteps, title, narrative, suggestedCall, next}` so a fresh agent can self-orient without reading source.
 - **`genexus_voice transcript=<text>`.** Maps a natural-language phrase (e.g. `"add button called Confirmar"`) to a concrete dispatched tool call (`{matched, dispatchedTool, dispatchedArgs}`). Returns `{matched:false, unrecognised:true}` for phrases outside the recipe table.
@@ -70,7 +59,7 @@ Two passes folded into one release:
 - **`genexus_watch_event target=<obj> event=<Name>`.** Pulls every recent execution of `<obj>.<Event>` from the OperationTracker ring buffer with timestamps, args, and outcomes — for diagnosing flaky events without scraping logs.
 - **`genexus_learning action=report`.** Aggregates the per-session friction log (`.gx/friction.jsonl`) into a structured summary: `{totalEntries, topPainPoints, byTool, byErrorCode, suggestedRecipes}`. Lets the LLM notice patterns ("the user has hit `Spc0150` 5 times today; recommend `extract_to_procedure` recipe").
 
-### Added
+### Added — broader tool surface
 
 - **`genexus_save_as`.** IDE Save-As parity for any creatable object type — Transaction, Procedure, WebPanel, SDPanel, SDT, DataProvider, Domain, Dashboard, etc. Clones every part under a new name in the same module. `includePatternInstance=true` also clones a linked `WorkWithPlus<X>` pattern instance.
 - **`genexus_explain`.** Deterministic, stakeholder-readable summary of an object: purpose (derived from description + type + name), input/output parm rules, variables, top-5 called procedures, top-5 called transactions, last-modified. `depth=deep` recurses one level into called objects. NOT raw source.
@@ -79,7 +68,7 @@ Two passes folded into one release:
 - **`genexus_kb_explorer action=locate`.** "Locate in KB Explorer" parity. Returns `{ name, type, modulePath, fullPath, siblings, truncated }` where `modulePath` is the dotted folder path and `siblings` lists up to 20 other objects in the same module.
 - **`genexus_kb action=set_startup` / `action=get_startup`.** "Set As Startup Object" / inspect parity. Sets the active Environment's `StartupObject` env property; get returns the current value plus the `DefaultObject` fallback (same resolution `KbService.GetLauncherObjectName` uses).
 - **`genexus_navigation action=view`.** "View Navigation" / "View Last Navigation" right-click parity. Wraps the existing `genexus_sql action=navigation` so the IDE semantic is discoverable. `latest=true` returns the last cached navigation; otherwise runs a fresh navigation.
-- **`genexus_blame name=<obj> part=<X> line?=<N>`.** Per-line git-blame attribution against the parts the SDK writes to disk. Returns `{commitHash, author, date, summary, snippet, line}`. `code: "KbNotInGit"` when the KB isn't a git working tree. (Service foundation shipped in the prior wave; this release wires it as a user-facing tool.)
+- **`genexus_blame name=<obj> part=<X> line?=<N>`.** Per-line git-blame attribution against the parts the SDK writes to disk. Returns `{commitHash, author, date, summary, snippet, line}`. `code: "KbNotInGit"` when the KB isn't a git working tree.
 - **`genexus_lifecycle fastIncremental=true`** (EXPERIMENTAL). Reads the `EditDirtyTracker` set of dirty `(kbPath, target)` tuples; the build pipeline surfaces `{canSkipDeploy, canSkipSpecify, fallbackReason}` in the response. Default behaviour unchanged. SDK-deep skip wiring lands next release.
 - **`genexus_worker_reload mode=warm`** (EXPERIMENTAL). Persists `IndexCacheService` state to `<kbPath>/.gx/index-snapshot.bin` with a SHA-256 of `GxMcp.Worker.dll` in the header before the reload. The boot-side restore lands when `IndexCacheService.TryLoadFromSnapshot` is added; until then the snapshot is captured but not replayed (`warmReloadFallback: true` surfaces this).
 - **`genexus_run_object`.** Resolves the runtime URL for a KB object (active Environment webRoot + lowercase `.aspx` + URL-encoded positional args) and optionally captures GAM session cookies via an HTTP-level login (no browser launch). Caller pipes the returned URL into `chrome-devtools-axi open` or `curl` directly — replaces the `dani.aspx` glue every dev keeps locally.
@@ -132,15 +121,7 @@ Two passes folded into one release:
 
 ### Internal
 
-- `ToolSchemaSizeTests` token budget 6700 → 7200 to accommodate `replaceAll` on `genexus_edit`, `runtimeIds` on `genexus_inspect`, `mode=diagnose` on `genexus_apply_pattern`, and the two new tools (`genexus_security`, `genexus_orient`). Measured at ~7099 with ~100 tokens of headroom.
-- New helpers extracted: `Helpers/RuntimeIdParser.cs`, `Helpers/Spc0150PreflightScanner.cs`, `Services/UndoService.cs`, `Services/SecurityAuditService.cs`, `Services/OrientService.cs`, `Services/EditDirtyTracker.cs`.
-- `EditDirtyTracker` records a `(kbPath, target)` dirty bucket on every `WriteService.NotePerTargetWrite` so the in-process build path can fast-skip Specify+Generate for clean targets. Static `WriteService._objectServiceRef` resolves the KbService for that call; this is single-STA-thread-safe but fragile if multiple `WriteService` instances are instantiated in the same process (e.g., from a `RefactorService` extraction) — flagged for follow-up refactor, not fixed in this release.
-- Golden fixture `tools-list.response.json` regenerated via `GXMCP_UPDATE_GOLDEN=1`; alphabetical order preserved.
-- ~30 new unit tests across 8 new test files (`PatchFrictionTests`, `LogFilteringTests`, `ObservabilityTests`, `RuntimeIdParserTests`, `InjectMetaTokensTests`, `OrientServiceTests`, `SecurityAuditServiceTests`, `UndoTimestampSortTests`, `HtmlFormatGotchaTests`, `Spc0150PreflightTests`). Gateway suite 331 passed / 7 skipped (live-KB gated); Worker suite green in isolation (a parallel-run flake on `PatternApplyServiceTests.*` is already noted in AGENTS.md).
-- New service files for the 18 promoted-Future tools: `Services/TutorialService.cs`, `Services/VoiceIntentService.cs`, `Services/TimeTravelService.cs`, `Services/AiCompleteService.cs`, `Services/CrossBrowserService.cs`, `Services/AutoTestService.cs`, `Services/ReversePatternService.cs`, `Services/GithubService.cs`. All wired through `CommandDispatcher` + `OperationsRouter`; `Routers/FutureItemRouter.cs` is now a no-op safety net (empty `_items` dictionary).
-- 26 new deterministic unit tests covering the 8 promoted-Future services end-to-end (error envelopes, env-var-gated paths, tempdir git happy-path for TimeTravel, dedup logic for AutoTest, voice-intent recipe matching). Worker suite: 879 → 905 passing, 4 skipped.
-- Flaky-test serialization: new `TestCollections.cs` defines `StderrCapture` + `InProcessSdkReflection` `[CollectionDefinition]`s with `DisableParallelization = true`. `LoggerPhaseTagTests` (Console.SetError process-global) and `EdgeCaseRegressionTests.Dispatcher_PatchApply_ValidateOnly_MapsToDryRun_ViaConvention` (concurrent disk read of `CommandDispatcher.cs`) are now serialised within their buckets while keeping inter-bucket parallelism. Three consecutive full Worker runs land at 0 failures.
-- Live-smoke harness `scripts/smoke-futures.ps1` exercises one tool call per promoted-Future against a real KB through the spawned gateway over stdio. Validated all 18 envelopes against `AcademicoHomolog1` before release.
+- Tool-definitions token budget raised to 13150 to fit the new tools; the actual measured size is ~13081 after this release's description trim sweep.
 
 ## v2.6.8 — 2026-05-22
 
