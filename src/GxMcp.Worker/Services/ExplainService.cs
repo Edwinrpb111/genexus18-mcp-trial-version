@@ -17,6 +17,20 @@ namespace GxMcp.Worker.Services
     /// </summary>
     public class ExplainService
     {
+        // v2.6.9 perf: repeat-call cache. Same pattern as AnalyzeService's
+        // inspect cache — Explain does N sequential SDK reads (parm rule,
+        // variables, called procs, called transactions, description, etc.)
+        // on the STA thread; repeat calls within 30s with no observed write
+        // return the previously-built summary unchanged.
+        private sealed class ExplainCacheEntry
+        {
+            public string Json;
+            public System.DateTime FilledAtUtc;
+        }
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ExplainCacheEntry> _explainCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, ExplainCacheEntry>(System.StringComparer.OrdinalIgnoreCase);
+        private static readonly System.TimeSpan ExplainCacheTtl = System.TimeSpan.FromSeconds(30);
+
         private readonly KbService _kbService;
         private readonly ObjectService _objectService;
 
@@ -30,6 +44,19 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrEmpty(target))
                 return Models.McpResponse.Error("MissingTarget", target, null, "target object name is required.");
+
+            // v2.6.9 perf: check cache before SDK reads.
+            string explainKey = (target ?? "") + "|" + (typeFilter ?? "") + "|" + (depth ?? "shallow").ToLowerInvariant();
+            if (_explainCache.TryGetValue(explainKey, out var cachedExplain) && cachedExplain != null)
+            {
+                bool ttlOk = (System.DateTime.UtcNow - cachedExplain.FilledAtUtc) < ExplainCacheTtl;
+                bool noWrite = !WriteService.WasTargetWrittenSince(target, cachedExplain.FilledAtUtc);
+                if (ttlOk && noWrite)
+                {
+                    return cachedExplain.Json;
+                }
+                _explainCache.TryRemove(explainKey, out _);
+            }
 
             try
             {
@@ -92,7 +119,13 @@ namespace GxMcp.Worker.Services
                         ? (JToken)JValue.CreateNull()
                         : lastModified.ToUniversalTime().ToString("o")
                 };
-                return result.ToString(Newtonsoft.Json.Formatting.None);
+                string json = result.ToString(Newtonsoft.Json.Formatting.None);
+                _explainCache[explainKey] = new ExplainCacheEntry
+                {
+                    Json = json,
+                    FilledAtUtc = System.DateTime.UtcNow
+                };
+                return json;
             }
             catch (Exception ex)
             {
