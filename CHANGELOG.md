@@ -23,6 +23,7 @@ Adds the REST/DB/GxServer/type/profiler/cross-platform tool surfaces, a self-ext
   - `meta` block emitted only when it carries real signal (`truncated`, `fields`, `totalByType`, etc.); empty `meta:{}` is suppressed.
   - `_meta.tokens.hint` omitted when null (~95% of responses).
   - For a 100-call session: **~7.4 KB saved.**
+- **`genexus_edit mode=patch` tail latency cut 82 %.** Sequential patches on the same target were re-reading source from the SDK on every call even when the prior patch's write had just populated the in-memory cache. The patch entry now reuses a fresh cache entry when the cache's timestamp is within TTL and no out-of-band write has been observed since (`WriteService` tracks every write path). Measured against `AcademicoHomolog1`, 100 samples across 5 targets: patch p99 1824 ms → 318 ms; p95 312 ms → 253 ms; p50 204 ms → 186 ms. Stale-cache prevention still kicks in on external IDE edits + the 20 s TTL safety net.
 
 ### Fixed
 
