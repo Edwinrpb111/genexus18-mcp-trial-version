@@ -107,9 +107,15 @@ namespace GxMcp.Worker.Services
                 // "Indexing" envelope so the agent retries in a few seconds.
                 var index = _indexCacheService.TryGetLoadedIndex();
                 var indexState = _indexCacheService.GetState();
+                // v2.6.9 perf: LiteReady + Enriching are usable for list_objects —
+                // the lite pass populates every field we project (name/type/path/
+                // lastUpdate). Only Cold/Reindexing should fast-fail.
+                string indexStatusUpper = indexState?.Status ?? string.Empty;
                 bool indexNotReady = index == null
                     || index.Objects.Count == 0
-                    || !string.Equals(indexState?.Status, "Ready", StringComparison.OrdinalIgnoreCase);
+                    || !(string.Equals(indexStatusUpper, "Ready", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(indexStatusUpper, "LiteReady", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(indexStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase));
                 if (indexNotReady)
                 {
                     _indexCacheService.EnsureLoadStarted();

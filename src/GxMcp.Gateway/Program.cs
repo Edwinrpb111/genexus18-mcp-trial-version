@@ -2512,9 +2512,20 @@ namespace GxMcp.Gateway
                     {
                         IndexStateSnapshot idxSnap;
                         lock (_lastKnownIndexStateLock) { idxSnap = _lastKnownIndexState; }
-                        bool indexReady = string.Equals(idxSnap?.Status, "Ready", StringComparison.OrdinalIgnoreCase)
-                            && idxSnap.TotalObjects > 0;
-                        if (!indexReady)
+                        // v2.6.9 perf: accept LiteReady + Enriching as usable too.
+                        // The lite pass populates name/type/description/lifecycle for
+                        // every object — enough for list_objects, query, inspect,
+                        // read, explain, edit. Only mode=impact-style call-graph
+                        // analysis needs the enrichment; those paths do on-demand
+                        // promotion via IndexEntryEnricher when a target's CallGraph
+                        // isn't populated yet. Time-to-productivity for new users
+                        // drops from ~65 s (full enrichment) to ~25 s (lite walk).
+                        string idxStatusUpper = idxSnap?.Status ?? string.Empty;
+                        bool indexUsable = idxSnap != null && idxSnap.TotalObjects > 0
+                            && (string.Equals(idxStatusUpper, "Ready", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(idxStatusUpper, "LiteReady", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(idxStatusUpper, "Enriching", StringComparison.OrdinalIgnoreCase));
+                        if (!indexUsable)
                         {
                             // Kick a fresh state probe so the gateway notices when the
                             // worker eventually catches up; non-blocking.
