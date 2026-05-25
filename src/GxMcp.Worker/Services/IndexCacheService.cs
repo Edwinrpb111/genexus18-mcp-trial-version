@@ -162,6 +162,9 @@ namespace GxMcp.Worker.Services
                 _index = idx;
                 _initialized = true;
             }
+            // v2.6.9 perf: flip state to Ready so the gateway-side / list-service
+            // fast-fail path doesn't treat fixture-loaded indexes as still-building.
+            MarkIndexComplete(_index.Objects.Count);
         }
 
         public void SetBuildService(BuildService bs) { _buildService = bs; }
@@ -541,6 +544,27 @@ namespace GxMcp.Worker.Services
                 _hierarchyCache[obj.Guid] = result;
             }
             return result;
+        }
+
+        // v2.6.9 perf: non-blocking probe. Returns the in-memory index if it's
+        // already loaded, otherwise returns null without taking the loader lock.
+        // Use this from hot paths (list_objects, query) that prefer to fast-fail
+        // with an "Indexing" envelope rather than block 30-60s on a cold load.
+        // GetIndex() retains the blocking-load behaviour for callers that
+        // genuinely need the index synchronously.
+        public SearchIndex TryGetLoadedIndex()
+        {
+            return _index;
+        }
+
+        // Best-effort: kick off the background load if it hasn't started yet.
+        // Idempotent — safe to call repeatedly. Caller still uses
+        // TryGetLoadedIndex() to test readiness without blocking.
+        public void EnsureLoadStarted()
+        {
+            if (_index != null) return;
+            try { EnsureInitialized(); } catch { /* best-effort */ }
+            try { System.Threading.Tasks.Task.Run(() => GetIndex()); } catch { /* best-effort */ }
         }
 
         public SearchIndex GetIndex()

@@ -548,9 +548,35 @@ namespace GxMcp.Gateway
             bool workerHealthy = IsActiveWorkerHealthy();
             if (!cacheFresh && workerHealthy)
             {
-                // Aggressive timeout: whoami must feel instant. If the worker is
-                // genuinely slow, returning a slightly stale snapshot beats blocking.
-                await TryRefreshIndexStateFromWorkerAsync(timeoutMs: 400).ConfigureAwait(false);
+                // v2.6.9 perf: 400ms aggressive timeout — when the worker is slow to
+                // respond (cold STA thread, busy with another call), we don't want
+                // every whoami to block here. After the timeout, if the cache is
+                // STILL empty (RefreshedAtUtc == MinValue), stamp a placeholder
+                // snapshot so the next whoami call inside the 15s window hits
+                // cacheFresh and returns instantly. The worker's own telemetry push
+                // path (index/lifecycle progress) will overwrite the placeholder
+                // with real data as soon as it arrives. Net effect on the bench:
+                // first whoami pays ~400ms once, subsequent calls drop to ms-range.
+                bool refreshed = await TryRefreshIndexStateFromWorkerAsync(timeoutMs: 400).ConfigureAwait(false);
+                if (!refreshed)
+                {
+                    lock (_lastKnownIndexStateLock)
+                    {
+                        if (_lastKnownIndexState.RefreshedAtUtc == DateTime.MinValue)
+                        {
+                            // Stamp a "Unknown" placeholder. Status stays Cold so the
+                            // agent can still see that the index hasn't reported yet;
+                            // we just stop hammering the round-trip every call.
+                            _lastKnownIndexState = new IndexStateSnapshot
+                            {
+                                Status = "Cold",
+                                TotalObjects = 0,
+                                RefreshedAtUtc = DateTime.UtcNow,
+                                RecentlyChanged = _lastKnownIndexState?.RecentlyChanged
+                            };
+                        }
+                    }
+                }
             }
             var payload = BuildWhoamiPayload();
             if (!workerHealthy)
@@ -2441,6 +2467,44 @@ namespace GxMcp.Gateway
                         ["method"] = "tools/call",
                         ["params"] = tcParams
                     };
+
+                    // v2.6.9 perf: gateway-side fast-fail for list_objects / query when
+                    // the worker is still doing its initial BulkIndex on the STA thread.
+                    // Without this the request queues behind a 30-60s SDK enumeration
+                    // and the agent eats the full 60s gateway-timeout before learning
+                    // the index isn't ready. The worker pushes index state to the
+                    // gateway as soon as BulkIndex finishes, so once _lastKnownIndexState
+                    // flips to "Ready" we forward normally. Worker-side ListService has
+                    // its own fast-fail for callers that bypass this short-circuit.
+                    if (string.Equals(tName, "genexus_list_objects", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(tName, "genexus_query", StringComparison.OrdinalIgnoreCase))
+                    {
+                        IndexStateSnapshot idxSnap;
+                        lock (_lastKnownIndexStateLock) { idxSnap = _lastKnownIndexState; }
+                        bool indexReady = string.Equals(idxSnap?.Status, "Ready", StringComparison.OrdinalIgnoreCase)
+                            && idxSnap.TotalObjects > 0;
+                        if (!indexReady)
+                        {
+                            // Kick a fresh state probe so the gateway notices when the
+                            // worker eventually catches up; non-blocking.
+                            _ = TryRefreshIndexStateFromWorkerAsync(timeoutMs: 50);
+                            var indexingEnvelope = new JObject
+                            {
+                                ["status"] = "Indexing",
+                                ["code"] = "IndexNotReady",
+                                ["indexStatus"] = idxSnap?.Status ?? "Cold",
+                                ["totalObjects"] = idxSnap?.TotalObjects ?? 0,
+                                ["message"] = "Index still building; retry in 2-5 seconds.",
+                                ["hint"] = "Call genexus_whoami to observe progress, then re-issue this tool."
+                            };
+                            if (idxSnap?.Progress != null) indexingEnvelope["progress"] = idxSnap.Progress.Value;
+                            return new JObject
+                            {
+                                ["isError"] = false,
+                                ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = indexingEnvelope.ToString(Formatting.None) } }
+                            };
+                        }
+                    }
 
                     // Gateway-served tools (no worker involvement)
                     if (string.Equals(tName, "genexus_whoami", StringComparison.OrdinalIgnoreCase))

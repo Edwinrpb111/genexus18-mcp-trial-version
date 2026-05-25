@@ -98,8 +98,34 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                var index = _indexCacheService.GetIndex();
-                if (index != null && index.Objects.Count > 0)
+                // v2.6.9 perf: fast-fail when the index isn't fully built yet.
+                // First list_objects on a cold worker was blocking ~57s while
+                // either gzip+JSON parse OR the SDK fallback's full Objects.GetAll
+                // enumeration ran inline. Now probe non-blocking; if the index is
+                // missing or empty AND the IndexCacheService reports a not-Ready
+                // state, kick the background loader/builder and return an
+                // "Indexing" envelope so the agent retries in a few seconds.
+                var index = _indexCacheService.TryGetLoadedIndex();
+                var indexState = _indexCacheService.GetState();
+                bool indexNotReady = index == null
+                    || index.Objects.Count == 0
+                    || !string.Equals(indexState?.Status, "Ready", StringComparison.OrdinalIgnoreCase);
+                if (indexNotReady)
+                {
+                    _indexCacheService.EnsureLoadStarted();
+                    var envelope = new JObject
+                    {
+                        ["status"] = "Indexing",
+                        ["code"] = "IndexNotReady",
+                        ["indexStatus"] = indexState?.Status ?? "Cold",
+                        ["totalObjects"] = indexState?.TotalObjects ?? 0,
+                        ["message"] = "Index still building; retry in 2-5 seconds.",
+                        ["hint"] = "Call genexus_whoami to observe progress, then re-issue list_objects."
+                    };
+                    if (indexState?.Progress != null) envelope["progress"] = indexState.Progress.Value;
+                    return Finalize(envelope.ToString(Newtonsoft.Json.Formatting.None));
+                }
+                if (index.Objects.Count > 0)
                 {
                     IEnumerable<SearchIndex.IndexEntry> entries;
                     source = "index-all";
