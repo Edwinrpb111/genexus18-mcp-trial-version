@@ -232,6 +232,28 @@ namespace GxMcp.Worker.Services
         // room; 90 s safely covers the warm-up plus a few snapshot/eval calls.
         private const int DefaultCliTimeoutMs = 90000;
 
+        // Friction 2026-05-25 #4: a single preview against a GAM-protected
+        // panel was observed to wedge the STA worker thread for 10+ minutes
+        // while cumulative per-CLI-call timeouts stacked (open → snapshot →
+        // fill → click → snapshot → capture). Every other MCP tool queues
+        // behind that STA call, so we now enforce a hard wall-clock budget
+        // on the whole PreviewSync call. When the budget is exceeded the
+        // call returns a structured PreviewTimeout envelope instead of
+        // blocking. Override via env GXMCP_PREVIEW_BUDGET_MS.
+        private const int DefaultPreviewBudgetMs = 60000;
+
+        internal static int ResolvePreviewBudgetMs()
+        {
+            try
+            {
+                var raw = Environment.GetEnvironmentVariable("GXMCP_PREVIEW_BUDGET_MS");
+                if (!string.IsNullOrEmpty(raw) && int.TryParse(raw, out var v) && v > 1000)
+                    return v;
+            }
+            catch { }
+            return DefaultPreviewBudgetMs;
+        }
+
         public PreviewService(ObjectService objectService, BuildService buildService)
             : this(objectService, buildService, new DefaultCliRunner(), null, null) { }
 
@@ -463,6 +485,18 @@ namespace GxMcp.Worker.Services
             string network = null)
         {
             var result = new JObject { ["name"] = name };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int budgetMs = ResolvePreviewBudgetMs();
+            bool BudgetExceeded() => sw.ElapsedMilliseconds > budgetMs;
+            JObject Timeout(string stage)
+            {
+                result["status"] = "Error";
+                result["code"] = "PreviewTimeout";
+                result["elapsedMs"] = sw.ElapsedMilliseconds;
+                result["stage"] = stage;
+                result["hint"] = "Preview exceeded the wall-clock budget (default 60s; override GXMCP_PREVIEW_BUDGET_MS). The STA worker has been released; retry with auth credentials or buildFirst=false.";
+                return result;
+            }
             try
             {
                 if (string.IsNullOrWhiteSpace(name))
@@ -557,7 +591,12 @@ namespace GxMcp.Worker.Services
                     if (!string.IsNullOrWhiteSpace(network) && NetworkProfiles.Contains(network)) emuRes["network"] = network;
                     if (emuRes.Count > 0) result["emulation"] = emuRes;
                 }
-                var openRes = _runner.Run(cli, "open " + Quote(launcherUrl) + emulateNetArgs, DefaultCliTimeoutMs);
+                // Per-step CLI timeout is bounded by remaining budget so a
+                // single stuck CLI call can't bypass the wall-clock budget.
+                int StepTimeout() => (int)Math.Max(2000, Math.Min(DefaultCliTimeoutMs, budgetMs - sw.ElapsedMilliseconds));
+
+                var openRes = _runner.Run(cli, "open " + Quote(launcherUrl) + emulateNetArgs, StepTimeout());
+                if (openRes.TimedOut && BudgetExceeded()) return Timeout("open_launcher");
                 if (openRes.TimedOut || openRes.ExitCode != 0)
                 {
                     result["status"] = "launcher_missing";
@@ -565,16 +604,31 @@ namespace GxMcp.Worker.Services
                     result["stderr"] = openRes.StdErr;
                     return result;
                 }
+                if (BudgetExceeded()) return Timeout("after_open");
 
                 // 6) Snapshot launcher to detect auth/form
-                var snap1 = _runner.Run(cli, "snapshot", DefaultCliTimeoutMs);
+                var snap1 = _runner.Run(cli, "snapshot", StepTimeout());
                 string snap1Text = snap1.StdOut ?? "";
+                if (BudgetExceeded()) return Timeout("snapshot_launcher");
+
+                // 6.0) Surface the final URL so the agent (and our GAM
+                //     detector) can distinguish a GAM redirect from a
+                //     legitimate launcher load.
+                string finalUrl = launcherUrl;
+                try
+                {
+                    var urlRes = _runner.Run(cli, "eval " + Quote("location.href"), Math.Min(StepTimeout(), 10000));
+                    var u = (urlRes.StdOut ?? "").Trim().Trim('"');
+                    if (!string.IsNullOrEmpty(u)) finalUrl = u;
+                }
+                catch { }
+                result["finalUrl"] = finalUrl;
 
                 // 6a) FR#17 — GAM session injection. When auth.mode == "gam" (or
                 //     env vars are set and the page looks like login), fill the
                 //     GAM login form and resubmit before bailing out.
                 bool authAttempted = false;
-                if (LooksLikeAuthScreen(snap1Text) || LooksLikeGamLoginUrl(launcherUrl))
+                if (LooksLikeAuthScreen(snap1Text) || LooksLikeGamLoginUrl(launcherUrl) || LooksLikeGamLoginUrl(finalUrl))
                 {
                     var ai = ResolveAuthInfo(auth);
                     if (ai.Mode == "gam" && !string.IsNullOrEmpty(ai.User) && !string.IsNullOrEmpty(ai.Pass))

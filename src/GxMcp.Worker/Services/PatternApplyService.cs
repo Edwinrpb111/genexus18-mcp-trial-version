@@ -375,6 +375,13 @@ namespace GxMcp.Worker.Services
             if (existingInstance != null && _objectService != null)
             {
                 KBObject reappliedHost = null;
+                // Friction 2026-05-25 — projection step (`UpdateParentObject`)
+                // can deadlock for 10+ minutes when the IDE has the host or
+                // parent open in a tab. We can't safely abort an STA call,
+                // but we CAN time it and surface elapsedMs in the response so
+                // callers see how long it took. Combined with [APPLY-PATTERN]
+                // log lines, anyone watching can identify hangs early.
+                var projectionSw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     var freshHost = _objectService.FindObject("WorkWithPlus" + obj.Name);
@@ -390,6 +397,18 @@ namespace GxMcp.Worker.Services
                     }
                 }
                 catch (Exception ex) { Logger.Info("Reapply UpdateParentObject best-effort: " + ex.Message); }
+                projectionSw.Stop();
+                if (projectionSw.ElapsedMilliseconds > 30000)
+                {
+                    // 30s threshold — IDE-hold-on-tab deadlocks were 10+ min.
+                    // Clean reapply on a free object completes in ~1-3s. Log
+                    // at warn so dev can correlate slow reapplies with IDE
+                    // tab state. The .lock file pre-check (TryBuildIdeLockRejection)
+                    // is a false-negative on per-tab opens — see project
+                    // memory `feedback_mcp_friction_2026_05_25` item #6.
+                    Logger.Warn("[APPLY-PATTERN] projection took " + projectionSw.ElapsedMilliseconds + "ms — likely IDE-tab-hold contention. Close any tab on '" + obj?.Name + "' or 'WorkWithPlus" + obj?.Name + "' if reapplies keep timing out.");
+                }
+                phases.Add($"projection={projectionSw.ElapsedMilliseconds}ms");
 
                 // Friction 2026-05-25 — first-apply called SetPatternApplyOnSave
                 // via PatternInstancePackageInterface so the IDE's "Apply this

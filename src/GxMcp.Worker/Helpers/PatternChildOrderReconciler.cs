@@ -60,6 +60,27 @@ namespace GxMcp.Worker.Helpers
                 { "eventBlock", "75" },
             };
 
+        // Friction 2026-05-25 — element kinds that WWP intentionally OMITS
+        // from childrenOrderedList in its own emit. Variables, web components,
+        // images, and user controls are addressed by `name`/`controlName`
+        // (not by ordered slot). Observed via parent-screen PatternInstance
+        // in AcademicoHomolog1 where <table name="TableMain"> with mixed
+        // children (textBlock + variable + webComponent) had a list that
+        // enumerated ONLY textBlock/table, not the variables/webComponents.
+        // Reconciler now treats them as "skip-from-order" instead of bailing
+        // on the whole parent — the remaining orderable children still get
+        // an updated childrenOrderedList, and the IDE renders them correctly.
+        // Without this, every PatternInstance edit involving variables
+        // emitted a misleading "may not render in the IDE" skip note.
+        private static readonly HashSet<string> NonOrderedKinds =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "variable",
+                "webComponent",
+                "image",
+                "userControl",
+            };
+
         // Element kinds whose entry in childrenOrderedList uses an EMPTY identifier
         // (`{level};{typeCode};`) because there is at most one of them per parent.
         // The IDE relies on type-code uniqueness to address them.
@@ -154,6 +175,12 @@ namespace GxMcp.Worker.Helpers
 
             foreach (var child in parent.Elements())
             {
+                // Friction 2026-05-25 — WWP omits certain kinds from
+                // childrenOrderedList by convention (variable, webComponent,
+                // image, userControl — addressed by name/controlName instead).
+                // Skip without bailing the whole parent.
+                if (NonOrderedKinds.Contains(child.Name.LocalName)) continue;
+
                 string identifier = GetIdentifier(child, parent);
                 // Distinguish "missing" (null) from "intentionally empty" (singletons like
                 // <orders>/<grid> use an empty identifier slot — `{level};{typeCode};`).

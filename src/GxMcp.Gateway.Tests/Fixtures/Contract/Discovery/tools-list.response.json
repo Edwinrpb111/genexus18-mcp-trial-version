@@ -2838,13 +2838,14 @@
             "type": "boolean"
           },
           "fields": {
-            "description": "Fields to search. Default [source]. Add caption/description/parmNames to widen.",
+            "description": "Fields to search. Default [source]. Add webForm to scan WebPanel/Transaction WebForm XML (layout-form examples).",
             "items": {
               "enum": [
                 "source",
                 "caption",
                 "description",
-                "parmNames"
+                "parmNames",
+                "webForm"
               ],
               "type": "string"
             },

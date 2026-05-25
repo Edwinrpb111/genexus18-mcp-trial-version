@@ -29,6 +29,11 @@ namespace GxMcp.Worker.Services
             string AddVariable(string target, string varName, string typeName);
             string WriteObject(string target, string partName, string content);
             bool ObjectExists(string name);
+            // Friction 2026-05-25 — returns the WWP theme-class GUID prefix
+            // (e.g. "d4876646-98dd-419b-8c1c-896f83c48368") when the KB uses
+            // the WorkWithPlus dual-form convention; null otherwise. Tests
+            // return null so the existing flat-schema emit path stays exercised.
+            GxMcp.Worker.Helpers.WwpConventionProbe.Result ProbeWwpConvention();
         }
 
         private sealed class DefaultBackend : IPopupBackend
@@ -45,6 +50,11 @@ namespace GxMcp.Worker.Services
             {
                 try { return _obj.FindObject(name, "WebPanel") != null; }
                 catch { return false; }
+            }
+            public GxMcp.Worker.Helpers.WwpConventionProbe.Result ProbeWwpConvention()
+            {
+                try { return GxMcp.Worker.Helpers.WwpConventionProbe.Probe(_obj?.GetKbService()); }
+                catch { return null; }
             }
         }
 
@@ -82,7 +92,19 @@ namespace GxMcp.Worker.Services
             //    unknown ControlType, duplicate ids). Use varNameResolver returning the matching
             //    input.varName for the placeholder var:N bindings we emit — though we use
             //    "&VarName" AttIDs (not var:N), so resolver is rarely hit.
-            string layoutXml = PopupLayoutBuilder.BuildLayoutXml(pspec);
+            //
+            //    Friction 2026-05-25 — KBs with the WorkWithPlus convention reject the flat
+            //    layout body with "marca (table) não corresponde ao nome do elemento (detail)"
+            //    (WebLayoutHandler.LoadPanelElement). When the probe identifies a WWP KB we
+            //    emit the dual-form <detail><layout><table controlName tableType="Responsive"
+            //    class="GUID-N"> structure with the harvested theme prefix. Probe failure or
+            //    non-WWP KB falls back to the flat schema (which is what worked pre-fix).
+            GxMcp.Worker.Helpers.WwpConventionProbe.Result wwpProbe = null;
+            try { wwpProbe = _backend.ProbeWwpConvention(); } catch { /* best-effort */ }
+            bool useWwpSchema = wwpProbe != null && wwpProbe.IsWwp;
+            string layoutXml = useWwpSchema
+                ? PopupLayoutBuilder.BuildWwpLayoutXml(pspec, wwpProbe.ThemeClassPrefix)
+                : PopupLayoutBuilder.BuildLayoutXml(pspec);
             var gotchas = LayoutGotchaScanner.Scan(layoutXml, _ => null);
             if (gotchas.Count > 0)
             {

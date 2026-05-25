@@ -253,6 +253,179 @@ namespace GxMcp.Worker.Helpers
         }
 
         /// <summary>
+        /// Builds the WebForm part XML for a WorkWithPlus-convention dual-form
+        /// layout popup body: <c>&lt;Form type="layout"&gt;&lt;detail&gt;&lt;layout id="GUID"&gt;
+        /// &lt;table controlName="LayoutMainTable" tableType="Responsive" class="THEMEGUID-NN"&gt;</c>.
+        /// Required by KBs with <c>wwpMetadata.isWorkWithPlusAware: true</c> — the flat schema
+        /// emitted by <see cref="BuildLayoutXml"/> is rejected by
+        /// <c>WebLayoutHandler.LoadPanelElement</c> on these KBs.
+        ///
+        /// <paramref name="themeClassPrefix"/> is the 36-char theme GUID harvested from an existing
+        /// layout-form WebPanel (e.g. <c>d4876646-98dd-419b-8c1c-896f83c48368</c> in
+        /// AcademicoHomolog1). When null/empty, falls back to symbolic theme names
+        /// ("Attribute", "Button", …) which most WWP themes also resolve.
+        /// Per-element class suffixes: -4 data attribute, -24 textblock, -46 action,
+        /// -59 errorviewer.
+        /// </summary>
+        public static string BuildWwpLayoutXml(PopupSpec spec, string themeClassPrefix)
+        {
+            if (spec == null) throw new ArgumentNullException(nameof(spec));
+
+            string ClassRef(int suffix, string symbolicFallback)
+            {
+                if (!string.IsNullOrEmpty(themeClassPrefix))
+                    return themeClassPrefix + "-" + suffix.ToString(CultureInfo.InvariantCulture);
+                return symbolicFallback;
+            }
+
+            string Guid() => System.Guid.NewGuid().ToString();
+            string layoutId = Guid();
+            string mainTableId = Guid();
+
+            var sb = new StringBuilder();
+            sb.Append("<GxMultiForm rootId=\"1\" version=\"html:15.0.0;layout:17.11.0\">");
+            sb.Append("<Form id=\"1\" type=\"layout\" Class=\"Form\">");
+            sb.Append("<detail>");
+            sb.Append("<layout id=\"").Append(layoutId).Append("\">");
+            sb.Append("<table id=\"").Append(mainTableId)
+              .Append("\" controlName=\"LayoutMainTable\" tableType=\"Responsive\" responsiveSizes=\"[]\" class=\"")
+              .Append(Esc(ClassRef(23, "TableGrid"))).Append("\">");
+
+            // ErrorViewer row
+            sb.Append("<row id=\"").Append(Guid()).Append("\">");
+            sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
+            sb.Append("<errorviewer id=\"").Append(Guid())
+              .Append("\" controlName=\"ErrorViewer\" class=\"")
+              .Append(Esc(ClassRef(59, "ErrorViewer"))).Append("\" />");
+            sb.Append("</cell></row>");
+
+            // Title
+            if (!string.IsNullOrWhiteSpace(spec.Title))
+            {
+                sb.Append("<row id=\"").Append(Guid()).Append("\">");
+                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
+                sb.Append("<textblock id=\"").Append(Guid())
+                  .Append("\" controlName=\"TbTitle\" captionExpression=\"")
+                  .Append(Esc(spec.Title)).Append("\" Format=\"Text\" class=\"")
+                  .Append(Esc(ClassRef(24, "TextBlock"))).Append("\" />");
+                sb.Append("</cell></row>");
+            }
+
+            // Description
+            if (!string.IsNullOrWhiteSpace(spec.Description))
+            {
+                sb.Append("<row id=\"").Append(Guid()).Append("\">");
+                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
+                sb.Append("<textblock id=\"").Append(Guid())
+                  .Append("\" controlName=\"TbDescription\" captionExpression=\"")
+                  .Append(Esc(spec.Description)).Append("\" Format=\"Text\" class=\"")
+                  .Append(Esc(ClassRef(24, "TextBlock"))).Append("\" />");
+                sb.Append("</cell></row>");
+            }
+
+            // Inputs
+            int idx = 0;
+            foreach (var inp in spec.Inputs)
+            {
+                string safeVar = SafeId(inp.VarName);
+                sb.Append("<row id=\"").Append(Guid()).Append("\">");
+                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
+
+                if (string.Equals(inp.Type, "radio", StringComparison.OrdinalIgnoreCase))
+                {
+                    // WWP radio: <data attribute="var:safeVar" labelPosition="None"
+                    // class="<theme>-4" PATTERN_ELEMENT_CUSTOM_PROPERTIES="&lt;Properties&gt;…">
+                    sb.Append("<data id=\"").Append(Guid())
+                      .Append("\" controlName=\"Att").Append(safeVar)
+                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                      .Append("\" labelPosition=\"None\" class=\"")
+                      .Append(Esc(ClassRef(4, "Attribute"))).Append("\" ");
+                    sb.Append("PATTERN_ELEMENT_CUSTOM_PROPERTIES=\"")
+                      .Append(BuildWwpRadioCustomProps(inp))
+                      .Append("\" />");
+                }
+                else if (string.Equals(inp.Type, "combo", StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.Append("<data id=\"").Append(Guid())
+                      .Append("\" controlName=\"Att").Append(safeVar)
+                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                      .Append("\" labelCaption=\"").Append(Esc(inp.Label ?? safeVar))
+                      .Append("\" class=\"").Append(Esc(ClassRef(4, "Attribute")))
+                      .Append("\" PATTERN_ELEMENT_CUSTOM_PROPERTIES=\"")
+                      .Append(BuildWwpComboCustomProps(inp))
+                      .Append("\" />");
+                }
+                else
+                {
+                    // text — default Edit control
+                    sb.Append("<data id=\"").Append(Guid())
+                      .Append("\" controlName=\"Att").Append(safeVar)
+                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                      .Append("\" labelCaption=\"").Append(Esc(inp.Label ?? safeVar))
+                      .Append("\" class=\"").Append(Esc(ClassRef(4, "Attribute")))
+                      .Append("\" />");
+                }
+                sb.Append("</cell></row>");
+                idx++;
+            }
+
+            // Buttons row (HAlign right)
+            sb.Append("<row id=\"").Append(Guid()).Append("\">");
+            sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\" HAlign=\"right\">");
+            foreach (var btn in spec.Buttons)
+            {
+                string caption = string.IsNullOrEmpty(btn.Caption) ? "Confirmar" : btn.Caption;
+                string evt = string.IsNullOrEmpty(btn.Event) ? "Enter" : btn.Event;
+                // WWP convention: onClickEvent is the unquoted event name (no single-quote
+                // wrap that BuildLayoutXml uses for flat-schema gxButton). Avoids the
+                // descriptor-name fixup path entirely.
+                sb.Append("<action id=\"").Append(Guid())
+                  .Append("\" controlName=\"Btn").Append(SafeId(evt))
+                  .Append("\" onClickEvent=\"").Append(Esc(evt))
+                  .Append("\" caption=\"").Append(Esc(caption))
+                  .Append("\" class=\"").Append(Esc(ClassRef(46, "Button")))
+                  .Append("\" />");
+            }
+            sb.Append("</cell></row>");
+
+            sb.Append("</table>");
+            sb.Append("</layout>");
+            sb.Append("</detail>");
+            sb.Append("</Form>");
+            sb.Append("</GxMultiForm>");
+            return sb.ToString();
+        }
+
+        // WWP radio Properties payload — entity-encoded for the
+        // PATTERN_ELEMENT_CUSTOM_PROPERTIES attribute value.
+        private static string BuildWwpRadioCustomProps(PopupInput inp)
+        {
+            // ControlValues separator for WWP radios is "Label:Value,Label:Value"
+            // (NOT the ";"+"," form used by flat-schema gxAttribute).
+            string controlValues = string.Join(",",
+                inp.Options.Select(o => (o.Label ?? "") + ":" + (o.Value ?? "")));
+            var inner = new StringBuilder();
+            inner.Append("<Properties>");
+            inner.Append("<Property><Name>ControlType</Name><Value>Radio Button</Value></Property>");
+            inner.Append("<Property><Name>ControlValues</Name><Value>").Append(SecurityElement.Escape(controlValues)).Append("</Value></Property>");
+            inner.Append("<Property><Name>RadioDirection</Name><Value>Vertical</Value></Property>");
+            inner.Append("</Properties>");
+            return SecurityElement.Escape(inner.ToString());
+        }
+
+        private static string BuildWwpComboCustomProps(PopupInput inp)
+        {
+            string controlValues = string.Join(",",
+                inp.Options.Select(o => (o.Label ?? "") + ":" + (o.Value ?? "")));
+            var inner = new StringBuilder();
+            inner.Append("<Properties>");
+            inner.Append("<Property><Name>ControlType</Name><Value>Combo Box</Value></Property>");
+            inner.Append("<Property><Name>ControlValues</Name><Value>").Append(SecurityElement.Escape(controlValues)).Append("</Value></Property>");
+            inner.Append("</Properties>");
+            return SecurityElement.Escape(inner.ToString());
+        }
+
+        /// <summary>
         /// Builds the Rules part source from inParms / outParms.
         /// </summary>
         public static string BuildRulesSource(PopupSpec spec)

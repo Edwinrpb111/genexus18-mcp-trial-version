@@ -2770,7 +2770,54 @@ namespace GxMcp.Worker.Services
                     // which was often a generic wrapper. Walk InnerException so the
                     // root SDK error (e.g. "Invalid reference: variable 'XYZ' not
                     // declared") makes it to the response details.
-                    return CreateWriteError("Visual write failed", target, partName, FormatExceptionChain(ex), obj);
+                    string chain = FormatExceptionChain(ex);
+
+                    // Friction 2026-05-25 — recognize specific failure shapes
+                    // observed in real-world sessions and translate them into
+                    // structured next-steps the LLM can act on. The bare
+                    // "Visual write failed" envelope used to cost callers
+                    // several iterations to diagnose; with a recognizable hint
+                    // they correct on the next call.
+                    string hint = null;
+                    if (!string.IsNullOrEmpty(chain))
+                    {
+                        if (chain.IndexOf("marca (table) não corresponde", StringComparison.OrdinalIgnoreCase) >= 0
+                            || chain.IndexOf("convertion of formId", StringComparison.OrdinalIgnoreCase) >= 0
+                            || chain.IndexOf("WebLayoutHandler", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            hint = "This KB requires the WorkWithPlus dual-form layout schema: " +
+                                   "<Form id=\"1\" type=\"layout\"><detail><layout id=\"GUID\"><table controlName tableType=\"Responsive\" class=\"<themeGUID>-N\">...</table></layout></detail></Form>. " +
+                                   "The flat-table body is rejected by WebLayoutHandler.LoadPanelElement. " +
+                                   "Use genexus_create_popup (auto-detects WWP and emits the right schema) " +
+                                   "or hand-roll the dual-form XML harvested from an existing layout-form WebPanel in the same KB.";
+                        }
+                        else if (chain.IndexOf("variable", StringComparison.OrdinalIgnoreCase) >= 0
+                                 && chain.IndexOf("not declared", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            hint = "The visual XML references a variable that doesn't exist on the object. " +
+                                   "Add the variable first via genexus_add_variable, then retry the write.";
+                        }
+                        else if (chain.IndexOf("Form type", StringComparison.OrdinalIgnoreCase) >= 0
+                                 && (chain.IndexOf("transition", StringComparison.OrdinalIgnoreCase) >= 0
+                                     || chain.IndexOf("html", StringComparison.OrdinalIgnoreCase) >= 0))
+                        {
+                            hint = "Form type transitions (html → layout) are not supported via patch/visual writes. " +
+                                   "Use mode='full' with the COMPLETE target-type body (including the new <Form type=\"layout\"> root and all children).";
+                        }
+                    }
+
+                    var visualErr = CreateWriteError("Visual write failed", target, partName, chain, obj);
+                    if (!string.IsNullOrEmpty(hint))
+                    {
+                        try
+                        {
+                            var jo = Newtonsoft.Json.Linq.JObject.Parse(visualErr);
+                            jo["hint"] = hint;
+                            return jo.ToString();
+                        }
+                        catch { /* fall through to plain envelope */ }
+                    }
+                    return visualErr;
                 }
             }
         }

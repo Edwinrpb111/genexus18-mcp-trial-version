@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.6.10 — 2026-05-25
+
+Six fixes to surfaces that surfaced friction during the v2.6.9 popup-conversion session — every gap that turned a 10-min task into a 90-min one is now closed.
+
+### Fixed
+
+- **`genexus_create_popup` now works on WorkWithPlus KBs.** The flat `<Form type="layout"><table>` body emitted by prior versions was rejected by `WebLayoutHandler.LoadPanelElement` with `"Elemento não pode ser desserializado do nó XML porque sua marca (table) não corresponde ao nome do elemento (detail)"` on any KB with the WorkWithPlus dual-form convention — i.e. most GeneXus 18 KBs in the field. A new `WwpConventionProbe` samples existing layout-form WebPanels to detect the convention and harvest the theme class GUID prefix (e.g. `d4876646-98dd-419b-8c1c-896f83c48368`), and `PopupLayoutBuilder.BuildWwpLayoutXml` emits the proper `<Form type="layout"><detail><layout id="GUID"><table controlName tableType="Responsive" class="<prefix>-N">…</table></layout></detail></Form>` structure with class suffixes `-4` (data attribute), `-24` (textblock), `-46` (action), `-59` (errorviewer). Non-WWP KBs keep the flat-schema path.
+- **`genexus_search_source` gained `fields=["webForm"]` scope.** WebForm XML wasn't indexed by any search; the agent was blind to layout-form examples (e.g. "how does this KB express a Radio Button in WWP?") even when one existed in the same KB. Opt-in via the new `webForm` value so the default code-search path stays fast; reuses `WebFormXmlHelper.ReadEditableXml` for the read.
+- **`genexus_preview` wall-clock budget + GAM-redirect detection.** A single preview against a GAM-protected panel used to wedge the STA worker thread for 10+ minutes — every other MCP tool queued behind it until /mcp reconnect. Now bounded by `GXMCP_PREVIEW_BUDGET_MS` (default 60 s); per-step CLI timeouts shrink as the budget burns down. Final URL is also captured after the launcher loads so the GAM-login detector catches the redirect even when the requested URL itself isn't a login URL. Returns `{status:"Error", code:"PreviewTimeout", elapsedMs, stage}` instead of blocking.
+- **Visual write failures translate known SDK-error shapes into actionable hints.** "Visual write failed" used to ship as a bare message; the exception chain is now reachable via the diff-allowlist (see v2.6.9's TrimErrorEnvelope expansion), and on top of that recognised patterns get a structured `hint` — e.g. `marca (table) não corresponde` / `WebLayoutHandler` maps to "use the WWP dual-form schema", `variable not declared` maps to "add the variable first via genexus_add_variable".
+- **`apply_pattern reapply=true` projection-step stopwatch.** Reapply on a host whose parent / WorkWithPlus host is open in a GeneXus IDE tab takes 10+ minutes (SDK deadlock); on a free object it's 1–3 s. Reapply now times the `UpdateParentObject` projection phase and logs `[APPLY-PATTERN] projection took NN ms — likely IDE-tab-hold contention` at WARN above 30 s, with the elapsed time also surfaced in the `phases` envelope. The `.lock` per-object pre-check stays as defence in depth where it triggers (true positives only — see the limitation note below).
+- **`childrenOrderedList` reconciliation no longer skips parents that contain variables / web components / images.** The WorkWithPlus convention omits these kinds from `childrenOrderedList` by design — IDE addresses them by `name`/`controlName`. Prior versions saw an unknown kind and bailed on the whole parent's list reconciliation with a misleading `"may not render in the IDE until corrected manually"` skip note. Now those kinds are treated as `NonOrderedKinds` — skipped from the list but the parent's other orderable children still get an updated `childrenOrderedList`.
+
+### Internal
+
+- `release.ps1` `Invoke-Cmd` parameter renamed from `$Args` (collides with PowerShell's automatic variable — `@Args` then splats the empty automatic instead of the caller's array; killed the v2.6.9 release at "Tagging $tag" with `git` printing its top-level help) to `$Arguments`.
+- `PopupTemplateService.IPopupBackend` adds `ProbeWwpConvention()`. Test fakes return null so the flat-schema emit path stays exercised.
+- Known limitation, tracked: the `.lock` per-object IDE-detection signal is a false-negative for currently-open tabs (GeneXus IDE doesn't write per-object lock files for tab opens; `<KB>/2635801/AcademicoHomolog.workspace` is only flushed on session close). Time-based safety net documented above is the practical fallback.
+
 ## v2.6.9 — 2026-05-25
 
 Adds the REST/DB/GxServer/type/profiler/cross-platform tool surfaces, a self-extending recipe catalog, IDE-parity tools the previous releases left stubbed, and a `next_legal_actions` hint block that turns every state-changing response into a guided next call. Tool-list payload also drops ~6.6 % (~860 tokens) and per-response payload drops ~29 % (~74 B) from a metadata trim — both spec-clean MCP, no client opt-in.

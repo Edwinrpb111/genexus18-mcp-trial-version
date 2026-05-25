@@ -43,6 +43,7 @@ namespace GxMcp.Worker.Tests
             }
 
             public bool ObjectExists(string name) => Existing.Contains(name);
+            public GxMcp.Worker.Helpers.WwpConventionProbe.Result ProbeWwpConvention() => null;
         }
 
         // === Sample spec used across tests (mirrors the UG popup the friction report describes). ===

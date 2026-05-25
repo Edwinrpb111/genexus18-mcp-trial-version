@@ -203,9 +203,10 @@ namespace GxMcp.Worker.Services
                             if (string.Equals(field, "description", StringComparison.OrdinalIgnoreCase))
                                 fieldValue = e.Description;
                             else if (string.Equals(field, "caption", StringComparison.OrdinalIgnoreCase) ||
-                                     string.Equals(field, "parmNames", StringComparison.OrdinalIgnoreCase))
+                                     string.Equals(field, "parmNames", StringComparison.OrdinalIgnoreCase) ||
+                                     string.Equals(field, "webForm", StringComparison.OrdinalIgnoreCase))
                             {
-                                // Caption / parmNames require SDK access
+                                // Caption / parmNames / webForm require SDK access
                                 KBObject obj2 = null;
                                 try { obj2 = _objectService.FindObject(e.Name); } catch { }
                                 if (obj2 == null) continue;
@@ -216,6 +217,16 @@ namespace GxMcp.Worker.Services
                                         dynamic dyn = obj2;
                                         fieldValue = dyn?.Form?.Caption?.ToString() ?? dyn?.Caption?.ToString() ?? "";
                                     }
+                                    catch { fieldValue = ""; }
+                                }
+                                else if (string.Equals(field, "webForm", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // webForm — scan the WebForm XML (WebPanel / Transaction layouts).
+                                    // Opt-in via fields=[webForm] because the XML can be large; we
+                                    // never load it on the default code-search path. Reuses the
+                                    // same read path as WriteService / PatchService via
+                                    // WebFormXmlHelper.ReadEditableXml.
+                                    try { fieldValue = GxMcp.Worker.Helpers.WebFormXmlHelper.ReadEditableXml(obj2) ?? ""; }
                                     catch { fieldValue = ""; }
                                 }
                                 else // parmNames — scan Rules part for 'parm(' signature

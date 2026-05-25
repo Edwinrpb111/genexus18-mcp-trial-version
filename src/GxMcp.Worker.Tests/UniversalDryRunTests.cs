@@ -43,6 +43,7 @@ namespace GxMcp.Worker.Tests
             public string AddVariable(string target, string v, string t) { Vars.Add((target, v, t)); return "{}"; }
             public string WriteObject(string target, string p, string c) { Writes.Add((target, p, c)); return "{}"; }
             public bool ObjectExists(string name) => false;
+            public GxMcp.Worker.Helpers.WwpConventionProbe.Result ProbeWwpConvention() => null;
         }
 
         private static JObject SimpleSpec() => JObject.Parse(@"{
