@@ -95,6 +95,34 @@ namespace GxMcp.Worker.Helpers
                 }
                 if (!string.Equals(ax[i].Value, ay[i].Value, StringComparison.Ordinal))
                 {
+                    // Friction 2026-05-25 (live test) — the SDK auto-resolves
+                    // symbolic theme-class names to their GUID-suffixed form on
+                    // persist: a requested class="Attribute" becomes
+                    // class="d4876646-…-4", "TableGrid" → "…-131", "ErrorViewer"
+                    // → "…-59", etc. This is correct SDK behaviour, not a write
+                    // rejection — both names point at the same theme class. The
+                    // verifier used to flag every popup write because the
+                    // probe's fallback symbolic names always got resolved.
+                    // Tolerate the diff when the attribute is in the class
+                    // family AND one side is symbolic while the other is a
+                    // `<guid>-<int>` resolution.
+                    if (IsClassFamilyAttribute(ax[i].Name.LocalName) &&
+                        IsSymbolicVsGuidClassPair(ax[i].Value, ay[i].Value))
+                    {
+                        continue;
+                    }
+                    // Friction 2026-05-25 (live test) — analogous SDK resolution
+                    // on variable references: a requested attribute="&Choice"
+                    // is persisted as attribute="var:5" because the SDK looks
+                    // up the variable by name and stores its numeric ID. Both
+                    // point at the same variable. Same shape: tolerate when
+                    // the attribute name is in the variable-ref family AND
+                    // sides are "&Name" vs "var:N" / "att:N".
+                    if (IsVariableRefAttribute(ax[i].Name.LocalName) &&
+                        IsAmpersandVsVarRefPair(ax[i].Value, ay[i].Value))
+                    {
+                        continue;
+                    }
                     diff = "Attribute '" + ax[i].Name + "' differs at " + path + x.Name
                            + ": '" + Truncate(ax[i].Value) + "' vs '" + Truncate(ay[i].Value) + "'";
                     structured = new XmlEquivalenceDiff { Path = path + x.Name, ElementName = x.Name.LocalName, Summary = diff, LeftAttributes = lNames, RightAttributes = rNames };
@@ -156,6 +184,85 @@ namespace GxMcp.Worker.Helpers
         {
             if (s == null) return string.Empty;
             return s.Length <= 80 ? s : s.Substring(0, 80) + "…";
+        }
+
+        // Friction 2026-05-25 — set of attributes whose values are theme-class
+        // refs the SDK may auto-resolve from symbolic name → GUID form.
+        private static readonly System.Collections.Generic.HashSet<string> ClassFamilyAttrs =
+            new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "class", "classref", "themeClass", "cellClass", "groupThemeClass",
+                "defaultClass", "defaultThemeClass", "defaultCellThemeClass",
+                "defaultGroupThemeClass", "columnClass", "defaultColumnClass",
+                "ATTThemeClass", "AttBaseClass"
+            };
+
+        private static bool IsClassFamilyAttribute(string localName)
+            => ClassFamilyAttrs.Contains(localName);
+
+        // GUID-suffixed class form: <8-4-4-4-12>-<int>, e.g. "d4876646-98dd-419b-8c1c-896f83c48368-131".
+        private static readonly System.Text.RegularExpressions.Regex GuidSuffixedClassRx =
+            new System.Text.RegularExpressions.Regex(
+                @"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}-\d+$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        // Symbolic class form: a bare theme-class name (letters/digits, no dash).
+        private static readonly System.Text.RegularExpressions.Regex SymbolicClassRx =
+            new System.Text.RegularExpressions.Regex(@"^[A-Za-z][A-Za-z0-9_]*$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// True when one side of a class-attribute diff is a symbolic theme name
+        /// (e.g. "Attribute", "TableGrid", "ErrorViewer") and the other is the
+        /// SDK-resolved <c>&lt;guid&gt;-&lt;int&gt;</c> form. Both refer to the
+        /// same theme class — the verifier should NOT flag this as a write
+        /// rejection.
+        /// </summary>
+        private static bool IsSymbolicVsGuidClassPair(string left, string right)
+        {
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
+            bool leftSym = SymbolicClassRx.IsMatch(left);
+            bool rightSym = SymbolicClassRx.IsMatch(right);
+            bool leftGuid = GuidSuffixedClassRx.IsMatch(left);
+            bool rightGuid = GuidSuffixedClassRx.IsMatch(right);
+            return (leftSym && rightGuid) || (leftGuid && rightSym);
+        }
+
+        // Friction 2026-05-25 — attributes whose values are variable/attribute
+        // references the SDK may auto-resolve from ampersand-name → numeric ID.
+        private static readonly System.Collections.Generic.HashSet<string> VariableRefAttrs =
+            new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "attribute", "AttID", "domain", "defaultDomain"
+            };
+
+        private static bool IsVariableRefAttribute(string localName)
+            => VariableRefAttrs.Contains(localName);
+
+        // Ampersand-name form: &VarName (variable) — letters/digits/underscore after &.
+        private static readonly System.Text.RegularExpressions.Regex AmpVarRefRx =
+            new System.Text.RegularExpressions.Regex(@"^&[A-Za-z_][A-Za-z0-9_]*$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        // SDK-resolved variable form: var:N or att:N (decimal integer).
+        private static readonly System.Text.RegularExpressions.Regex VarNumericRefRx =
+            new System.Text.RegularExpressions.Regex(@"^(?:var|att):\d+$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// True when one side of a variable-ref attribute diff is an ampersand-
+        /// name reference (e.g. "&Choice") and the other is the SDK-resolved
+        /// numeric form (e.g. "var:5", "att:15664"). Both point at the same
+        /// variable/attribute — the verifier should not flag this.
+        /// </summary>
+        private static bool IsAmpersandVsVarRefPair(string left, string right)
+        {
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
+            bool leftAmp = AmpVarRefRx.IsMatch(left);
+            bool rightAmp = AmpVarRefRx.IsMatch(right);
+            bool leftNum = VarNumericRefRx.IsMatch(left);
+            bool rightNum = VarNumericRefRx.IsMatch(right);
+            return (leftAmp && rightNum) || (leftNum && rightAmp);
         }
 
         // v2.3.8 Task 4.6 — line-based diff used by patch verification to decide whether

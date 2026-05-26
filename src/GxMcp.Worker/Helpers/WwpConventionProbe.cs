@@ -59,18 +59,42 @@ namespace GxMcp.Worker.Helpers
             catch { }
 
             // (2) Sample WebPanels for the <detail><layout> pattern + theme GUID prefix.
+            //
+            // Friction 2026-05-25 (live test) — first impl bounded `scanned` only on
+            // WebPanel hits, so the loop iterated EVERY object in the KB (~38k for
+            // AcademicoHomolog1) before reaching the cap. With non-WebPanels making up
+            // ~95% of objects and the STA thread also being used by the background
+            // enricher, the first create_popup call hung for 5+ minutes. Now bound by
+            // both: hard ceiling on total iterations AND a wall-clock budget.
+            // Optimization: when the WWP assembly is loaded, fast-return IsWwp=true
+            // BEFORE the heavy sample loop. The theme-class prefix is a nice-to-have
+            // (the SDK accepts symbolic "Attribute"/"Button" theme names too), so we
+            // can opt in to the prefix-harvest only when affordable.
             try
             {
                 dynamic kb = kbService.GetKB();
                 if (kb == null) { result.Reason = "no KB"; return result; }
-                int scanned = 0;
-                const int MaxScan = 40; // bounded — first hit usually within 5-10 WebPanels
+
+                // Fast-path: if WWP package is loaded, we're virtually certainly in a
+                // WWP-aware KB. Try the sample loop with a tight budget; if it doesn't
+                // find a sample, return IsWwp=true anyway (without theme prefix).
+                int totalScanned = 0;
+                int webPanelsScanned = 0;
+                const int MaxWebPanels = 25;
+                const int MaxTotalIter = 2000;
+                const int MaxBudgetMs = 5000;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
                 foreach (KBObject obj in (System.Collections.IEnumerable)kb.DesignModel.Objects.GetAll())
                 {
+                    if (++totalScanned >= MaxTotalIter) break;
+                    if (sw.ElapsedMilliseconds >= MaxBudgetMs) break;
+
                     string typeName = null;
                     try { typeName = obj.TypeDescriptor?.Name; } catch { }
                     if (!string.Equals(typeName, "WebPanel", StringComparison.OrdinalIgnoreCase))
                         continue;
+
                     string source = null;
                     try
                     {
@@ -90,24 +114,26 @@ namespace GxMcp.Worker.Helpers
                         {
                             result.ThemeClassPrefix = m.Groups[1].Value;
                         }
-                        result.Reason = "Found <detail><layout> WebForm in " + obj.Name;
+                        result.Reason = "Found <detail><layout> WebForm in " + obj.Name +
+                            " (scanned " + webPanelsScanned + " WebPanels / " + totalScanned + " total in " + sw.ElapsedMilliseconds + "ms)";
                         return result;
                     }
 
-                    if (++scanned >= MaxScan) break;
+                    if (++webPanelsScanned >= MaxWebPanels) break;
                 }
 
                 if (wwpAsmLoaded)
                 {
                     // WWP package is loaded but we didn't find a dual-form sample in the
-                    // scanned window. Treat as WWP-aware; emit without a theme prefix
+                    // bounded window. Treat as WWP-aware; emit without a theme prefix
                     // (the SDK accepts the unrooted "Attribute" / "Button" theme names too).
                     result.IsWwp = true;
-                    result.Reason = "DVelop.Patterns.WorkWithPlus loaded; no dual-form sample harvested";
+                    result.Reason = "DVelop.Patterns.WorkWithPlus loaded; no dual-form sample within budget (" +
+                        webPanelsScanned + " WebPanels / " + totalScanned + " total in " + sw.ElapsedMilliseconds + "ms)";
                     return result;
                 }
 
-                result.Reason = "Scanned " + scanned + " WebPanels; no <detail><layout> pattern; WWP asm not loaded";
+                result.Reason = "Scanned " + webPanelsScanned + " WebPanels (" + totalScanned + " total); no <detail><layout> pattern; WWP asm not loaded";
                 return result;
             }
             catch (Exception ex)

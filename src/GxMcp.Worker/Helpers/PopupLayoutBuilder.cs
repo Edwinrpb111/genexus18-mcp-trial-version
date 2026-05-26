@@ -191,7 +191,7 @@ namespace GxMcp.Worker.Helpers
                 string attId = "AttInput" + idx;
 
                 sb.Append("<row id=\"").Append(rowId).Append("\">");
-                sb.Append("<cell id=\"CellInput").Append(idx).Append("\" ColSpan=\"2\">");
+                sb.Append("<cell id=\"CellInput").Append(idx).Append("\">");
                 sb.Append("<group id=\"").Append(groupId).Append("\" Class=\"Group\">");
                 sb.Append("<table id=\"Tbl").Append(groupId).Append("\" class=\"Table\">");
 
@@ -292,21 +292,29 @@ namespace GxMcp.Worker.Helpers
               .Append(Esc(ClassRef(23, "TableGrid"))).Append("\">");
 
             // ErrorViewer row
+            // Friction 2026-05-25 (live test) — SDK strips `id` on elements
+            // addressed by controlName (errorviewer/textblock/data/action).
+            // Only structural containers (row/cell/table/layout/group) keep
+            // their GUID ids. First impl emitted id on every element which
+            // triggered verifier diffs on every popup write.
             sb.Append("<row id=\"").Append(Guid()).Append("\">");
-            sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
-            sb.Append("<errorviewer id=\"").Append(Guid())
-              .Append("\" controlName=\"ErrorViewer\" class=\"")
+            sb.Append("<cell id=\"").Append(Guid()).Append("\">");
+            sb.Append("<errorviewer controlName=\"ErrorViewer\" class=\"")
               .Append(Esc(ClassRef(59, "ErrorViewer"))).Append("\" />");
             sb.Append("</cell></row>");
 
             // Title
+            // Friction 2026-05-25 (live test) — SDK strips `captionExpression`
+            // and `Format` on <textblock> in dual-form layouts; the WWP
+            // convention is `caption="…" defaultCaption="…"` (per parent screens
+            // like WorkWithPlusListaAtiCPAlunoUniGra). First impl used
+            // captionExpression which silently dropped the title at save time.
             if (!string.IsNullOrWhiteSpace(spec.Title))
             {
                 sb.Append("<row id=\"").Append(Guid()).Append("\">");
-                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
-                sb.Append("<textblock id=\"").Append(Guid())
-                  .Append("\" controlName=\"TbTitle\" captionExpression=\"")
-                  .Append(Esc(spec.Title)).Append("\" Format=\"Text\" class=\"")
+                sb.Append("<cell id=\"").Append(Guid()).Append("\">");
+                sb.Append("<textblock controlName=\"TbTitle\" caption=\"")
+                  .Append(Esc(spec.Title)).Append("\" class=\"")
                   .Append(Esc(ClassRef(24, "TextBlock"))).Append("\" />");
                 sb.Append("</cell></row>");
             }
@@ -315,10 +323,9 @@ namespace GxMcp.Worker.Helpers
             if (!string.IsNullOrWhiteSpace(spec.Description))
             {
                 sb.Append("<row id=\"").Append(Guid()).Append("\">");
-                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
-                sb.Append("<textblock id=\"").Append(Guid())
-                  .Append("\" controlName=\"TbDescription\" captionExpression=\"")
-                  .Append(Esc(spec.Description)).Append("\" Format=\"Text\" class=\"")
+                sb.Append("<cell id=\"").Append(Guid()).Append("\">");
+                sb.Append("<textblock controlName=\"TbDescription\" caption=\"")
+                  .Append(Esc(spec.Description)).Append("\" class=\"")
                   .Append(Esc(ClassRef(24, "TextBlock"))).Append("\" />");
                 sb.Append("</cell></row>");
             }
@@ -329,15 +336,15 @@ namespace GxMcp.Worker.Helpers
             {
                 string safeVar = SafeId(inp.VarName);
                 sb.Append("<row id=\"").Append(Guid()).Append("\">");
-                sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\">");
+                sb.Append("<cell id=\"").Append(Guid()).Append("\">");
 
                 if (string.Equals(inp.Type, "radio", StringComparison.OrdinalIgnoreCase))
                 {
-                    // WWP radio: <data attribute="var:safeVar" labelPosition="None"
-                    // class="<theme>-4" PATTERN_ELEMENT_CUSTOM_PROPERTIES="&lt;Properties&gt;…">
-                    sb.Append("<data id=\"").Append(Guid())
-                      .Append("\" controlName=\"Att").Append(safeVar)
-                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                    // WWP radio: <data attribute="&Var" labelPosition="None" class="<theme>-4"
+                    // PATTERN_ELEMENT_CUSTOM_PROPERTIES="&lt;Properties&gt;…">.
+                    // Friction 2026-05-25 (live test) — `<data>` is addressed by the
+                    // `attribute` reference, not by controlName. SDK strips controlName.
+                    sb.Append("<data attribute=\"&amp;").Append(safeVar)
                       .Append("\" labelPosition=\"None\" class=\"")
                       .Append(Esc(ClassRef(4, "Attribute"))).Append("\" ");
                     sb.Append("PATTERN_ELEMENT_CUSTOM_PROPERTIES=\"")
@@ -346,9 +353,7 @@ namespace GxMcp.Worker.Helpers
                 }
                 else if (string.Equals(inp.Type, "combo", StringComparison.OrdinalIgnoreCase))
                 {
-                    sb.Append("<data id=\"").Append(Guid())
-                      .Append("\" controlName=\"Att").Append(safeVar)
-                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                    sb.Append("<data attribute=\"&amp;").Append(safeVar)
                       .Append("\" labelCaption=\"").Append(Esc(inp.Label ?? safeVar))
                       .Append("\" class=\"").Append(Esc(ClassRef(4, "Attribute")))
                       .Append("\" PATTERN_ELEMENT_CUSTOM_PROPERTIES=\"")
@@ -358,9 +363,7 @@ namespace GxMcp.Worker.Helpers
                 else
                 {
                     // text — default Edit control
-                    sb.Append("<data id=\"").Append(Guid())
-                      .Append("\" controlName=\"Att").Append(safeVar)
-                      .Append("\" attribute=\"&amp;").Append(safeVar)
+                    sb.Append("<data attribute=\"&amp;").Append(safeVar)
                       .Append("\" labelCaption=\"").Append(Esc(inp.Label ?? safeVar))
                       .Append("\" class=\"").Append(Esc(ClassRef(4, "Attribute")))
                       .Append("\" />");
@@ -369,9 +372,11 @@ namespace GxMcp.Worker.Helpers
                 idx++;
             }
 
-            // Buttons row (HAlign right)
+            // Buttons row — visual right-alignment achieved via theme class on
+            // the inner action(s); SDK strips ColSpan and HAlign from <cell>
+            // in WWP layout-form.
             sb.Append("<row id=\"").Append(Guid()).Append("\">");
-            sb.Append("<cell id=\"").Append(Guid()).Append("\" ColSpan=\"2\" HAlign=\"right\">");
+            sb.Append("<cell id=\"").Append(Guid()).Append("\">");
             foreach (var btn in spec.Buttons)
             {
                 string caption = string.IsNullOrEmpty(btn.Caption) ? "Confirmar" : btn.Caption;
@@ -379,8 +384,7 @@ namespace GxMcp.Worker.Helpers
                 // WWP convention: onClickEvent is the unquoted event name (no single-quote
                 // wrap that BuildLayoutXml uses for flat-schema gxButton). Avoids the
                 // descriptor-name fixup path entirely.
-                sb.Append("<action id=\"").Append(Guid())
-                  .Append("\" controlName=\"Btn").Append(SafeId(evt))
+                sb.Append("<action controlName=\"Btn").Append(SafeId(evt))
                   .Append("\" onClickEvent=\"").Append(Esc(evt))
                   .Append("\" caption=\"").Append(Esc(caption))
                   .Append("\" class=\"").Append(Esc(ClassRef(46, "Button")))
