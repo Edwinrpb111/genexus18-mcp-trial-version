@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.11 — 2026-05-26
+
+### Fixed
+
+- **`apply_pattern reapply=true` no longer returns silent `status:"Success"` when the pattern's Events-by-WorkWithPlus generation will fail at the next IDE save.** Live repro: a fresh PatternInstance (created when `wasFirstApply` lands on a host that had been rebuilt) doesn't carry forward the previous host's controlName map, so any reference in the parent's Events code to a control the new instance doesn't expose (typically `GrpX.Visible = …` after a popup conversion) fails with `src0265: Invalid attribute 'GrpX'` + `src0216: 'Visible' invalid property` — but only visible to the user when they try `Ctrl+S` in the IDE, well after the MCP has already declared the reapply a success. The reapply now runs `SdkDiagnosticsHelper.GetDiagnostics(parent)` after the projection phase and surfaces `Error`-severity diagnostics (plus the WWP-projection-specific src0265 / src0216 codes) in the response. When issues are found the envelope flips to `status:"PartialFailure"` with `patternValidationIssues:[…]` and a hint telling the agent which Events references to fix before the user's next save.
+
 ## v2.6.10 — 2026-05-25
 
 Six fixes to surfaces that surfaced friction during the v2.6.9 popup-conversion session — every gap that turned a 10-min task into a 90-min one is now closed.

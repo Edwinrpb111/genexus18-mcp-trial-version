@@ -477,9 +477,50 @@ namespace GxMcp.Worker.Services
             else if (string.Equals(parentTypeName, "SDPanel", StringComparison.OrdinalIgnoreCase)) bindingMode = "sdpanel-direct-attach";
             else bindingMode = "unknown";
 
+            // Friction 2026-05-26 — apply_pattern reapply previously returned
+            // status=Success even when the parent's Events-by-WorkWithPlus
+            // generation produced src0265 ("Invalid attribute") / src0216
+            // ("Visible invalid property") errors at save time (visible only
+            // when the user tried to Ctrl+S in the IDE). Run the parent's
+            // standard SDK validation here so any pre-existing references to
+            // controls that the fresh PatternInstance no longer knows surface
+            // in the response. Best-effort: if SdkDiagnosticsHelper throws
+            // we still return Success — diagnostics aren't load-bearing.
+            JArray patternValidationIssues = null;
+            try
+            {
+                if (obj != null)
+                {
+                    var issues = GxMcp.Worker.Helpers.SdkDiagnosticsHelper.GetDiagnostics(obj);
+                    if (issues != null && issues.Count > 0)
+                    {
+                        // Filter to ERROR-level diagnostics in pattern-generated
+                        // events. We don't want to surface unrelated warnings
+                        // or other-part issues here.
+                        var filtered = new JArray();
+                        foreach (var t in issues)
+                        {
+                            string sev = t["severity"]?.ToString();
+                            string code = t["code"]?.ToString() ?? "";
+                            // Surface known WWP-projection error codes plus
+                            // any Error-severity issue on the parent's events.
+                            if (string.Equals(sev, "Error", StringComparison.OrdinalIgnoreCase) ||
+                                code.StartsWith("src0265", StringComparison.OrdinalIgnoreCase) ||
+                                code.StartsWith("src0216", StringComparison.OrdinalIgnoreCase))
+                            {
+                                filtered.Add(t);
+                            }
+                        }
+                        if (filtered.Count > 0) patternValidationIssues = filtered;
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Debug("ApplyPattern: post-projection validate best-effort: " + ex.Message); }
+            Phase("postValidate");
+
             var response = new JObject
             {
-                ["status"] = "Success",
+                ["status"] = patternValidationIssues != null ? "PartialFailure" : "Success",
                 ["target"] = targetName,
                 ["parentType"] = parentTypeName,
                 ["bindingMode"] = bindingMode,
@@ -489,6 +530,12 @@ namespace GxMcp.Worker.Services
                 ["generatedObjects"] = new JArray(generated),
                 ["errors"] = new JArray(result?.Errors ?? Enumerable.Empty<string>())
             };
+            if (patternValidationIssues != null)
+            {
+                response["patternValidationIssues"] = patternValidationIssues;
+                response["hint"] = "Pattern apply persisted, but the parent's Events code references controls the fresh PatternInstance doesn't expose. The next IDE 'Ctrl+S' will fail with these errors. Edit the parent's Events to remove or rename the referenced controls (typically " +
+                                   "`GrpX.Visible = …` or similar) before saving in the IDE.";
+            }
 
             // Surface the WWP host (`WorkWithPlus<X>`) explicitly when present — agents
             // need this name to read/edit the PatternInstance after a first-apply. We
