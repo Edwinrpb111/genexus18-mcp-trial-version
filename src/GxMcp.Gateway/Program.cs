@@ -398,6 +398,13 @@ namespace GxMcp.Gateway
         private static IndexStateSnapshot _lastKnownIndexState = new IndexStateSnapshot();
         private static readonly object _lastKnownIndexStateLock = new object();
 
+        // Per-KB database configuration (DataStores). Read once per KB via the worker
+        // on first whoami after open; cached until the gateway restarts or KB switches.
+        // DataStore config is stable across a session — re-fetching every whoami is
+        // pure waste. Keyed by normalized KB alias.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, JObject> _databaseInfoByKb
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+
         internal static void UpdateLastKnownIndexState(string status, int totalObjects, DateTime? lastIndexedAt, double? progress, int? etaMs,
             int flushFailuresConsecutive = 0, DateTime? flushLastSuccessUtc = null, string? flushLastError = null,
             JArray? recentlyChanged = null)
@@ -526,6 +533,56 @@ namespace GxMcp.Gateway
             }
         }
 
+        private static async Task<bool> TryRefreshDatabaseInfoFromWorkerAsync(int timeoutMs = 800)
+        {
+            if (_workerPool == null) return false;
+            KbHandle? kb = _currentKb.Value;
+            string? alias = kb?.NormalizedAlias;
+            if (string.IsNullOrEmpty(alias)) return false;
+            if (_databaseInfoByKb.ContainsKey(alias!)) return true;
+            try
+            {
+                var cmd = new JObject { ["module"] = "kb", ["action"] = "GetDatabaseInfo" };
+                JObject? env = await SendWorkerCommandAsync(
+                    cmd, timeoutMs,
+                    "Timeout fetching database info for whoami",
+                    e => e,
+                    (_, correlationId) => new JObject { ["__timeout"] = true, ["correlationId"] = correlationId },
+                    toolName: "genexus_whoami",
+                    toolArgs: null,
+                    trackOperation: false);
+
+                if (env == null || env["__timeout"] != null) return false;
+                JObject? result = env["result"] as JObject;
+                if (result == null) return false;
+
+                JObject info = result;
+                if (result["status"] == null && result["data"] is JValue dv && dv.Type == JTokenType.String)
+                {
+                    try { info = JObject.Parse(dv.ToString()); } catch { return false; }
+                }
+                if (!string.Equals(info["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+                _databaseInfoByKb[alias!] = info;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log($"[Whoami] database info fetch failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static JObject? GetCachedDatabaseInfo()
+        {
+            KbHandle? kb = _currentKb.Value;
+            string? alias = kb?.NormalizedAlias;
+            if (string.IsNullOrEmpty(alias)) return null;
+            return _databaseInfoByKb.TryGetValue(alias!, out var info) ? info : null;
+        }
+
         // v2.3.8 Task 1.2: async variant that performs a live fetch against the worker
         // before assembling whoami. The sync BuildWhoamiPayload() is kept for tests and
         // any caller that doesn't want to block on a worker round-trip.
@@ -558,6 +615,10 @@ namespace GxMcp.Gateway
                 // with real data as soon as it arrives. Net effect on the bench:
                 // first whoami pays ~400ms once, subsequent calls drop to ms-range.
                 bool refreshed = await TryRefreshIndexStateFromWorkerAsync(timeoutMs: 400).ConfigureAwait(false);
+                // DB info is stable; fetch once per KB and cache forever. Await on first
+                // whoami of a session so the database block populates inline; subsequent
+                // calls short-circuit on the cache and pay nothing.
+                await TryRefreshDatabaseInfoFromWorkerAsync(timeoutMs: 600).ConfigureAwait(false);
                 if (!refreshed)
                 {
                     lock (_lastKnownIndexStateLock)
@@ -689,6 +750,11 @@ namespace GxMcp.Gateway
                 // v2.3.8 Task 1.2: surface index readiness so agents know whether to
                 // call `lifecycle action=index` before relying on search/analyze.
                 ["index"] = BuildIndexBlock(),
+                // Per-KB database configuration. SQL-generating tools should default to
+                // database.default.dialect (oracle / sqlserver / mysql / postgres / db2 / …)
+                // instead of guessing. Populated once per session via the worker, cached
+                // until gateway restart. Null when no KB has been selected yet.
+                ["database"] = GetCachedDatabaseInfo() ?? new JObject { ["status"] = "Pending" },
                 // Compact tool-call health summary. Full per-tool breakdown remains at
                 // `genexus_lifecycle status target=gateway:metrics`; whoami carries only
                 // the roll-up so first-turn cost stays minimal while still surfacing red
@@ -3876,6 +3942,27 @@ namespace GxMcp.Gateway
                 obj.Remove("meta");
             }
 
+            // SQL-dialect nudge for DB tools. The LLM already sees the dialect in
+            // whoami.database.default.dialect, but planting it on the response of the
+            // tool that actually returns SQL is the second-nudge that lets the agent
+            // align dialect at point-of-use without re-reading whoami.
+            try
+            {
+                if (IsSqlGeneratingTool(toolName, toolArgs) && obj["dialect"] == null)
+                {
+                    var info = GetCachedDatabaseInfo();
+                    var defaultStore = info?["default"] as JObject;
+                    string? dialect = defaultStore?["dialect"]?.ToString();
+                    string? type = defaultStore?["type"]?.ToString();
+                    if (!string.IsNullOrEmpty(dialect) && !string.Equals(dialect, "unknown", StringComparison.OrdinalIgnoreCase))
+                    {
+                        obj["dialect"] = dialect;
+                        if (!string.IsNullOrEmpty(type)) obj["dialectType"] = type;
+                    }
+                }
+            }
+            catch { /* best-effort UX sugar */ }
+
             // next_legal_actions injection — last step.
             // SOTA LLM-UX: state-changing tool responses carry an additive
             // array of the most-likely useful next tool calls so the LLM
@@ -4052,6 +4139,24 @@ namespace GxMcp.Gateway
                 parts.Add(seconds <= 1 ? "~1s remaining" : $"~{seconds}s remaining");
             }
             return string.Join(", ", parts) + ".";
+        }
+
+        private static bool IsSqlGeneratingTool(string toolName, JObject? toolArgs)
+        {
+            if (string.IsNullOrEmpty(toolName)) return false;
+            if (string.Equals(toolName, "genexus_db", StringComparison.OrdinalIgnoreCase))
+            {
+                string? action = toolArgs?["action"]?.ToString();
+                return string.Equals(action, "sql_ddl", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(action, "sql_navigation", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(action, "optimize_analyze", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(action, "optimize_suggest", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(action, "optimize_report", StringComparison.OrdinalIgnoreCase);
+            }
+            // Legacy aliases — keep emitting the nudge for callers using the old names
+            // until they drop out of LegacyToolAliases.
+            return string.Equals(toolName, "genexus_sql", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(toolName, "genexus_db_optimize", StringComparison.OrdinalIgnoreCase);
         }
 
         private static HashSet<string>? GetDefaultCompactFields(string toolName)

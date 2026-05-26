@@ -50,6 +50,7 @@ namespace GxMcp.Worker.Services
         private readonly SelfTestService _selfTestService;
         private readonly PatternAnalysisService _patternAnalysisService;
         private readonly DataInsightService _dataInsightService;
+        private readonly DatabaseInfoService _databaseInfoService;
         private readonly SummarizeService _summarizeService;
         private readonly InjectionService _injectionService;
         private readonly ListService _listService;
@@ -149,6 +150,7 @@ namespace GxMcp.Worker.Services
             _sourceSearchService = new SourceSearchService(_indexCacheService, _objectService);
             _versionControlService = new VersionControlService(_kbService);
             _dataInsightService = new DataInsightService(_kbService, _objectService, _navigationService, _patternAnalysisService);
+            _databaseInfoService = new DatabaseInfoService(_kbService);
             _writeService = new WriteService(_objectService);
             _refactorService = new RefactorService(_kbService, _objectService, _indexCacheService, _writeService, _patternAnalysisService);
             _patchService = new PatchService(_objectService, _writeService, _patternAnalysisService);
@@ -411,6 +413,10 @@ namespace GxMcp.Worker.Services
                             return _kbService.BulkIndex(force);
                         }
                         if (action == "SelfTest") return _selfTestService.RunAllTests();
+                        if (action == "GetDatabaseInfo")
+                        {
+                            return _databaseInfoService.GetInfo();
+                        }
                         // v2.6.6 Stream H (FR#26) — surface active-environment metadata
                         // so the gateway can populate KbHandle.ActiveEnvironment on
                         // cache miss. Pure SDK read, no side effects.
