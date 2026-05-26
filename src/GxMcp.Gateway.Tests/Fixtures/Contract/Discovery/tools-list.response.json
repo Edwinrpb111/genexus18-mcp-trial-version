@@ -1,51 +1,6 @@
 {
   "tools": [
     {
-      "description": "A11y audit via chrome-devtools-axi (fallback: playwright axe). Returns {violations,score} or skipped:A11yDriverUnavailable.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_a11y_audit"
-    },
-    {
-      "description": "Add a variable to the Variables part of a GeneXus object.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "typeName": {
-            "type": "string"
-          },
-          "varName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "varName"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_add_variable"
-    },
-    {
       "description": "Forward prompt to OpenAI-compatible endpoint (env GXMCP_AI_COMPLETE_URL/_KEY/_MODEL). Errors: AiEndpointNotConfigured, AiEndpointError.",
       "inputSchema": {
         "properties": {
@@ -214,397 +169,26 @@
       "name": "genexus_apply_pattern"
     },
     {
-      "description": "Apply visual template: kpi_header | empty_state | confirm_dialog. See tool-help for args per template.",
-      "inputSchema": {
-        "properties": {
-          "args": {
-            "type": "object"
-          },
-          "dryRun": {
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "part": {
-            "type": "string"
-          },
-          "template": {
-            "enum": [
-              "kpi_header",
-              "empty_state",
-              "confirm_dialog"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "template"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_apply_template"
-    },
-    {
-      "description": "Find, read, or write binary assets inside the active KB.",
+      "description": "Headless-browser verification umbrella. action=smoke (HTTP 200 + clean console), a11y (axe), wcag (caption/tooltip lint), capture (console/network/exceptions), cross (multi-engine), preview (render WebPanel + capture HTML/a11y/screenshot, optionally diff baseline). preview uses mode=render|run (default render; run auto-resolves the KB launcher, IDE F5 parity).",
       "inputSchema": {
         "properties": {
           "action": {
             "enum": [
-              "find",
-              "read",
-              "write"
+              "smoke",
+              "a11y",
+              "wcag",
+              "capture",
+              "cross",
+              "preview"
             ],
             "type": "string"
           },
-          "contentBase64": {
-            "type": "string"
-          },
-          "includeContent": {
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "limit": {
-            "type": "integer"
-          },
-          "maxBytes": {
-            "type": "integer"
-          },
-          "path": {
-            "type": "string"
-          },
-          "pattern": {
-            "type": "string"
-          },
-          "relativeRoot": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_asset"
-    },
-    {
-      "description": "Seed GXtest stubs from past invocations (JSONL), deduped by tool×target. Returns {linesRead,stubsGenerated,skipped}. No KB write.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "generate_from_prod_log"
-            ],
-            "type": "string"
-          },
-          "path": {
-            "description": "Absolute path to a JSONL log file.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action",
-          "path"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_auto_test"
-    },
-    {
-      "description": "Git blame for an object part. Returns commit/author/date per line; single line when line is set. Errors: KbNotInGit, PartNotTracked (with candidates[]).",
-      "inputSchema": {
-        "properties": {
-          "context": {
-            "description": "Snippet ±N lines around the blamed line (default 2).",
-            "type": "integer"
-          },
-          "filePath": {
-            "description": "KB-relative or absolute path to a tracked file. Use when name+part doesn't disambiguate.",
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "line": {
-            "description": "1-based line number. When omitted, blames the whole file.",
-            "type": "integer"
-          },
-          "name": {
-            "description": "Object name. Either name or filePath is required.",
-            "type": "string"
-          },
-          "part": {
-            "description": "Default 'Source'.",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_blame"
-    },
-    {
-      "description": "Open target in headless Chrome; capture console/network/exceptions. Skips with code='BrowserDriverUnavailable' when chrome-devtools-axi missing.",
-      "inputSchema": {
-        "properties": {
-          "capture": {
-            "description": "Default all three.",
-            "items": {
-              "enum": [
-                "console",
-                "network",
-                "exceptions"
-              ],
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "target": {
-            "description": "WebPanel name.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_browser_capture"
-    },
-    {
-      "description": "Walk the callee graph for target. Returns {nodes,edges,totalEstimatedSeconds}; estimates from per-tool p95 ring buffer. format=ascii adds rendered tree.",
-      "inputSchema": {
-        "properties": {
-          "format": {
-            "enum": [
-              "json",
-              "ascii"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "maxNodes": {
-            "description": "Cap node count (default 100, max 500).",
-            "type": "integer"
-          },
-          "target": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_build_plan"
-    },
-    {
-      "description": "Apply N independent edits. Item: {name,part?,content,type?,dryRun?}. stopOnError halts at first fail. transactional=true rolls back on first Error.",
-      "inputSchema": {
-        "properties": {
-          "dryRun": {
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "stopOnError": {
-            "type": "boolean"
-          },
-          "targets": {
-            "items": {
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "transactional": {
-            "description": "Atomic batch: rollback prior successes on first Error.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "targets"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_bulk_edit"
-    },
-    {
-      "description": "Create any IDE-creatable object (Transaction, Procedure, WebPanel, SDT, Domain, Dashboard, ...). Domain takes dataType+length or enumValues. NOT for WorkWithPlus (use genexus_apply_pattern) or input-bearing popups (use genexus_create_popup).",
-      "inputSchema": {
-        "properties": {
-          "basedOn": {
-            "type": "string"
-          },
-          "dataType": {
-            "type": "string"
-          },
-          "decimals": {
-            "type": "integer"
-          },
-          "description": {
-            "type": "string"
-          },
-          "enumValues": {
-            "items": {
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "length": {
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
-          "signed": {
-            "type": "boolean"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_create_object"
-    },
-    {
-      "description": "Create popup WebPanel with Form type=\"layout\" body (radio/combo render editable). Spec: title, inputs, buttons, inParms, outParms.",
-      "inputSchema": {
-        "properties": {
-          "dryRun": {
-            "description": "Validate spec + render layout XML without persisting the WebPanel.",
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "description": "WebPanel name (created or updated).",
-            "type": "string"
-          },
-          "spec": {
-            "description": "Popup spec.",
-            "properties": {
-              "buttons": {
-                "items": {
-                  "properties": {
-                    "caption": {
-                      "type": "string"
-                    },
-                    "event": {
-                      "type": "string"
-                    }
-                  },
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "description": {
-                "type": "string"
-              },
-              "inParms": {
-                "description": "e.g. [\"X:Numeric(2)\"]",
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "inputs": {
-                "items": {
-                  "properties": {
-                    "label": {
-                      "type": "string"
-                    },
-                    "options": {
-                      "items": {
-                        "properties": {
-                          "label": {
-                            "type": "string"
-                          },
-                          "value": {
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "type": "array"
-                    },
-                    "showWhen": {
-                      "description": "e.g. \"X == 'S'\"; emits Refresh toggling group visibility.",
-                      "type": "string"
-                    },
-                    "type": {
-                      "enum": [
-                        "radio",
-                        "combo",
-                        "text"
-                      ],
-                      "type": "string"
-                    },
-                    "varName": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "varName"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              "outParms": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
+          "auth": {
+            "description": "preview only.",
             "type": "object"
-          }
-        },
-        "required": [
-          "name",
-          "spec"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_create_popup"
-    },
-    {
-      "description": "Verify a WebPanel across engines (chrome + firefox/webkit via playwright). Returns {url,results,anyFailed}.",
-      "inputSchema": {
-        "properties": {
+          },
           "browsers": {
+            "description": "cross only.",
             "items": {
               "enum": [
                 "chrome",
@@ -616,47 +200,193 @@
             },
             "type": "array"
           },
+          "buildFirst": {
+            "description": "preview only.",
+            "type": "boolean"
+          },
           "capture": {
+            "description": "capture|cross|preview channels: console|network|exceptions|html|a11y|screenshot.",
             "items": {
-              "enum": [
-                "screenshot",
-                "console"
-              ],
               "type": "string"
             },
             "type": "array"
           },
+          "click": {
+            "description": "preview only.",
+            "type": "string"
+          },
+          "diffBaseline": {
+            "description": "preview only.",
+            "type": "boolean"
+          },
+          "emulate": {
+            "description": "preview only.",
+            "enum": [
+              "iPhone12",
+              "iPhone15Pro",
+              "iPadPro",
+              "Pixel7",
+              "desktop1920",
+              "desktop1280"
+            ],
+            "type": "string"
+          },
+          "fill": {
+            "description": "preview only.",
+            "type": "object"
+          },
           "kb": {
             "description": "KB alias.",
             "type": "string"
           },
-          "target": {
+          "launcher": {
+            "description": "preview only.",
             "type": "string"
+          },
+          "mode": {
+            "description": "preview only.",
+            "enum": [
+              "render",
+              "run"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Alias of 'target'.",
+            "type": "string"
+          },
+          "network": {
+            "description": "preview only.",
+            "enum": [
+              "fast",
+              "slow3g",
+              "fast3g",
+              "offline"
+            ],
+            "type": "string"
+          },
+          "parms": {
+            "description": "preview only.",
+            "type": "object"
+          },
+          "target": {
+            "description": "WebPanel name. Alias of 'name'.",
+            "type": "string"
+          },
+          "updateBaseline": {
+            "description": "preview only.",
+            "type": "boolean"
+          },
+          "waitMs": {
+            "description": "preview only.",
+            "type": "integer"
           }
         },
         "required": [
-          "target"
+          "action"
         ],
         "type": "object"
       },
-      "name": "genexus_cross_browser"
+      "name": "genexus_browser"
     },
     {
-      "description": "Transaction↔DB schema drift. action=check structured; report adds markdown.",
+      "description": "Creation umbrella. action: object (Transaction/Procedure/WebPanel/SDT/Domain/Dashboard; Domain takes dataType+length or enumValues; NOT WWP — use genexus_apply_pattern) | popup (popup WebPanel with Form type='layout' body) | sd_panel_create|sd_panel_inspect|sd_panel_edit | save_as (clone parts) | scaffold|translate|sample (forge) | template (kpi_header|empty_state|confirm_dialog).",
       "inputSchema": {
         "properties": {
           "action": {
             "enum": [
-              "check",
-              "report"
+              "object",
+              "popup",
+              "sd_panel_create",
+              "sd_panel_inspect",
+              "sd_panel_edit",
+              "save_as",
+              "scaffold",
+              "translate",
+              "sample",
+              "template"
             ],
             "type": "string"
+          },
+          "args": {
+            "description": "template.",
+            "type": "object"
+          },
+          "basedOn": {
+            "description": "object Domain.",
+            "type": "string"
+          },
+          "content": {
+            "description": "sd_panel_edit/scaffold/translate.",
+            "type": "string"
+          },
+          "dataType": {
+            "description": "object Domain.",
+            "type": "string"
+          },
+          "decimals": {
+            "description": "object Domain.",
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "dryRun": {
+            "description": "popup/save_as/template/object.",
+            "type": "boolean"
+          },
+          "enumValues": {
+            "description": "object Domain enum.",
+            "items": {
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "includePatternInstance": {
+            "description": "save_as.",
+            "type": "boolean"
           },
           "kb": {
             "description": "KB alias.",
             "type": "string"
           },
-          "target": {
+          "length": {
+            "description": "object Domain.",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "newName": {
+            "description": "save_as.",
+            "type": "string"
+          },
+          "overwrite": {
+            "description": "save_as.",
+            "type": "boolean"
+          },
+          "part": {
+            "description": "sd_panel_edit/template.",
+            "type": "string"
+          },
+          "signed": {
+            "description": "object Domain.",
+            "type": "boolean"
+          },
+          "spec": {
+            "description": "popup.",
+            "type": "object"
+          },
+          "template": {
+            "description": "template.",
+            "enum": [
+              "kpi_header",
+              "empty_state",
+              "confirm_dialog"
+            ],
+            "type": "string"
+          },
+          "type": {
             "type": "string"
           }
         },
@@ -665,34 +395,92 @@
         ],
         "type": "object"
       },
-      "name": "genexus_db_drift"
+      "name": "genexus_create"
     },
     {
-      "description": "Static index advisor. analyze=KB-wide For-each scan; suggest_indexes=covering DDL per Transaction; report=top-10 unindexed hot paths (+markdown).",
+      "description": "Database umbrella. action: drift_check|drift_report (Transaction↔DB schema drift) | optimize_analyze|optimize_suggest|optimize_report (static index advisor) | sql_ddl|sql_navigation (SQL for Transaction/Procedure) | sample_data (fake INSERTs) | types_list|types_describe|types_validate (Domains/SDT constraints) | translations_import.",
       "inputSchema": {
         "properties": {
           "action": {
             "enum": [
-              "analyze",
-              "suggest_indexes",
-              "report"
+              "drift_check",
+              "drift_report",
+              "optimize_analyze",
+              "optimize_suggest",
+              "optimize_report",
+              "sql_ddl",
+              "sql_navigation",
+              "sample_data",
+              "types_list",
+              "types_describe",
+              "types_validate",
+              "translations_import"
             ],
             "type": "string"
           },
           "format": {
-            "description": "report only. markdown adds paste-ready table.",
+            "description": "optimize_report only.",
             "enum": [
               "json",
               "markdown"
             ],
             "type": "string"
           },
+          "includeExecutionPlan": {
+            "description": "sql_navigation.",
+            "type": "boolean"
+          },
+          "includeIndexAdvisor": {
+            "description": "sql_navigation.",
+            "type": "boolean"
+          },
+          "includeSubordinated": {
+            "description": "sql_ddl only.",
+            "type": "boolean"
+          },
+          "inputPath": {
+            "description": "translations_import: CSV path.",
+            "type": "string"
+          },
           "kb": {
             "description": "KB alias.",
             "type": "string"
           },
+          "kind": {
+            "description": "types_list filter.",
+            "enum": [
+              "domain",
+              "sdt",
+              "all"
+            ],
+            "type": "string"
+          },
+          "levelNumber": {
+            "description": "sql_navigation only.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Alias of target.",
+            "type": "string"
+          },
+          "rows": {
+            "description": "sample_data: 1-1000; default 5.",
+            "type": "integer"
+          },
           "target": {
-            "description": "Transaction name for suggest_indexes; optional filter for analyze.",
+            "description": "Object/transaction/type name. Alias of name/trn.",
+            "type": "string"
+          },
+          "trn": {
+            "description": "sample_data: Transaction name.",
+            "type": "string"
+          },
+          "type": {
+            "description": "types_validate / disambiguator.",
+            "type": "string"
+          },
+          "value": {
+            "description": "types_validate.",
             "type": "string"
           }
         },
@@ -701,7 +489,7 @@
         ],
         "type": "object"
       },
-      "name": "genexus_db_optimize"
+      "name": "genexus_db"
     },
     {
       "description": "Delete an object from the KB. Irreversible — confirm=true required.",
@@ -728,91 +516,6 @@
         "type": "object"
       },
       "name": "genexus_delete_object"
-    },
-    {
-      "description": "Remove a variable. Idempotent. Refuses GAM/WWP+ framework-managed vars.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "varName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "varName"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_delete_variable"
-    },
-    {
-      "description": "Unified text diff. mode=textVsText|currentVsText.",
-      "inputSchema": {
-        "properties": {
-          "context": {
-            "type": "integer"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "left": {
-            "type": "string"
-          },
-          "mode": {
-            "enum": [
-              "textVsText",
-              "currentVsText"
-            ],
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "part": {
-            "type": "string"
-          },
-          "right": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_diff"
-    },
-    {
-      "description": "Unified diff of generated files (.cs/.aspx/.js/.html) for an object vs a baseline.",
-      "inputSchema": {
-        "properties": {
-          "against": {
-            "default": "last-build",
-            "enum": [
-              "last-build",
-              "git-head"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_diff_generated"
     },
     {
       "description": "Use to generate structured docs (wiki, sequence diagrams, health reports). Don't use for programmatic analysis (see genexus_analyze) or source (see genexus_read).",
@@ -1166,143 +869,6 @@
       "name": "genexus_edit_form"
     },
     {
-      "description": "Recent invocations of an object from in-memory ring buffer. last clamped [1,50]. Resets on gateway restart.",
-      "inputSchema": {
-        "properties": {
-          "last": {
-            "description": "Max runs to return (default 10, max 50).",
-            "type": "integer"
-          },
-          "target": {
-            "description": "Object name to filter on (matches args.target or args.name).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_execution_history"
-    },
-    {
-      "description": "Deterministic PM-readable summary of an object: purpose, inputs/outputs, variables, top called procs/transactions, description. NOT raw source.",
-      "inputSchema": {
-        "properties": {
-          "depth": {
-            "description": "deep recurses one level into called objects.",
-            "enum": [
-              "shallow",
-              "deep"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_explain"
-    },
-    {
-      "description": "Export a GeneXus object part to a text file on disk.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "outputPath": {
-            "type": "string"
-          },
-          "overwrite": {
-            "type": "boolean"
-          },
-          "part": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "outputPath"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_export_object"
-    },
-    {
-      "description": "Export an object's full state (all parts) as a single JSON envelope.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_export_unified"
-    },
-    {
-      "description": "Generate new code or structures from templates or translations.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "scaffold",
-              "translate",
-              "sample"
-            ],
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_forge"
-    },
-    {
       "description": "Format a GeneXus code snippet using worker rules.",
       "inputSchema": {
         "properties": {
@@ -1320,67 +886,6 @@
         "type": "object"
       },
       "name": "genexus_format"
-    },
-    {
-      "description": "Local friction journal under <kbPath>/.gx/friction.jsonl. action=append writes {atUtc,tool,message,severity}; action=tail returns last N entries.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "append",
-              "tail"
-            ],
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "n": {
-            "description": "Tail count (default 20, max 1000).",
-            "type": "integer"
-          },
-          "severity": {
-            "enum": [
-              "info",
-              "warn",
-              "error",
-              "critical"
-            ],
-            "type": "string"
-          },
-          "tool": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_friction_log"
-    },
-    {
-      "description": "Emit INSERT statements with fake-but-typed data for a Transaction. SQL only; not executed.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "rows": {
-            "description": "1-1000; default 5.",
-            "type": "integer"
-          },
-          "trn": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "trn"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_generate_sample_data"
     },
     {
       "description": "Open a PR after pushing a branch. Shells `gh pr create` from KB path (or workingDir). Returns {status,url} or {code:'GhCliNotInstalled'}.",
@@ -1444,106 +949,6 @@
       "name": "genexus_gxserver"
     },
     {
-      "description": "List/read/save/restore object history snapshots. restore + discard=true = IDE 'Discard changes' parity.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "list",
-              "get_source",
-              "save",
-              "restore"
-            ],
-            "type": "string"
-          },
-          "discard": {
-            "default": false,
-            "description": "restore-only: drop in-memory edits, restore last persisted baseline for (name,part).",
-            "type": "boolean"
-          },
-          "dryRun": {
-            "description": "restore-only: return unified diff of snapshot vs current without writing.",
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "part": {
-            "description": "Default 'Source'.",
-            "type": "string"
-          },
-          "snapshot": {
-            "description": "Snapshot token (timestamp or 'latest').",
-            "type": "string"
-          },
-          "versionId": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "action",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_history"
-    },
-    {
-      "description": "Import a text file from disk into a GeneXus object part.",
-      "inputSchema": {
-        "properties": {
-          "inputPath": {
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "part": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "inputPath"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_import_object"
-    },
-    {
-      "description": "Inject SDT structures and Procedure signatures of called objects.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "recursive": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_inject_context"
-    },
-    {
       "description": "Use to snapshot an object: metadata, variables, structure, signature. Raw shape, no source text — use genexus_read for code. runtimeIds requires a prior build.",
       "inputSchema": {
         "properties": {
@@ -1592,6 +997,87 @@
       "name": "genexus_inspect"
     },
     {
+      "description": "IO umbrella for assets, part text exchange, screenshots, OCR. action: asset_find|asset_read|asset_write (binary asset CRUD) | export_part|import_part (object part to/from a text file) | export_unified (full object envelope JSON) | screenshot_publish (copy PNG to .gx/published-screenshots) | ocr (Tesseract stub).",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "asset_find",
+              "asset_read",
+              "asset_write",
+              "export_part",
+              "import_part",
+              "export_unified",
+              "screenshot_publish",
+              "ocr"
+            ],
+            "type": "string"
+          },
+          "contentBase64": {
+            "description": "asset_write.",
+            "type": "string"
+          },
+          "includeContent": {
+            "description": "asset_find.",
+            "type": "boolean"
+          },
+          "inputPath": {
+            "description": "import_part.",
+            "type": "string"
+          },
+          "kb": {
+            "description": "KB alias.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "asset_find.",
+            "type": "integer"
+          },
+          "maxBytes": {
+            "description": "asset_read.",
+            "type": "integer"
+          },
+          "name": {
+            "description": "export/import/export_unified.",
+            "type": "string"
+          },
+          "outputPath": {
+            "description": "export_part.",
+            "type": "string"
+          },
+          "overwrite": {
+            "description": "export_part.",
+            "type": "boolean"
+          },
+          "part": {
+            "description": "export/import_part.",
+            "type": "string"
+          },
+          "path": {
+            "description": "asset/screenshot_publish/ocr.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "asset_find.",
+            "type": "string"
+          },
+          "relativeRoot": {
+            "description": "asset_find.",
+            "type": "string"
+          },
+          "type": {
+            "description": "export/import/export_unified disambiguator.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_io"
+    },
+    {
       "description": "Manage open KBs and startup config. list/open/close/set_default operate on WorkerPool; set_startup/get_startup mirror IDE 'Set As Startup Object'.",
       "inputSchema": {
         "properties": {
@@ -1625,109 +1111,6 @@
         "type": "object"
       },
       "name": "genexus_kb"
-    },
-    {
-      "description": "Compare two KBs without opening them. Filesystem walk of Objects/<Type>/<Name>/, no SDK. Returns {onlyInA[],onlyInB[],modified[]}.",
-      "inputSchema": {
-        "properties": {
-          "kbA": {
-            "description": "KB alias or path.",
-            "type": "string"
-          },
-          "kbB": {
-            "description": "KB alias or path.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "kbA",
-          "kbB"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_kb_diff"
-    },
-    {
-      "description": "Locate an object in the KB explorer tree (IDE Right-click → Locate). Returns modulePath, fullPath, up to 20 siblings.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "locate"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "description": "Object name.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_kb_explorer"
-    },
-    {
-      "description": "Copy one object's part files from another KB into the active KB. Deps NOT resolved. Re-index after.",
-      "inputSchema": {
-        "properties": {
-          "from": {
-            "description": "Source KB alias or path.",
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "description": "Object type (case-sensitive: WebPanel, Procedure, Transaction, ...).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "from",
-          "name",
-          "type"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_kb_import"
-    },
-    {
-      "description": "Generate a Markdown README for the KB: entities, entry points, modules, top-edited objects.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "generate"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "outputPath": {
-            "description": "Absolute path to write README. Omit to return markdown inline.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_kb_readme"
     },
     {
       "description": "SDK layout/WebForm ops: get_tree, set_property, find_controls, inspect_surface, scan_mutators.",
@@ -1814,36 +1197,6 @@
         "type": "object"
       },
       "name": "genexus_layout"
-    },
-    {
-      "description": "Aggregate friction.jsonl (read-only). Returns {totalEntries,byTool,byCode,severityHistogram}. Pair with friction_log action=tail.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "report"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "since": {
-            "description": "ISO-8601 lower bound (optional).",
-            "type": "string"
-          },
-          "until": {
-            "description": "ISO-8601 upper bound (optional).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_learning"
     },
     {
       "description": "Build, validate, index, or poll the KB. Long ops are async with operationId. See genexus://kb/tool-help/genexus_lifecycle for actions and target formats.",
@@ -2032,64 +1385,6 @@
       "name": "genexus_list_objects"
     },
     {
-      "description": "Read worker_debug.log tail. target filters by object; tail=N (default 100); since=<ISO|'crash'>. Response includes logPath.",
-      "inputSchema": {
-        "properties": {
-          "filterCorrelation": {
-            "type": "string"
-          },
-          "grep": {
-            "type": "string"
-          },
-          "since": {
-            "description": "ISO-8601 UTC timestamp to filter lines after, or 'crash' to slice from the last ERROR/CRITICAL marker.",
-            "type": "string"
-          },
-          "tail": {
-            "description": "Last N lines (default 100).",
-            "type": "integer"
-          },
-          "target": {
-            "description": "Only return lines mentioning this object name.",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_logs"
-    },
-    {
-      "description": "Change variable type atomically. Preserves name + description.",
-      "inputSchema": {
-        "properties": {
-          "basedOn": {
-            "description": "Domain (optional).",
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "typeName": {
-            "type": "string"
-          },
-          "varName": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "varName",
-          "typeName"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_modify_variable"
-    },
-    {
       "description": "Advisory file lock per (kbPath,target,part) under .gx/locks. Auto-expires after ttlSec. Returns {status,held,holder,path}.",
       "inputSchema": {
         "properties": {
@@ -2160,170 +1455,6 @@
       "name": "genexus_navigation"
     },
     {
-      "description": "OCR a screenshot PNG. Stub: returns Unwired envelope until Tesseract.NET is added and GXMCP_OCR_ENGINE=tesseract is set.",
-      "inputSchema": {
-        "properties": {
-          "path": {
-            "description": "Absolute path to a PNG.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_ocr_screenshot"
-    },
-    {
-      "description": "Session welcome: KB info, last 5 edits, top 3 gotchas, top 5 tools. Cheaper than whoami for mid-session refresh.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_orient"
-    },
-    {
-      "description": "Render WebPanel via headless Chrome. Opens launcher, fills parms, navigates, captures HTML/a11y/screenshot, optionally diffs vs baseline.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "default": "render",
-            "description": "run = auto-resolve launcher (IDE F5 parity). render = explicit name.",
-            "enum": [
-              "render",
-              "run"
-            ],
-            "type": "string"
-          },
-          "auth": {
-            "description": "GAM override (mode/user/pass).",
-            "type": "object"
-          },
-          "buildFirst": {
-            "default": false,
-            "description": "Build before launch.",
-            "type": "boolean"
-          },
-          "capture": {
-            "description": "Default ['html','a11y'].",
-            "items": {
-              "enum": [
-                "html",
-                "a11y",
-                "screenshot",
-                "console"
-              ],
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "click": {
-            "description": "GX-aware click target.",
-            "type": "string"
-          },
-          "diffBaseline": {
-            "default": false,
-            "description": "Structural diff vs stored baseline.",
-            "type": "boolean"
-          },
-          "emulate": {
-            "description": "Device emulation profile passed to chrome-devtools-axi.",
-            "enum": [
-              "iPhone12",
-              "iPhone15Pro",
-              "iPadPro",
-              "Pixel7",
-              "desktop1920",
-              "desktop1280"
-            ],
-            "type": "string"
-          },
-          "fill": {
-            "description": "GX-aware form fills.",
-            "type": "object"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "launcher": {
-            "description": "Launcher page (default 'auto').",
-            "type": "string"
-          },
-          "name": {
-            "description": "WebPanel name. Optional for action=run.",
-            "type": "string"
-          },
-          "network": {
-            "default": "fast",
-            "description": "Network throttle profile.",
-            "enum": [
-              "fast",
-              "slow3g",
-              "fast3g",
-              "offline"
-            ],
-            "type": "string"
-          },
-          "parms": {
-            "description": "Per-call launcher parms.",
-            "type": "object"
-          },
-          "updateBaseline": {
-            "default": false,
-            "description": "Persist current as new baseline.",
-            "type": "boolean"
-          },
-          "waitMs": {
-            "default": 3000,
-            "description": "Wait ms after nav.",
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_preview"
-    },
-    {
-      "description": "Ingest a GeneXus runtime profiler XML; returns hot-spot summary by object. Defensive parser; surfaces parserWarnings on unrecognized schema.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "analyze",
-              "hotspots",
-              "correlate"
-            ],
-            "type": "string"
-          },
-          "path": {
-            "description": "Filesystem path to a GeneXus profile XML.",
-            "type": "string"
-          },
-          "target": {
-            "description": "correlate only.",
-            "type": "string"
-          },
-          "top": {
-            "description": "hotspots only; default 10, max 50.",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "action",
-          "path"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_profile"
-    },
-    {
       "description": "Read or update GeneXus object properties. Note: Description is the title-bar text shown when a WebPanel/Popup is opened via .Popup().",
       "inputSchema": {
         "properties": {
@@ -2359,32 +1490,6 @@
         "type": "object"
       },
       "name": "genexus_properties"
-    },
-    {
-      "description": "Generate a structured PR description from the last N commits on the current branch via 'git log'. Returns {title, summary, why, changes:[...]}.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "generate"
-            ],
-            "type": "string"
-          },
-          "last": {
-            "description": "Commits to read (default 10, max 100).",
-            "type": "integer"
-          },
-          "workingDir": {
-            "description": "Override repo root (defaults to active KB path).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_pr_description"
     },
     {
       "description": "Search objects in active KB. Prefixes: type:, usedby:, parent:, parentPath:, description:. Compact by default. See genexus://kb/tool-help/genexus_query.",
@@ -2616,41 +1721,14 @@
       "name": "genexus_rename_across_kb"
     },
     {
-      "description": "Detect whether N similar objects share enough structure for a pattern. Intersects vars/events/parm-sigs. Returns {commonVariables,commonEvents,divergencePoints,hint}.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "infer"
-            ],
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "source": {
-            "description": "≥2 object names.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "action",
-          "source"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_reverse_pattern"
-    },
-    {
       "description": "Resolve runtime URL for an object (webRoot + aspx + encoded args). gamSession='auto'|{user,pass,...} captures GAM cookies. Does NOT open a browser.",
       "inputSchema": {
         "properties": {
           "args": {
             "description": "Positional parameter values.",
+            "items": {
+              "type": "string"
+            },
             "type": "array"
           },
           "gamSession": {
@@ -2680,95 +1758,6 @@
       "name": "genexus_run_object"
     },
     {
-      "description": "Copy a KB to <configRoot>/sandboxes/<name>/ for throwaway edits. create needs from+name; remove idempotent. Returns {status,path,filesCopied,bytesCopied,alias}.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "create",
-              "remove"
-            ],
-            "type": "string"
-          },
-          "from": {
-            "description": "Source KB alias or path (required for create).",
-            "type": "string"
-          },
-          "name": {
-            "description": "Sandbox name; [A-Za-z0-9_-]+.",
-            "type": "string"
-          },
-          "overwrite": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "action",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_sandbox"
-    },
-    {
-      "description": "IDE 'Save As...' — clone object parts under a new name (same type/module). includePatternInstance=true also clones a linked WWP instance.",
-      "inputSchema": {
-        "properties": {
-          "dryRun": {
-            "default": false,
-            "type": "boolean"
-          },
-          "includePatternInstance": {
-            "default": false,
-            "description": "Also clone linked WorkWithPlus instance.",
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "description": "Source object name.",
-            "type": "string"
-          },
-          "newName": {
-            "description": "New object name.",
-            "type": "string"
-          },
-          "overwrite": {
-            "default": false,
-            "type": "boolean"
-          },
-          "type": {
-            "description": "Disambiguates ambiguous names.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "newName"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_save_as"
-    },
-    {
-      "description": "Publish (copy) a screenshot PNG to <kbPath>/.gx/published-screenshots/<UTC>-<basename>. Local only — no remote upload.",
-      "inputSchema": {
-        "properties": {
-          "path": {
-            "description": "Absolute path to a PNG inside the workspace.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_screenshot_publish"
-    },
-    {
       "description": "Dump SDK surface (types/methods/props) to docs/sdk-probe/. Use when hunting for entry points.",
       "inputSchema": {
         "properties": {
@@ -2780,47 +1769,6 @@
         "type": "object"
       },
       "name": "genexus_sdk_probe"
-    },
-    {
-      "description": "Type-locked SDPanel entry: inspect/create/edit. Rejects non-SDPanel targets. Returns the underlying envelope tagged kind='SDPanel'.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "inspect",
-              "create",
-              "edit"
-            ],
-            "type": "string"
-          },
-          "content": {
-            "description": "Part source for edit.",
-            "type": "string"
-          },
-          "description": {
-            "description": "Object description for create.",
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "name": {
-            "description": "SDPanel name.",
-            "type": "string"
-          },
-          "part": {
-            "description": "Part name for edit (default Events).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_sd_panel"
     },
     {
       "description": "Regex/semantic search across Procedure/DataProvider/WebPanel/Transaction source.",
@@ -2906,71 +1854,6 @@
       "name": "genexus_security"
     },
     {
-      "description": "Headless smoke: HTTP 200 + no <scriptError> + clean console. Returns {ok,steps,failedAt?}. Skips with BrowserDriverUnavailable.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_smoke_test"
-    },
-    {
-      "description": "SQL for a Transaction/Table (DDL) or a procedure For Each navigation.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "ddl",
-              "navigation"
-            ],
-            "type": "string"
-          },
-          "includeExecutionPlan": {
-            "description": "action=navigation: attach EXPLAIN preview per query (no live DB exec).",
-            "type": "boolean"
-          },
-          "includeIndexAdvisor": {
-            "description": "action=navigation: attach heuristic index suggestions.",
-            "type": "boolean"
-          },
-          "includeSubordinated": {
-            "description": "action=ddl only.",
-            "type": "boolean"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "levelNumber": {
-            "description": "action=navigation only.",
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "action",
-          "name"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_sql"
-    },
-    {
       "description": "Read or update visual and logical structure of GeneXus objects.",
       "inputSchema": {
         "properties": {
@@ -3004,6 +1887,97 @@
       "name": "genexus_structure"
     },
     {
+      "description": "Observability umbrella. action: executions (recent invocations) | watch_event (ops mentioning an event) | friction_append|friction_tail (.gx/friction.jsonl) | learning_report (aggregate friction) | logs (worker_debug.log tail) | profile_analyze|profile_hotspots|profile_correlate (GeneXus profiler XML).",
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "enum": [
+              "executions",
+              "watch_event",
+              "friction_append",
+              "friction_tail",
+              "learning_report",
+              "logs",
+              "profile_analyze",
+              "profile_hotspots",
+              "profile_correlate"
+            ],
+            "type": "string"
+          },
+          "event": {
+            "description": "watch_event.",
+            "type": "string"
+          },
+          "filterCorrelation": {
+            "description": "logs.",
+            "type": "string"
+          },
+          "grep": {
+            "description": "logs.",
+            "type": "string"
+          },
+          "kb": {
+            "description": "KB alias.",
+            "type": "string"
+          },
+          "last": {
+            "description": "executions/watch_event.",
+            "type": "integer"
+          },
+          "message": {
+            "description": "friction_append.",
+            "type": "string"
+          },
+          "n": {
+            "description": "friction_tail.",
+            "type": "integer"
+          },
+          "path": {
+            "description": "profile_*.",
+            "type": "string"
+          },
+          "severity": {
+            "description": "friction_append.",
+            "enum": [
+              "info",
+              "warn",
+              "error",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "since": {
+            "description": "learning_report/logs.",
+            "type": "string"
+          },
+          "tail": {
+            "description": "logs.",
+            "type": "integer"
+          },
+          "target": {
+            "type": "string"
+          },
+          "tool": {
+            "description": "friction_append.",
+            "type": "string"
+          },
+          "top": {
+            "description": "profile_hotspots.",
+            "type": "integer"
+          },
+          "until": {
+            "description": "learning_report.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_telemetry"
+    },
+    {
       "description": "Execute native GeneXus tests (GXtest).",
       "inputSchema": {
         "properties": {
@@ -3023,11 +1997,19 @@
       "name": "genexus_test"
     },
     {
-      "description": "Recover an object's part bytes from a past git commit. at=<ISO|sha>. Read-only; returns {recoveredFromCommit,parts} or KbNotInGit.",
+      "description": "Variables part CRUD. action: add | delete (idempotent; refuses GAM/WWP+ framework-managed vars) | modify (atomically change type; preserves name+description). varName required for all; typeName required for add+modify.",
       "inputSchema": {
         "properties": {
-          "at": {
-            "description": "ISO-8601 timestamp or commit sha.",
+          "action": {
+            "enum": [
+              "add",
+              "delete",
+              "modify"
+            ],
+            "type": "string"
+          },
+          "basedOn": {
+            "description": "modify optional: Domain.",
             "type": "string"
           },
           "kb": {
@@ -3036,130 +2018,89 @@
           },
           "name": {
             "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "at"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_time_travel"
-    },
-    {
-      "description": "Translations import. action=import + inputPath=CSV with columns objectName,attribute,language,value. SDK write currently deferred; rows are parsed and reported.",
-      "inputSchema": {
-        "properties": {
-          "action": {
-            "enum": [
-              "import"
-            ],
+          },
+          "typeName": {
             "type": "string"
           },
-          "inputPath": {
-            "type": "string"
-          },
-          "kb": {
-            "description": "KB alias.",
+          "varName": {
             "type": "string"
           }
         },
         "required": [
           "action",
-          "inputPath"
+          "name",
+          "varName"
         ],
         "type": "object"
       },
-      "name": "genexus_translations"
+      "name": "genexus_variable"
     },
     {
-      "description": "Bootstrap a brand-new agent. Static 6-step walkthrough (orient → list → inspect → read → edit → build). Returns {stepNumber,title,narrative,suggestedCall,next}.",
-      "inputSchema": {
-        "properties": {
-          "step": {
-            "description": "Step number (1-based, 1..6).",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "step"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_tutorial"
-    },
-    {
-      "description": "Surface KB type/domain constraints. list enumerates Domains/SDTs; describe shows range+allowedValues; validate_value dry-checks a value against a type.",
+      "description": "Versioning umbrella. action: history_list|history_get|history_save|history_restore (snapshot store; restore+discard=true is IDE 'Discard changes' parity) | undo (revert last N edits) | time_travel (recover bytes from a past git commit) | blame (git blame an object part) | diff (text: mode=textVsText|currentVsText) | diff_generated (against=last-build|git-head).",
       "inputSchema": {
         "properties": {
           "action": {
             "enum": [
-              "list",
-              "describe",
-              "validate_value"
+              "history_list",
+              "history_get",
+              "history_save",
+              "history_restore",
+              "undo",
+              "time_travel",
+              "blame",
+              "diff",
+              "diff_generated"
             ],
             "type": "string"
           },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "kind": {
-            "description": "action=list filter.",
+          "against": {
+            "description": "diff_generated.",
             "enum": [
-              "domain",
-              "sdt",
-              "all"
+              "last-build",
+              "git-head"
             ],
             "type": "string"
           },
-          "name": {
-            "description": "Type name (action=describe).",
+          "at": {
+            "description": "time_travel: ISO-8601 or commit sha.",
             "type": "string"
           },
-          "type": {
-            "description": "Type name (action=validate_value).",
+          "context": {
+            "description": "blame.",
+            "type": "integer"
+          },
+          "discard": {
+            "type": "boolean"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "filePath": {
+            "description": "blame.",
             "type": "string"
           },
-          "value": {
-            "description": "Value to validate (action=validate_value).",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_types"
-    },
-    {
-      "description": "Revert the last N edits from EditSnapshotStore (.gx/snapshots). Best-effort: reports which succeeded when any fail.",
-      "inputSchema": {
-        "properties": {
           "kb": {
             "description": "KB alias.",
             "type": "string"
           },
           "last": {
-            "default": 1,
-            "description": "Number of snapshots to revert (default 1, max 20).",
+            "description": "undo: default 1, max 20.",
             "type": "integer"
-          }
-        },
-        "type": "object"
-      },
-      "name": "genexus_undo"
-    },
-    {
-      "description": "Pre-flight: parse + SDK schema scan + would-be diff vs current state. No save.",
-      "inputSchema": {
-        "properties": {
-          "content": {
+          },
+          "left": {
+            "description": "diff.",
             "type": "string"
           },
-          "kb": {
-            "description": "KB alias.",
+          "line": {
+            "description": "blame.",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "diff.",
+            "enum": [
+              "textVsText",
+              "currentVsText"
+            ],
             "type": "string"
           },
           "name": {
@@ -3167,103 +2108,24 @@
           },
           "part": {
             "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "content"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_validate_payload"
-    },
-    {
-      "description": "Map NL transcript to a suggested tool call via regex intents. Returns {matched,dispatchedTool,dispatchedArgs}. Agent confirms; no dispatch.",
-      "inputSchema": {
-        "examples": [
-          {
-            "transcript": "add button called Confirmar"
           },
-          {
-            "transcript": "rename AluCod to StudentCode"
-          }
-        ],
-        "properties": {
-          "transcript": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "transcript"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_voice"
-    },
-    {
-      "description": "Filter recent ops on target whose payload mentions an event name. In-memory OperationTracker. Not a runtime breakpoint.",
-      "inputSchema": {
-        "properties": {
-          "event": {
-            "description": "Event name substring to match in args/response.",
+          "right": {
+            "description": "diff.",
             "type": "string"
           },
-          "last": {
-            "description": "Max runs (default 10, max 50).",
+          "snapshot": {
+            "type": "string"
+          },
+          "versionId": {
             "type": "integer"
-          },
-          "target": {
-            "description": "Object name to filter on.",
-            "type": "string"
           }
         },
         "required": [
-          "target",
-          "event"
+          "action"
         ],
         "type": "object"
       },
-      "name": "genexus_watch_event"
-    },
-    {
-      "description": "WCAG sanity checks on WebPanel CaptionExpression/Tooltip. Flags empty-caption-with-tooltip, caption>80, HTML in plain captions. No contrast.",
-      "inputSchema": {
-        "properties": {
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          },
-          "target": {
-            "description": "WebPanel name.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_wcag_check"
-    },
-    {
-      "description": "Preview impact of a typed change (e.g. attribute swap). Read-only. Returns {breaks,probably_safe,unknown}.",
-      "inputSchema": {
-        "properties": {
-          "change": {
-            "description": "{kind,target,attribute?,oldType?,newType?}",
-            "type": "object"
-          },
-          "kb": {
-            "description": "KB alias.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "change"
-        ],
-        "type": "object"
-      },
-      "name": "genexus_what_if"
+      "name": "genexus_versioning"
     },
     {
       "description": "KB context + version + playbooks. Call FIRST every session — playbooks block routes you to the right tool.",

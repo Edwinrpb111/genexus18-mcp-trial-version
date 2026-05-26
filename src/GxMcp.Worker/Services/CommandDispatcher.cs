@@ -88,6 +88,7 @@ namespace GxMcp.Worker.Services
         private readonly MultiAgentLockService _multiAgentLockService;
         private readonly WhatIfService _whatIfService;
         private readonly TutorialService _tutorialService;
+        private readonly PlaybookService _playbookService;
         private readonly GithubService _githubService;
         private readonly AiCompleteService _aiCompleteService;
         private readonly TimeTravelService _timeTravelService;
@@ -194,6 +195,7 @@ namespace GxMcp.Worker.Services
             _multiAgentLockService = new MultiAgentLockService(_kbService);
             _whatIfService = new WhatIfService(_analyzeService, _objectService);
             _tutorialService = new TutorialService();
+            _playbookService = new PlaybookService();
             _githubService = new GithubService(_kbService);
             _aiCompleteService = new AiCompleteService();
             _timeTravelService = new TimeTravelService(_kbService, _objectService);
@@ -1263,6 +1265,12 @@ namespace GxMcp.Worker.Services
                     case "tutorial":
                         if (string.Equals(action, "Step", StringComparison.OrdinalIgnoreCase))
                             return _tutorialService.GetStep(args?["step"]?.ToObject<int?>() ?? 1);
+                        break;
+                    case "playbook":
+                        if (string.Equals(action, "Read", StringComparison.OrdinalIgnoreCase))
+                            return _playbookService.Read(
+                                args?["topic"]?.ToString(),
+                                args?["list"]?.ToObject<bool?>() == true);
                         break;
                     case "doctor":
                         // genexus_doctor — health/triage envelope. No args.

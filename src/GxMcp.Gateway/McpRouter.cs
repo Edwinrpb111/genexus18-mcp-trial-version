@@ -1017,6 +1017,18 @@ namespace GxMcp.Gateway
 
             if (string.IsNullOrEmpty(toolName)) return null;
 
+            // Soft-alias rewrite for consolidated tools. Legacy callers (Cursor, Codex, older
+            // Claude sessions) still work transparently; the new umbrella tool is the only one
+            // advertised in tools/list. Set GXMCP_LEGACY_TOOL_ALIASES=0 to opt out early.
+            if (Environment.GetEnvironmentVariable("GXMCP_LEGACY_TOOL_ALIASES") != "0")
+            {
+                if (TryRewriteLegacyTool(toolName!, args, out var rewrittenName, out var rewrittenArgs))
+                {
+                    toolName = rewrittenName;
+                    args = rewrittenArgs;
+                }
+            }
+
             foreach (var router in _routers)
             {
                 var converted = router.ConvertToolCall(toolName, args);
@@ -1024,6 +1036,269 @@ namespace GxMcp.Gateway
             }
 
             return null;
+        }
+
+        // Maps a legacy tool name to its umbrella replacement, injecting/overwriting the
+        // `action` (and `mode` where needed) field. Returns false for unknown names so the
+        // normal router dispatch runs unchanged.
+        internal static bool TryRewriteLegacyTool(
+            string toolName,
+            JObject? args,
+            out string newToolName,
+            out JObject newArgs)
+        {
+            newArgs = args is null ? new JObject() : (JObject)args.DeepClone();
+
+            switch (toolName)
+            {
+                // Umbrella: genexus_browser (smoke|a11y|wcag|capture|cross|preview).
+                case "genexus_smoke_test":
+                    newArgs["action"] = "smoke";
+                    newToolName = "genexus_browser";
+                    return true;
+                case "genexus_a11y_audit":
+                    newArgs["action"] = "a11y";
+                    newToolName = "genexus_browser";
+                    return true;
+                case "genexus_wcag_check":
+                    newArgs["action"] = "wcag";
+                    newToolName = "genexus_browser";
+                    return true;
+                case "genexus_browser_capture":
+                    newArgs["action"] = "capture";
+                    newToolName = "genexus_browser";
+                    return true;
+                case "genexus_cross_browser":
+                    newArgs["action"] = "cross";
+                    newToolName = "genexus_browser";
+                    return true;
+                case "genexus_preview":
+                {
+                    // Preview's old sub-action (render|run) becomes the umbrella's `mode`.
+                    var sub = newArgs["action"]?.ToString();
+                    newArgs["mode"] = string.Equals(sub, "run", StringComparison.OrdinalIgnoreCase) ? "run" : "render";
+                    newArgs["action"] = "preview";
+                    newToolName = "genexus_browser";
+                    return true;
+                }
+
+                // Umbrella: genexus_db (drift_*|optimize_*|sql_*|sample_data|types_*|translations_import).
+                case "genexus_db_drift":
+                {
+                    var sub = newArgs["action"]?.ToString();
+                    newArgs["action"] = string.Equals(sub, "report", StringComparison.OrdinalIgnoreCase) ? "drift_report" : "drift_check";
+                    newToolName = "genexus_db";
+                    return true;
+                }
+                case "genexus_db_optimize":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "suggest_indexes" => "optimize_suggest",
+                        "report" => "optimize_report",
+                        _ => "optimize_analyze"
+                    };
+                    newToolName = "genexus_db";
+                    return true;
+                }
+                case "genexus_sql":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub == "navigation" ? "sql_navigation" : "sql_ddl";
+                    newToolName = "genexus_db";
+                    return true;
+                }
+                case "genexus_generate_sample_data":
+                {
+                    if (newArgs["trn"] != null && newArgs["target"] == null)
+                        newArgs["target"] = newArgs["trn"];
+                    newArgs["action"] = "sample_data";
+                    newToolName = "genexus_db";
+                    return true;
+                }
+                case "genexus_types":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "describe" => "types_describe",
+                        "validate_value" => "types_validate",
+                        _ => "types_list"
+                    };
+                    newToolName = "genexus_db";
+                    return true;
+                }
+                case "genexus_translations":
+                    newArgs["action"] = "translations_import";
+                    newToolName = "genexus_db";
+                    return true;
+
+                // Umbrella: genexus_versioning (history_*|undo|time_travel|blame|diff|diff_generated).
+                case "genexus_history":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "get_source" => "history_get",
+                        "save" => "history_save",
+                        "restore" => "history_restore",
+                        _ => "history_list"
+                    };
+                    newToolName = "genexus_versioning";
+                    return true;
+                }
+                case "genexus_undo":
+                    newArgs["action"] = "undo";
+                    newToolName = "genexus_versioning";
+                    return true;
+                case "genexus_time_travel":
+                    newArgs["action"] = "time_travel";
+                    newToolName = "genexus_versioning";
+                    return true;
+                case "genexus_blame":
+                    newArgs["action"] = "blame";
+                    newToolName = "genexus_versioning";
+                    return true;
+                case "genexus_diff":
+                    newArgs["action"] = "diff";
+                    newToolName = "genexus_versioning";
+                    return true;
+                case "genexus_diff_generated":
+                    newArgs["action"] = "diff_generated";
+                    newToolName = "genexus_versioning";
+                    return true;
+
+                // Umbrella: genexus_io (asset_*|export_part|import_part|export_unified|screenshot_publish|ocr).
+                case "genexus_asset":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "read" => "asset_read",
+                        "write" => "asset_write",
+                        _ => "asset_find"
+                    };
+                    newToolName = "genexus_io";
+                    return true;
+                }
+                case "genexus_export_object":
+                    newArgs["action"] = "export_part";
+                    newToolName = "genexus_io";
+                    return true;
+                case "genexus_import_object":
+                    newArgs["action"] = "import_part";
+                    newToolName = "genexus_io";
+                    return true;
+                case "genexus_export_unified":
+                    newArgs["action"] = "export_unified";
+                    newToolName = "genexus_io";
+                    return true;
+                case "genexus_screenshot_publish":
+                    newArgs["action"] = "screenshot_publish";
+                    newToolName = "genexus_io";
+                    return true;
+                case "genexus_ocr_screenshot":
+                    newArgs["action"] = "ocr";
+                    newToolName = "genexus_io";
+                    return true;
+
+                // Umbrella: genexus_variable (add|delete|modify).
+                case "genexus_add_variable":
+                    newArgs["action"] = "add";
+                    newToolName = "genexus_variable";
+                    return true;
+                case "genexus_delete_variable":
+                    newArgs["action"] = "delete";
+                    newToolName = "genexus_variable";
+                    return true;
+                case "genexus_modify_variable":
+                    newArgs["action"] = "modify";
+                    newToolName = "genexus_variable";
+                    return true;
+
+                // Umbrella: genexus_telemetry (executions|watch_event|friction_*|learning_report|logs|profile_*).
+                case "genexus_execution_history":
+                    newArgs["action"] = "executions";
+                    newToolName = "genexus_telemetry";
+                    return true;
+                case "genexus_watch_event":
+                    newArgs["action"] = "watch_event";
+                    newToolName = "genexus_telemetry";
+                    return true;
+                case "genexus_friction_log":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub == "tail" ? "friction_tail" : "friction_append";
+                    newToolName = "genexus_telemetry";
+                    return true;
+                }
+                case "genexus_learning":
+                    newArgs["action"] = "learning_report";
+                    newToolName = "genexus_telemetry";
+                    return true;
+                case "genexus_logs":
+                    newArgs["action"] = "logs";
+                    newToolName = "genexus_telemetry";
+                    return true;
+                case "genexus_profile":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "hotspots" => "profile_hotspots",
+                        "correlate" => "profile_correlate",
+                        _ => "profile_analyze"
+                    };
+                    newToolName = "genexus_telemetry";
+                    return true;
+                }
+
+                // Umbrella: genexus_create (object|popup|sd_panel_*|save_as|scaffold|translate|sample|template).
+                case "genexus_create_object":
+                    newArgs["action"] = "object";
+                    newToolName = "genexus_create";
+                    return true;
+                case "genexus_create_popup":
+                    newArgs["action"] = "popup";
+                    newToolName = "genexus_create";
+                    return true;
+                case "genexus_sd_panel":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "create" => "sd_panel_create",
+                        "edit" => "sd_panel_edit",
+                        _ => "sd_panel_inspect"
+                    };
+                    newToolName = "genexus_create";
+                    return true;
+                }
+                case "genexus_save_as":
+                    newArgs["action"] = "save_as";
+                    newToolName = "genexus_create";
+                    return true;
+                case "genexus_forge":
+                {
+                    var sub = newArgs["action"]?.ToString()?.ToLowerInvariant();
+                    newArgs["action"] = sub switch
+                    {
+                        "translate" => "translate",
+                        "sample" => "sample",
+                        _ => "scaffold"
+                    };
+                    newToolName = "genexus_create";
+                    return true;
+                }
+                case "genexus_apply_template":
+                    newArgs["action"] = "template";
+                    newToolName = "genexus_create";
+                    return true;
+            }
+
+            newToolName = toolName;
+            return false;
         }
 
         internal static void StripNulls(JObject obj)

@@ -1766,6 +1766,23 @@ namespace GxMcp.Gateway
                 string toolName = paramsObj?["name"]?.ToString() ?? "";
                 var args = paramsObj?["arguments"] as JObject;
 
+                // Soft-alias rewrite for consolidated umbrella tools. Runs here (before
+                // the gateway-only handlers below AND before McpRouter.ConvertToolCall
+                // downstream) so every code path sees the post-rewrite name and args.
+                // Default ON; opt out with GXMCP_LEGACY_TOOL_ALIASES=0.
+                if (!string.IsNullOrEmpty(toolName)
+                    && Environment.GetEnvironmentVariable("GXMCP_LEGACY_TOOL_ALIASES") != "0"
+                    && McpRouter.TryRewriteLegacyTool(toolName, args, out var rewrittenName, out var rewrittenArgs))
+                {
+                    toolName = rewrittenName;
+                    args = rewrittenArgs;
+                    if (paramsObj != null)
+                    {
+                        paramsObj["name"] = rewrittenName;
+                        paramsObj["arguments"] = rewrittenArgs;
+                    }
+                }
+
                 // Friction 2026-05-22: genexus_worker_reload force=true bypasses
                 // the JSON-RPC pipe and kills the worker directly. The soft path
                 // is unreachable when the worker is wedged on a hung preview
@@ -1827,29 +1844,29 @@ namespace GxMcp.Gateway
                     }
                 }
 
-                // Item 36: genexus_execution_history — gateway-only ring-buffer view of
-                // recent tool invocations filtered by target object name. Reads
-                // OperationTracker (in-memory) directly; never reaches a worker.
-                if (string.Equals(toolName, "genexus_execution_history", StringComparison.OrdinalIgnoreCase))
+                // genexus_telemetry: gateway-only short-circuit for ring-buffer views (executions, watch_event).
+                // Other actions (logs/friction_*/learning_report/profile_*) fall through to the router.
+                if (string.Equals(toolName, "genexus_telemetry", StringComparison.OrdinalIgnoreCase))
                 {
-                    string targetName = args?["target"]?.ToString() ?? args?["name"]?.ToString();
-                    int lastN = args?["last"]?.ToObject<int?>() ?? 10;
-                    JObject historyPayload = _operationTracker?.BuildExecutionHistory(targetName, lastN)
-                        ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
-                    return BuildToolTextResponse(idToken, historyPayload, isError: false, toolName: "genexus_execution_history", toolArgs: args);
-                }
-
-                // Item 35: genexus_watch_event — gateway-only proxy view of recent
-                // edits/runs/lifecycle ops against <target> mentioning <eventName>.
-                // Not a real source-level breakpoint (that needs generator changes).
-                if (string.Equals(toolName, "genexus_watch_event", StringComparison.OrdinalIgnoreCase))
-                {
-                    string watchTarget = args?["target"]?.ToString() ?? args?["name"]?.ToString();
-                    string watchEvent = args?["event"]?.ToString();
-                    int watchLast = args?["last"]?.ToObject<int?>() ?? 10;
-                    JObject watchPayload = _operationTracker?.BuildWatchEvent(watchTarget, watchEvent, watchLast)
-                        ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
-                    return BuildToolTextResponse(idToken, watchPayload, isError: false, toolName: "genexus_watch_event", toolArgs: args);
+                    string? telAction = args?["action"]?.ToString()?.ToLowerInvariant();
+                    if (telAction == "executions")
+                    {
+                        string targetName = args?["target"]?.ToString() ?? args?["name"]?.ToString();
+                        int lastN = args?["last"]?.ToObject<int?>() ?? 10;
+                        JObject historyPayload = _operationTracker?.BuildExecutionHistory(targetName, lastN)
+                            ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
+                        return BuildToolTextResponse(idToken, historyPayload, isError: false, toolName: "genexus_telemetry", toolArgs: args);
+                    }
+                    if (telAction == "watch_event")
+                    {
+                        string watchTarget = args?["target"]?.ToString() ?? args?["name"]?.ToString();
+                        string watchEvent = args?["event"]?.ToString();
+                        int watchLast = args?["last"]?.ToObject<int?>() ?? 10;
+                        JObject watchPayload = _operationTracker?.BuildWatchEvent(watchTarget, watchEvent, watchLast)
+                            ?? new JObject { ["status"] = "Unwired", ["code"] = "TrackerUnavailable", ["runs"] = new JArray() };
+                        return BuildToolTextResponse(idToken, watchPayload, isError: false, toolName: "genexus_telemetry", toolArgs: args);
+                    }
+                    // Any other action falls through to OperationsRouter ConvertTelemetryUmbrella.
                 }
 
                 // genexus_kb — meta-tool for managing the WorkerPool (list/open/close).

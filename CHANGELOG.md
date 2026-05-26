@@ -1,5 +1,50 @@
 # Changelog
 
+## v2.7.0 — 2026-05-26
+
+### Changed
+
+- **Consolidated tool surface.** 92 tools collapsed to 42 (≈54% reduction) by introducing 8 umbrella tools that absorb 38 legacy tools via `action=` dispatch, and removing 14 niche tools from advertisement (still callable by legacy name during this release window):
+  - **`genexus_browser`** — `action=smoke|a11y|wcag|capture|cross|preview` (was `genexus_smoke_test`, `_a11y_audit`, `_wcag_check`, `_browser_capture`, `_cross_browser`, `_preview`). `preview` keeps the `mode=render|run` sub-discriminator.
+  - **`genexus_db`** — `action=drift_check|drift_report|optimize_analyze|optimize_suggest|optimize_report|sql_ddl|sql_navigation|sample_data|types_list|types_describe|types_validate|translations_import` (was `genexus_db_drift`, `_db_optimize`, `_sql`, `_generate_sample_data`, `_types`, `_translations`).
+  - **`genexus_versioning`** — `action=history_list|history_get|history_save|history_restore|undo|time_travel|blame|diff|diff_generated` (was `genexus_history`, `_undo`, `_time_travel`, `_blame`, `_diff`, `_diff_generated`).
+  - **`genexus_io`** — `action=asset_find|asset_read|asset_write|export_part|import_part|export_unified|screenshot_publish|ocr` (was `genexus_asset`, `_export_object`, `_import_object`, `_export_unified`, `_screenshot_publish`, `_ocr_screenshot`).
+  - **`genexus_variable`** — `action=add|delete|modify` (was `genexus_add_variable`, `_delete_variable`, `_modify_variable`).
+  - **`genexus_telemetry`** — `action=executions|watch_event|friction_append|friction_tail|learning_report|logs|profile_analyze|profile_hotspots|profile_correlate` (was `genexus_execution_history`, `_watch_event`, `_friction_log`, `_learning`, `_logs`, `_profile`).
+  - **`genexus_create`** — `action=object|popup|sd_panel_create|sd_panel_inspect|sd_panel_edit|save_as|scaffold|translate|sample|template` (was `genexus_create_object`, `_create_popup`, `_sd_panel`, `_save_as`, `_forge`, `_apply_template`).
+  - Withdrawn from advertisement (still dispatch by legacy name): `genexus_inject_context`, `_kb_explorer`, `_pr_description`, `_explain`, `_kb_readme`, `_build_plan`, `_sandbox`, `_kb_diff`, `_kb_import`, `_tutorial`, `_voice`, `_what_if`, `_auto_test`, `_reverse_pattern`. Reachable via `genexus_recipe` / `genexus_playbook` references and the `LegacyToolAliases` fallback.
+  - Folded duplicates removed: `genexus_orient` (use `genexus_whoami`), `genexus_validate_payload` (use `genexus_edit validate="only"`), `genexus_bulk_edit` (use `genexus_edit targets[]`).
+- **Soft-alias compatibility.** Legacy tool names still dispatch transparently to the new umbrellas during this release. Set environment variable `GXMCP_LEGACY_TOOL_ALIASES=0` to opt out early (the old names then return `MethodNotFound`).
+- `tool_definitions.json` schema budget lowered from ~13.2k → ~8.8k tokens (~33% reduction on every model turn).
+
+### Fixed
+
+- **Gemini / Vertex AI HTTP 400 on `tools/list`** caused by `genexus_run_object.args` declaring `type: "array"` with no `items` field — strict OpenAPI consumers (Vertex, some OpenAI Function-Calling configurations) reject the request before the tool is ever called. The schema now declares `items: {type: "string"}`. A new `ToolSchemaShapeTests` suite walks every umbrella + nested schema and asserts `array → items`, non-empty `enum`, `required[]` entries match `properties`, and unique tool names — so this class of bug fails CI instead of a chat session.
+
+### Internal
+
+- Tool-definitions budget lowered 13300 → 9500. `ToolSchemaSizeTests` comment trail updated with the v2.7.0 rationale.
+- `McpRouter.TryRewriteLegacyTool` is the single rewrite table; called once early in `Program.cs` (so gateway-only handlers see the new name + `action`) and once again from `McpRouter.ConvertToolCall` (defence-in-depth for callers that bypass the early hook).
+- `OperationsRouter` gains `ConvertBrowserUmbrella`, `ConvertDbUmbrella`, `ConvertVersioningUmbrella`, `ConvertIoUmbrella`, `ConvertCreateUmbrella`, `ConvertTelemetryUmbrella` helpers — each is a thin switch on the new `action=` that maps to the worker module/action the legacy tool used. No worker-side service changes; everything reaches the same `CommandDispatcher` cases as before.
+- Gateway-only handlers in `Program.cs` for `genexus_execution_history` and `genexus_watch_event` collapsed into a single `genexus_telemetry` short-circuit that gates on `action=executions|watch_event`.
+- `NextLegalActionsBuilder` suggestions retargeted to the new names (`genexus_versioning action=history_restore`, `genexus_browser action=preview mode=run`).
+- Playbook examples in `wwp_dual_form.md` and `pattern_reapply.md` updated to the new `genexus_versioning action=history_restore discard=true` form.
+- `ToolDefinitionsRedirectsTests.GenexusCreateObject_DescriptionRedirectsWwpToApplyPattern` renamed to `GenexusCreate_*` and pointed at the new umbrella description.
+- 9 new `LegacyToolAliasTests` cover the browser umbrella's rewrite map (one per legacy name + null-args + non-consolidated tool); the same pattern can be extended for the other 32 absorbed names as needed.
+
+## v2.6.12 — 2026-05-26
+
+### Added
+
+- **`genexus_playbook topic=<topic>`** — deferred-load skill packs. Returns the full markdown body of an embedded playbook for a named topic. Initial topics: `popup_layout` (polished WWP popup `PatternInstance` idiom: `Template="EmptyWithTitle"`, `themeClass="GroupFiltro"`, `descriptionPosition="Left"`, `controlPropertiesString="Direction=Vertical"` for stacked radios, `TableActions` with `class="PrimaryAction"`, reserved-userAction names, declarative `visibleCondition`), `wwp_dual_form` (the `<Form type="layout">` `<detail><layout><table>` schema, allowed control-element attributes, theme class GUID convention, "edit `PatternInstance`, never the parent `WebForm`" rule), `pattern_reapply` (apply vs reapply call shapes, post-v2.6.11 `PartialFailure` envelope, `src0265`/`src0216` fix map, template-choice guidance for WebPanel hosts). Markdown bodies live as embedded resources in the Worker assembly; the tool schema costs ~110 tokens and the bodies only enter the LLM context when the LLM calls the tool. Discoverable via `topic=` + `list=true`.
+- **`playbookHint` planted in `next_legal_actions`** for `genexus_create_popup` (suggests `topic=popup_layout` so a freshly-scaffolded popup gets the polished-form idiom before the agent starts customizing) and `genexus_apply_pattern` success (suggests `topic=pattern_reapply` so reapply diagnostics + template-choice guidance are one tool call away).
+
+### Internal
+
+- Tool-definitions budget bumped 13150 → 13300 (measured impact ~110 tokens for the new tool's schema entry; embedded markdown bodies aren't in the schema). `ToolSchemaSizeTests` comment trail updated.
+- `PlaybookService` reads `Playbooks\*.md` via `Assembly.GetManifestResourceStream`; new resources auto-register at build time via `<EmbeddedResource Include="Playbooks\*.md" />` in `GxMcp.Worker.csproj`. Drop a new `.md` under `src/GxMcp.Worker/Playbooks/` to add a topic — no service changes needed.
+- 4 unit tests in `PlaybookServiceTests` cover list/read/unknown-topic/empty-topic paths.
+
 ## v2.6.11 — 2026-05-26
 
 ### Fixed

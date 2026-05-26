@@ -58,8 +58,7 @@ namespace GxMcp.Gateway
                 "genexus_edit" => isError ? null : BuildForEdit(args, responsePayload),
                 "genexus_lifecycle" => BuildForLifecycle(args, responsePayload, isError),
                 "genexus_save_as" => isError ? null : BuildForSaveAs(args, responsePayload),
-                "genexus_history" => isError ? null : BuildForHistory(args, responsePayload),
-                "genexus_undo" => isError ? null : BuildForUndo(args, responsePayload),
+                "genexus_versioning" => isError ? null : BuildForVersioning(args, responsePayload),
                 _ => null,
             };
 
@@ -137,11 +136,16 @@ namespace GxMcp.Gateway
             if (!string.IsNullOrEmpty(target))
             {
                 arr2.Add(Suggest(
-                    "genexus_history",
-                    new JObject { ["action"] = "restore", ["discard"] = true, ["target"] = target! },
+                    "genexus_versioning",
+                    new JObject { ["action"] = "history_restore", ["discard"] = true, ["target"] = target! },
                     "Revert if the pattern apply was wrong",
                     "low"));
             }
+            arr2.Add(Suggest(
+                "genexus_playbook",
+                new JObject { ["topic"] = "pattern_reapply" },
+                "Read the pattern apply/reapply playbook for src0265/src0216 diagnostics and template-choice guidance",
+                "medium"));
             return arr2;
         }
 
@@ -211,6 +215,11 @@ namespace GxMcp.Gateway
                 new JObject { ["action"] = "build", ["target"] = popup },
                 "Build the popup target to confirm it compiles",
                 "medium"));
+            arr.Add(Suggest(
+                "genexus_playbook",
+                new JObject { ["topic"] = "popup_layout" },
+                "Read the polished WWP popup PatternInstance idiom before customizing the host (label/value alignment, vertical radios, primary action bar)",
+                "medium"));
             return arr;
         }
 
@@ -232,8 +241,8 @@ namespace GxMcp.Gateway
                     "Verify the patch compiles",
                     "high"),
                 Suggest(
-                    "genexus_preview",
-                    new JObject { ["action"] = "run", ["target"] = name },
+                    "genexus_browser",
+                    new JObject { ["action"] = "preview", ["mode"] = "run", ["target"] = name },
                     "Render the edited object in the headless browser to spot regressions",
                     "medium"),
                 Suggest(
@@ -271,8 +280,8 @@ namespace GxMcp.Gateway
                 if (!string.IsNullOrEmpty(target))
                 {
                     arr.Add(Suggest(
-                        "genexus_history",
-                        new JObject { ["action"] = "restore", ["discard"] = true, ["target"] = target! },
+                        "genexus_versioning",
+                        new JObject { ["action"] = "history_restore", ["discard"] = true, ["target"] = target! },
                         "Discard recent edits on the failing target if the regression came from this turn",
                         "medium"));
                     arr.Add(Suggest(
@@ -292,16 +301,16 @@ namespace GxMcp.Gateway
             if (!string.IsNullOrEmpty(target))
             {
                 ok.Add(Suggest(
-                    "genexus_preview",
-                    new JObject { ["action"] = "run", ["target"] = target! },
+                    "genexus_browser",
+                    new JObject { ["action"] = "preview", ["mode"] = "run", ["target"] = target! },
                     "Run the built object to verify it behaves correctly",
                     "high"));
             }
             else
             {
                 ok.Add(Suggest(
-                    "genexus_preview",
-                    new JObject { ["action"] = "run" },
+                    "genexus_browser",
+                    new JObject { ["action"] = "preview", ["mode"] = "run" },
                     "Run the KB's startup object to verify it behaves correctly",
                     "high"));
             }
@@ -341,44 +350,43 @@ namespace GxMcp.Gateway
             return arr;
         }
 
-        // 8. history restore
-        private static JArray? BuildForHistory(JObject args, JObject payload)
+        // 8/9. versioning umbrella: history_restore + undo follow-ups.
+        private static JArray? BuildForVersioning(JObject args, JObject payload)
         {
             string? action = S(args["action"]);
-            if (!string.Equals(action, "restore", StringComparison.OrdinalIgnoreCase)) return null;
-
-            string? target = S(args["target"]) ?? S(payload["target"]);
+            string? target = S(args["target"]) ?? S(args["name"]) ?? S(payload["target"]);
             if (string.IsNullOrEmpty(target)) return null;
 
-            return new JArray
+            if (string.Equals(action, "history_restore", StringComparison.OrdinalIgnoreCase))
             {
-                Suggest(
-                    "genexus_lifecycle",
-                    new JObject { ["action"] = "build", ["target"] = target! },
-                    "Build the restored object to verify the rollback compiles",
-                    "high"),
-            };
-        }
+                return new JArray
+                {
+                    Suggest(
+                        "genexus_lifecycle",
+                        new JObject { ["action"] = "build", ["target"] = target! },
+                        "Build the restored object to verify the rollback compiles",
+                        "high"),
+                };
+            }
 
-        // 9. undo
-        private static JArray? BuildForUndo(JObject args, JObject payload)
-        {
-            string? target = S(args["target"]) ?? S(payload["target"]);
-            if (string.IsNullOrEmpty(target)) return null;
-
-            return new JArray
+            if (string.Equals(action, "undo", StringComparison.OrdinalIgnoreCase))
             {
-                Suggest(
-                    "genexus_lifecycle",
-                    new JObject { ["action"] = "build", ["target"] = target! },
-                    "Build to confirm the undo left the KB in a valid state",
-                    "high"),
-                Suggest(
-                    "genexus_inspect",
-                    new JObject { ["target"] = target! },
-                    "Inspect the object to confirm the expected pre-edit shape was restored",
-                    "medium"),
-            };
+                return new JArray
+                {
+                    Suggest(
+                        "genexus_lifecycle",
+                        new JObject { ["action"] = "build", ["target"] = target! },
+                        "Build to confirm the undo left the KB in a valid state",
+                        "high"),
+                    Suggest(
+                        "genexus_inspect",
+                        new JObject { ["target"] = target! },
+                        "Inspect the object to confirm the expected pre-edit shape was restored",
+                        "medium"),
+                };
+            }
+
+            return null;
         }
     }
 }

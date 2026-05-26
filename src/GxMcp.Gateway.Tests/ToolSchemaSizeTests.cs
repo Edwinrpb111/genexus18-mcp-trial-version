@@ -105,7 +105,22 @@ namespace GxMcp.Gateway.Tests
             //   crystallize). Measured ~12943; ~107 tokens headroom.
             //   v2.6.9 (2026-05-24, profile bridge): 13050 → 13150 for genexus_profile
             //   (~75 tokens — runtime profiler XML ingest). Measured 13081.
-            Assert.True(approxTokens < 13150, $"tool_definitions.json is ~{approxTokens} tokens; budget 13150.");
+            //   v2.6.12 (2026-05-26, deferred-load playbook): 13150 → 13300 for
+            //   genexus_playbook (~110 tokens — topic enum + deferred-load skill packs;
+            //   the markdown bodies live as embedded resources in the Worker assembly,
+            //   not in the tool schema, so the budget impact is the schema entry only).
+            //   v2.7.0 (2026-05-26, consolidation sweep): 13300 → 9500. 92 tools collapsed
+            //   to 42 (~54% reduction) by introducing 8 umbrella tools
+            //   (genexus_browser, _db, _versioning, _io, _variable, _telemetry, _create)
+            //   that absorb 38 legacy tools via action= dispatch, plus 14 niche tools
+            //   removed from advertisement (kb_diff, kb_import, kb_explorer, sandbox,
+            //   inject_context, what_if, reverse_pattern, explain, kb_readme,
+            //   pr_description, tutorial, build_plan, auto_test, voice). Legacy names
+            //   still dispatch via McpRouter.LegacyToolAliases (set
+            //   GXMCP_LEGACY_TOOL_ALIASES=0 to opt out). Net: ~13.2k → ~8.8k tokens.
+            //   Folded duplicates: orient (use whoami), validate_payload (use edit
+            //   validate=only), bulk_edit (use edit targets[]).
+            Assert.True(approxTokens < 9500, $"tool_definitions.json is ~{approxTokens} tokens; budget 9500.");
         }
     }
 }

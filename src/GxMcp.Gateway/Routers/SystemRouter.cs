@@ -77,28 +77,8 @@ namespace GxMcp.Gateway.Routers
                         default: return null;
                     }
 
-                case "genexus_forge":
-                    switch (action)
-                    {
-                        case "scaffold":
-                            return new {
-                                module = "Forge",
-                                action = "Scaffold",
-                                type = args?["type"]?.ToString(),
-                                name = args?["name"]?.ToString(),
-                                code = args?["content"]?.ToString(),
-                                description = args?["description"]?.ToString()
-                            };
-                        case "translate":
-                            return new {
-                                module = "Conversion",
-                                action = "TranslateTo",
-                                target = args?["name"]?.ToString(),
-                                language = args?["content"]?.ToString()
-                            };
-                        case "sample": return new { module = "Pattern", action = "GetSample", target = args?["type"]?.ToString() };
-                        default: return null;
-                    }
+                // forge (scaffold|translate|sample) merged into genexus_create umbrella (OperationsRouter).
+
 
                 case "genexus_doc":
                     switch (action)
@@ -186,22 +166,8 @@ namespace GxMcp.Gateway.Routers
                     };
                 }
 
-                // genexus_blame — git blame for an object part.
-                case "genexus_blame":
-                {
-                    return new
-                    {
-                        module = "Blame",
-                        action = "Get",
-                        target = args?["name"]?.ToString(),
-                        name = args?["name"]?.ToString(),
-                        part = args?["part"]?.ToString(),
-                        line = args?["line"]?.ToObject<int?>(),
-                        filePath = args?["filePath"]?.ToString(),
-                        context = args?["context"]?.ToObject<int?>()
-                    };
-                }
-                
+                // blame merged into genexus_versioning umbrella (OperationsRouter).
+
                 // Legados
                 case "genexus_validate":
                     return new { module = "Validation", action = "Check", target = target, payload = args?["code"]?.ToString() };

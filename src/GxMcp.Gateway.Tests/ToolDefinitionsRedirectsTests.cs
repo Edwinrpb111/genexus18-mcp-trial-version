@@ -36,13 +36,15 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
-        public void GenexusCreateObject_DescriptionRedirectsWwpToApplyPattern()
+        public void GenexusCreate_DescriptionRedirectsWwpToApplyPattern()
         {
-            var t = FindTool("genexus_create_object");
+            // Post-2026-05-26 consolidation: genexus_create_object folded into the
+            // genexus_create umbrella. The WWP routing hint moved with it.
+            var t = FindTool("genexus_create");
             Assert.NotNull(t);
             string desc = t!["description"]!.ToString();
             Assert.Contains("apply_pattern", desc);
-            Assert.Contains("WorkWithPlus", desc);
+            Assert.Contains("WWP", desc, System.StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

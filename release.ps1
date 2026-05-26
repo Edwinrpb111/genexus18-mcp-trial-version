@@ -261,6 +261,20 @@ $createArgs = @(
 Invoke-Cmd 'gh' $createArgs
 
 Ok "Release created: https://github.com/lennix1337/Genexus18MCP/releases/tag/$tag"
+
+# Belt-and-suspenders: explicitly trigger the publish workflow.
+# Observed 2026-05-26: v2.6.11 was created with publish.zip attached but the
+# `release.published` event never fired the workflow — npm stayed at 2.6.10
+# until a manual `gh workflow run release.yml -f tag=v2.6.11` backfilled it.
+# Dispatching explicitly is idempotent: if the release event DID fire, the
+# workflow's `Check npm registry` step short-circuits the duplicate run with
+# `already_published=true` and exits cheap.
+if (-not $DryRun) {
+    Step "Triggering publish workflow (belt-and-suspenders)"
+    Start-Sleep -Seconds 3  # let GitHub register the release before dispatch
+    Invoke-Cmd 'gh' @('workflow', 'run', 'release.yml', '-f', "tag=$tag")
+    Ok "Workflow dispatched."
+}
 Write-Host ""
 Write-Host "    Watch the publish workflow:" -ForegroundColor Cyan
 Write-Host "      gh run watch --workflow=release.yml" -ForegroundColor Gray

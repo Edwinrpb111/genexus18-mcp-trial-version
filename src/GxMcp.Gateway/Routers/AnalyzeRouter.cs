@@ -91,29 +91,9 @@ namespace GxMcp.Gateway.Routers
                             return new { module = "Analyze", action = "Analyze", target = target, type = type };
                     }
 
-                case "genexus_sql":
-                    string? sqlAction = args?["action"]?.ToString()?.ToLowerInvariant();
-                    if (sqlAction == "navigation")
-                    {
-                        int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
-                        // Items 34 + 44: optional execution-plan preview + index advisor.
-                        bool includeExecutionPlan = args?["includeExecutionPlan"]?.ToObject<bool?>() ?? false;
-                        bool includeIndexAdvisor = args?["includeIndexAdvisor"]?.ToObject<bool?>() ?? false;
-                        return new { module = "Analyze", action = "GetSqlForNavigation", target = target, levelNumber = levelNumber, includeExecutionPlan = includeExecutionPlan, includeIndexAdvisor = includeIndexAdvisor, type = type };
-                    }
-                    // default = ddl
-                    bool includeSub = args?["includeSubordinated"]?.Value<bool>() ?? false;
-                    return new { module = "Analyze", action = "GetSQL", target = target, includeSubordinated = includeSub, type = type };
-
-                case "genexus_generate_sample_data":
-                    int rowsArg = args?["rows"]?.ToObject<int?>() ?? 5;
-                    string? trnArg = args?["trn"]?.ToString() ?? target;
-                    return new { module = "Analyze", action = "GenerateSampleData", target = trnArg, rows = rowsArg, type = type };
-
-                case "genexus_translations":
-                    string? trAction = args?["action"]?.ToString()?.ToLowerInvariant();
-                    string? inputPath = args?["inputPath"]?.ToString();
-                    return new { module = "Analyze", action = "TranslationsImport", target = target, payload = inputPath, type = type };
+                // genexus_sql, genexus_generate_sample_data, genexus_translations consolidated
+                // into genexus_db (sql_ddl|sql_navigation|sample_data|translations_import).
+                // Legacy names dispatch via McpRouter.LegacyToolAliases.
 
                 case "genexus_get_signature":
                     return new { module = "Analyze", action = "GetParameters", target = target, type = type };

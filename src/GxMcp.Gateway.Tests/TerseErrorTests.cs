@@ -9,16 +9,22 @@ namespace GxMcp.Gateway.Tests
         [Fact]
         public void TrimErrorEnvelope_DefaultDropsStackAndKeepsMessage()
         {
+            // Friction 2026-05-25 item #5: `details` (and a handful of diagnostic
+            // fields: verifyDiff, suggestion, persistedSnippet, requestedSnippet,
+            // availableParts, part, objectName, objectType) is preserved by
+            // TrimErrorEnvelope when present. The agent needs the SDK's actual
+            // rejection diff to fix the next call. `stack` is still dropped (it's
+            // engineer-internal — verbose=true is the escape hatch for it).
             var input = JObject.Parse(@"{
                 ""code"":""internal"",""message"":""boom\nstack frame 1\nstack frame 2"",
-                ""stack"":""..."",""details"":""..."",""hint"":""try X""
+                ""stack"":""..."",""details"":""verify-diff-payload"",""hint"":""try X""
             }");
             var trimmed = McpRouter.TrimErrorEnvelope(input, verbose: false);
             Assert.Equal("boom", (string)trimmed["message"]!);
             Assert.Equal("internal", (string)trimmed["code"]!);
             Assert.Equal("try X", (string)trimmed["hint"]!);
-            Assert.False(trimmed.ContainsKey("stack"));
-            Assert.False(trimmed.ContainsKey("details"));
+            Assert.False(trimmed.ContainsKey("stack"), "stack should be dropped — engineer-internal");
+            Assert.Equal("verify-diff-payload", (string)trimmed["details"]!);
         }
 
         [Fact]

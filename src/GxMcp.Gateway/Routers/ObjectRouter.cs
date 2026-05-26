@@ -240,28 +240,7 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_get_properties":
                     return new { module = "Property", action = "Get", target = target, control = args?["control"]?.ToString() };
 
-                case "genexus_export_object":
-                    return new
-                    {
-                        module = "Object",
-                        action = "ExportText",
-                        target = target,
-                        outputPath = args?["outputPath"]?.ToString(),
-                        part = part,
-                        type = args?["type"]?.ToString(),
-                        overwrite = args?["overwrite"]?.ToObject<bool?>() ?? false
-                    };
-
-                case "genexus_import_object":
-                    return new
-                    {
-                        module = "Object",
-                        action = "ImportText",
-                        target = target,
-                        inputPath = args?["inputPath"]?.ToString(),
-                        part = part,
-                        type = args?["type"]?.ToString()
-                    };
+                // export_object + import_object merged into genexus_io umbrella (OperationsRouter).
 
                 case "genexus_edit_and_build":
                     // Items 5 + 37: hoist visualVerify + part to the top-level
