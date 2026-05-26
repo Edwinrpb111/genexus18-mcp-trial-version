@@ -127,23 +127,30 @@ namespace GxMcp.Worker.Services
                 if (string.IsNullOrWhiteSpace(gxwPath) || !File.Exists(gxwPath)) return;
 
                 string gxPath = Environment.GetEnvironmentVariable("GX_PROGRAM_DIR") ?? string.Empty;
-                string gxVersion = DetectGeneXusVersion(gxPath);
-                if (string.IsNullOrWhiteSpace(gxVersion)) return;
+                var stamp = DetectGeneXusVersionStamp(gxPath);
+                if (stamp == null) return;
 
                 XDocument doc = XDocument.Load(gxwPath, LoadOptions.PreserveWhitespace);
                 XElement root = doc.Root;
                 if (root == null || !string.Equals(root.Name.LocalName, "GeneXusInformation", StringComparison.OrdinalIgnoreCase)) return;
 
+                // Each element must be written in the exact format the IDE itself
+                // emits, otherwise the IDE re-detects a mismatch and re-shows the
+                // "different GeneXus installation than last time" dialog after the
+                // MCP touches the KB. The IDE writes, e.g.:
+                //   <ProductVersion>18</ProductVersion>
+                //   <FriendlyVersion>18.0.179127 U7</FriendlyVersion>
+                //   <VersionNumber>18.0.7.179127</VersionNumber>
                 bool changed = false;
                 changed |= UpsertElementValue(root, "InstallationPath", gxPath);
-                changed |= UpsertElementValue(root, "ProductVersion", gxVersion);
-                changed |= UpsertElementValue(root, "FriendlyVersion", gxVersion);
-                changed |= UpsertElementValue(root, "VersionNumber", gxVersion);
+                changed |= UpsertElementValue(root, "ProductVersion", stamp.ProductVersionShort);
+                changed |= UpsertElementValue(root, "FriendlyVersion", stamp.FriendlyVersion);
+                changed |= UpsertElementValue(root, "VersionNumber", stamp.VersionNumber);
 
                 if (!changed) return;
 
                 doc.Save(gxwPath, SaveOptions.DisableFormatting);
-                Logger.Info($"[KB-METADATA] Updated '{Path.GetFileName(gxwPath)}' to version '{gxVersion}'.");
+                Logger.Info($"[KB-METADATA] Updated '{Path.GetFileName(gxwPath)}' to FriendlyVersion '{stamp.FriendlyVersion}'.");
             }
             catch (Exception ex)
             {
@@ -182,42 +189,95 @@ namespace GxMcp.Worker.Services
             return true;
         }
 
-        private static string DetectGeneXusVersion(string gxPath)
+        // The three version strings the IDE writes into a .gxw's <GeneXusInformation>.
+        internal sealed class GxVersionStamp
+        {
+            public string ProductVersionShort;  // e.g. "18"
+            public string FriendlyVersion;       // e.g. "18.0.179127 U7"
+            public string VersionNumber;         // e.g. "18.0.7.179127"
+        }
+
+        // Visible for testing — given a parsed FileVersionInfo (or its equivalent
+        // parts), build the IDE-canonical stamp. Kept pure so the unit suite can
+        // exercise the ProductVersion-vs-FileVersion fix without a GeneXus install.
+        internal static GxVersionStamp BuildStampFromParts(
+            int productMajor, int productMinor, int productBuild, int productPrivate)
+        {
+            // Friendly format the IDE emits is "Major.Minor.Private U{Build}", e.g.
+            // ProductVersion 18.0.7.179127 → "18.0.179127 U7". The build number is
+            // the *update* level (U7) and the private part is the actual build id.
+            return new GxVersionStamp
+            {
+                ProductVersionShort = productMajor.ToString(),
+                FriendlyVersion = $"{productMajor}.{productMinor}.{productPrivate} U{productBuild}",
+                VersionNumber = $"{productMajor}.{productMinor}.{productBuild}.{productPrivate}"
+            };
+        }
+
+        // Parse the dotted ProductVersion *string* into its four numeric parts.
+        // Returns null if fewer than four numeric components are present.
+        // Strips a "+<git-sha>" / trailing-space InformationalVersion suffix that
+        // .NET appends (e.g. "18.0.7.179127+abc123" → [18,0,7,179127]).
+        internal static int[] ParseProductVersionString(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            string head = raw.Trim();
+            int cut = head.IndexOfAny(new[] { '+', ' ' });
+            if (cut >= 0) head = head.Substring(0, cut);
+            string[] parts = head.Split('.');
+            if (parts.Length < 4) return null;
+            var nums = new int[4];
+            for (int i = 0; i < 4; i++)
+            {
+                if (!int.TryParse(parts[i], out nums[i])) return null;
+            }
+            return nums;
+        }
+
+        private static GxVersionStamp DetectGeneXusVersionStamp(string gxPath)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(gxPath) || !Directory.Exists(gxPath)) return null;
 
-                string[] candidates = new[]
+                string exePath = Path.Combine(gxPath, "GeneXus.exe");
+                if (!File.Exists(exePath)) return null;
+                var info = FileVersionInfo.GetVersionInfo(exePath);
+
+                // BUG FIX (friction 2026-05-26): the IDE identifies itself by the
+                // assembly *ProductVersion string* (e.g. "18.0.7.179127"), but this
+                // method previously read the numeric Product*Part fields. On GeneXus
+                // the binary FIXEDFILEINFO encodes the FileVersion build (48055) in
+                // BOTH the file and product numeric parts, so the numeric path yields
+                // "18.0.48055 U7" — the exact wrong stamp that made the IDE pop the
+                // "different GeneXus installation" dialog after every MCP open. Only
+                // the ProductVersion *string* carries the real product build (179127),
+                // so parse that.
+                var parsed = ParseProductVersionString(info.ProductVersion);
+                if (parsed != null)
+                    return BuildStampFromParts(parsed[0], parsed[1], parsed[2], parsed[3]);
+
+                // Fallback: some installs ship a version.txt with the friendly string.
+                string[] candidates =
                 {
                     Path.Combine(gxPath, "version.txt"),
                     Path.Combine(gxPath, "Version.txt"),
                     Path.Combine(gxPath, "GeneXus.version")
                 };
-
                 foreach (string candidate in candidates)
                 {
                     if (!File.Exists(candidate)) continue;
                     string raw = File.ReadAllText(candidate)?.Trim();
-                    if (!string.IsNullOrWhiteSpace(raw)) return raw;
+                    if (!string.IsNullOrWhiteSpace(raw))
+                    {
+                        return new GxVersionStamp
+                        {
+                            ProductVersionShort = raw.Split('.')[0],
+                            FriendlyVersion = raw,
+                            VersionNumber = raw
+                        };
+                    }
                 }
-
-                string exePath = Path.Combine(gxPath, "GeneXus.exe");
-                if (!File.Exists(exePath)) return null;
-                var info = FileVersionInfo.GetVersionInfo(exePath);
-
-                // Reproduce the canonical version string the IDE itself writes to .gxw
-                // (e.g. "18.0.187794 U14"). Reading ProductVersion as a string returns
-                // "18.0.14.187794+<git-sha>" because .NET appends the InformationalVersion
-                // suffix, which doesn't match what the IDE re-detects on its next open and
-                // triggers the "different GeneXus installation than last time" dialog.
-                if (info.FileMajorPart != 0 || info.FilePrivatePart != 0)
-                {
-                    return $"{info.FileMajorPart}.{info.FileMinorPart}.{info.FilePrivatePart} U{info.FileBuildPart}";
-                }
-
-                string version = info.ProductVersion ?? info.FileVersion;
-                if (!string.IsNullOrWhiteSpace(version)) return version.Trim();
             }
             catch { }
             return null;

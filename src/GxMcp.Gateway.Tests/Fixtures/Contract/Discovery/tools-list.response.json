@@ -619,26 +619,6 @@
             "type": "string"
           },
           "patch": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "properties": {
-                  "find": {
-                    "type": "string"
-                  },
-                  "replace": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "find",
-                  "replace"
-                ],
-                "type": "object"
-              }
-            ],
             "description": "String or {find,replace} object. Prefer operation+context+content."
           },
           "replaceAll": {
@@ -738,26 +718,6 @@
             "type": "string"
           },
           "patch": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "properties": {
-                  "find": {
-                    "type": "string"
-                  },
-                  "replace": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "find",
-                  "replace"
-                ],
-                "type": "object"
-              }
-            ],
             "description": "Same shape as genexus_edit.patch. Auto-sets mode=patch."
           },
           "type": {
@@ -1732,14 +1692,6 @@
             "type": "array"
           },
           "gamSession": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "object"
-              }
-            ],
             "description": "'auto' (use GXMCP_GAM_USER/PASS env) or {user, pass, repository?, loginUrl?}."
           },
           "kb": {

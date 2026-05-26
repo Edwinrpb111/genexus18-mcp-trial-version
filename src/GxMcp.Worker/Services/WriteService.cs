@@ -774,6 +774,13 @@ namespace GxMcp.Worker.Services
             // Per-target serialization happens inside the string overload so every
             // entry point (this facade, PatchService's writes, BulkWrite item loop)
             // shares the same lock and Stale-detection signal.
+            //
+            // Friction 2026-05-26 — accept validate=="only" as a synonym for
+            // dryRun=true so PatternInstance / visual writes inherit the same
+            // contract that mode=patch and mode=ops already honour.
+            string facadeValidate = args?["validate"]?.ToString();
+            bool facadeDryRun = (args?["dryRun"]?.ToObject<bool?>() ?? false)
+                || string.Equals(facadeValidate, "only", StringComparison.OrdinalIgnoreCase);
             string raw = WriteObject(
                 target,
                 action,
@@ -782,7 +789,7 @@ namespace GxMcp.Worker.Services
                 true,
                 false,
                 true,
-                args?["dryRun"]?.ToObject<bool?>() ?? false);
+                facadeDryRun);
 
             // Friction 2026-05-22: KBs default to WIN1252 (codepage 1252) on
             // Windows. When the caller writes content containing chars outside
@@ -1597,13 +1604,22 @@ namespace GxMcp.Worker.Services
             string partName,
             string details,
             global::Artech.Architecture.Common.Objects.KBObject obj = null,
-            GxMcp.Worker.Helpers.XmlEquivalenceDiff structuredDiff = null)
+            GxMcp.Worker.Helpers.XmlEquivalenceDiff structuredDiff = null,
+            string code = null)
         {
             var response = new JObject
             {
                 ["status"] = "Error",
                 ["message"] = error
             };
+
+            // Friction 2026-05-26 — stable machine-readable code so agents can
+            // dispatch on the failure class (e.g. PatternInvalidXml vs
+            // PatternVerificationMismatch) without parsing the human message.
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                response["code"] = code;
+            }
 
             if (structuredDiff != null)
             {
@@ -2924,7 +2940,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return CreateWriteError("Invalid pattern XML", target, partName, ex.Message, obj);
+                return CreateWriteError("Invalid pattern XML", target, partName, ex.Message, obj, code: "PatternInvalidXml");
             }
 
             try
@@ -2984,7 +3000,8 @@ namespace GxMcp.Worker.Services
                     target,
                     partName,
                     "The authoritative WorkWithPlus pattern part could not be resolved for writing.",
-                    obj);
+                    obj,
+                    code: "PatternPartNotFound");
             }
 
             LogPatternDiagnosticsIfEnabled(obj, resolvedObject, resolvedPart, normalizedInput);
@@ -2995,6 +3012,13 @@ namespace GxMcp.Worker.Services
                 return CreateWriteError("KB not opened", target, partName, "Open a Knowledge Base before writing pattern metadata.", obj);
             }
 
+            // Friction 2026-05-26 — the part-level Save() exception used to be
+            // silently swallowed, so verification failures had no SDK trace to
+            // attach. We now capture the first non-null throw and bubble it on
+            // the verify-failed envelope as `sdkSaveError` so the agent sees the
+            // actual SDK rejection (typically a property/validator complaint)
+            // instead of just "Pattern write verification failed".
+            JObject sdkSaveError = null;
             using (var transaction = kb.BeginTransaction())
             {
                 try
@@ -3014,8 +3038,26 @@ namespace GxMcp.Worker.Services
                     {
                         resolvedPart.Save();
                     }
-                    catch
+                    catch (Exception partSaveEx)
                     {
+                        // Capture; do not rethrow — the outer obj.Save(prefs)
+                        // path may still succeed (it has different bookkeeping)
+                        // and we want the verification step to be the source of
+                        // truth for "did the bytes actually land". The captured
+                        // error is attached only when verification fails.
+                        var rootEx = partSaveEx.InnerException ?? partSaveEx;
+                        sdkSaveError = new JObject
+                        {
+                            ["type"] = rootEx.GetType().FullName,
+                            ["message"] = rootEx.Message,
+                            ["where"] = "resolvedPart.Save()"
+                        };
+                        var chain = FormatExceptionChain(partSaveEx);
+                        if (!string.IsNullOrEmpty(chain) && !string.Equals(chain, rootEx.Message, StringComparison.Ordinal))
+                        {
+                            sdkSaveError["chain"] = chain;
+                        }
+                        Logger.Info("[PATTERN-WRITE] resolvedPart.Save() threw: " + rootEx.GetType().Name + ": " + rootEx.Message + " — captured for verify-failed envelope.");
                     }
 
                     // KBObjectManager.PrepareSave silently skips persistence when kbObject.Mode == Mode.Unchanged.
@@ -3083,13 +3125,20 @@ namespace GxMcp.Worker.Services
                             partName,
                             "The SDK save path completed, but the persisted WorkWithPlus pattern XML does not match the requested content. Compare 'persistedSnippet' (what the SDK kept) vs 'requestedSnippet' (what you sent) to see which attribute/child was sanitised. Diff: " + (patternDiff ?? "n/a"),
                             refreshedObject ?? resolvedObject,
-                            patternStructured);
-                        // Inject snippets into the JSON envelope produced by CreateWriteError.
+                            patternStructured,
+                            code: "PatternVerificationMismatch");
+                        // Inject snippets + the captured SDK save exception into
+                        // the envelope. sdkSaveError is where the actual SDK
+                        // validator complaint lives when the part-level Save()
+                        // threw before the outer obj.Save(prefs) succeeded — the
+                        // verifier sees a divergence but the agent needs the
+                        // SDK message to know *why* the bytes were rewritten.
                         try
                         {
                             var verifyJobj = JObject.Parse(verifyErr);
                             if (persistedSnippet != null) verifyJobj["persistedSnippet"] = persistedSnippet;
                             if (requestedSnippet != null) verifyJobj["requestedSnippet"] = requestedSnippet;
+                            if (sdkSaveError != null) verifyJobj["sdkSaveError"] = sdkSaveError;
                             return verifyJobj.ToString();
                         }
                         catch
@@ -3108,6 +3157,30 @@ namespace GxMcp.Worker.Services
                     {
                         success["resolvedObject"] = resolvedObject.Name;
                         success["resolvedType"] = resolvedObject.TypeDescriptor?.Name;
+                    }
+
+                    // Friction 2026-05-26 — re-assert "Apply this pattern on
+                    // save" on the WorkWithPlus host. The raw obj.Save(prefs)
+                    // path above (ForceSave=true, SkipValidation=true) clears
+                    // the flag the IDE renders as a checkbox, so every MCP edit
+                    // used to leave the next IDE session with the checkbox
+                    // unchecked. PatternApplyService does this on first apply /
+                    // reapply via the same helper; mirror it here so edits via
+                    // genexus_edit part=PatternInstance keep the IDE state
+                    // intact. Best-effort: missing WWP package, foreign host
+                    // types, or SDK miss → flag left as-is, logged at info.
+                    bool applyOnSaveReenabled = false;
+                    if (string.Equals(resolvedObject.TypeDescriptor?.Name, "WorkWithPlus", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            applyOnSaveReenabled = GxMcp.Worker.Helpers.WwpApplyOnSaveHelper.TryEnable(resolvedObject);
+                        }
+                        catch (Exception aosEx)
+                        {
+                            Logger.Debug("[APPLY-ON-SAVE] WritePatternPart post-save helper threw: " + aosEx.Message);
+                        }
+                        success["applyOnSaveReenabled"] = applyOnSaveReenabled;
                     }
 
                     // F18 (auto-project): when we just wrote a PatternInstance on a
@@ -3195,7 +3268,7 @@ namespace GxMcp.Worker.Services
                 catch (Exception ex)
                 {
                     transaction.Rollback();
-                    return CreateWriteError("Pattern write failed", target, partName, ex.Message, resolvedObject ?? obj);
+                    return CreateWriteError("Pattern write failed", target, partName, ex.Message, resolvedObject ?? obj, code: "PatternSaveFailed");
                 }
             }
         }

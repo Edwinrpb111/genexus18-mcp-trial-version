@@ -167,6 +167,93 @@ namespace GxMcp.Worker.Tests
             Assert.Contains("dryRunArg || validateOnly", dispatcherSrc);
         }
 
+        // ── Friction 2026-05-26 — validate=only on write + pattern error codes ──
+
+        [Fact]
+        public void Dispatcher_WriteObject_ValidateOnly_MapsToDryRun_ViaConvention()
+        {
+            // The dispatcher's "write" default case maps validate=only to
+            // dryRun=true so PatternInstance / WebForm full-XML writes can
+            // probe SDK validation without touching disk. Source-level
+            // assertion mirrors the patch-path convention test above.
+            string dispatcherSrc = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    System.AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
+                    "CommandDispatcher.cs"));
+            Assert.Contains("writeValidate", dispatcherSrc);
+            Assert.Contains("string.Equals(writeValidate, \"only\"", dispatcherSrc);
+        }
+
+        [Fact]
+        public void WriteService_JObjectFacade_ValidateOnly_MapsToDryRun_ViaConvention()
+        {
+            // Mirror at the WriteService(JObject) facade so callers that bypass
+            // the dispatcher (BatchService, EditAndBuildOrchestrator) inherit
+            // the same contract.
+            string writeSrc = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    System.AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
+                    "WriteService.cs"));
+            Assert.Contains("facadeValidate", writeSrc);
+            Assert.Contains("string.Equals(facadeValidate, \"only\"", writeSrc);
+        }
+
+        [Fact]
+        public void WritePatternPart_ErrorCodes_PresentInSource_ViaConvention()
+        {
+            // The four pattern-write error paths now carry a stable machine-
+            // readable `code` so agents can dispatch on the failure class
+            // without parsing the human message. Source-level convention test
+            // because the producing method is private and the path needs a
+            // live KB to exercise end-to-end.
+            string writeSrc = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    System.AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
+                    "WriteService.cs"));
+            Assert.Contains("code: \"PatternInvalidXml\"", writeSrc);
+            Assert.Contains("code: \"PatternPartNotFound\"", writeSrc);
+            Assert.Contains("code: \"PatternVerificationMismatch\"", writeSrc);
+            Assert.Contains("code: \"PatternSaveFailed\"", writeSrc);
+        }
+
+        [Fact]
+        public void WritePatternPart_CapturesSdkSaveError_ViaConvention()
+        {
+            // The part-level Save() exception used to be swallowed with an
+            // empty `catch { }`; it's now captured into `sdkSaveError` and
+            // attached to the verify-failed envelope. Convention test
+            // because exercising the path needs a real WWP host.
+            string writeSrc = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    System.AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
+                    "WriteService.cs"));
+            Assert.Contains("JObject sdkSaveError = null", writeSrc);
+            Assert.Contains("catch (Exception partSaveEx)", writeSrc);
+            Assert.Contains("verifyJobj[\"sdkSaveError\"] = sdkSaveError", writeSrc);
+            // And the swallow pattern must NOT come back.
+            Assert.DoesNotContain("resolvedPart.Save();\n                    }\n                    catch\n                    {\n                    }", writeSrc);
+        }
+
+        [Fact]
+        public void WritePatternPart_ReenablesApplyOnSave_ViaConvention()
+        {
+            // After a successful pattern write on a WorkWithPlus host the
+            // helper must run so the IDE's "Apply this pattern on save"
+            // checkbox stays on. Surface on the response as
+            // applyOnSaveReenabled so callers can verify.
+            string writeSrc = System.IO.File.ReadAllText(
+                System.IO.Path.Combine(
+                    System.AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
+                    "WriteService.cs"));
+            Assert.Contains("WwpApplyOnSaveHelper.TryEnable(resolvedObject)", writeSrc);
+            Assert.Contains("success[\"applyOnSaveReenabled\"] = applyOnSaveReenabled", writeSrc);
+        }
+
         // ── Stream A (FR#10) — patch safety on intentional deletes ─────────
 
         [Fact]

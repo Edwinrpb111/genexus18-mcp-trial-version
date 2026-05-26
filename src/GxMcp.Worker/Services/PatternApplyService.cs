@@ -244,49 +244,7 @@ namespace GxMcp.Worker.Services
         /// </summary>
         internal bool TryEnableApplyOnSave(KBObject host)
         {
-            if (host == null) return false;
-            try
-            {
-                var wwpAsm = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => string.Equals(a.GetName().Name, "DVelop.Patterns.WorkWithPlus", StringComparison.OrdinalIgnoreCase));
-                if (wwpAsm == null) { Logger.Debug("[APPLY-ON-SAVE] DVelop.Patterns.WorkWithPlus not loaded"); return false; }
-                var ifaceType = wwpAsm.GetType("DVelop.Patterns.WorkWithPlus.Helpers.PatternInstancePackageInterface", false);
-                if (ifaceType == null) { Logger.Debug("[APPLY-ON-SAVE] PatternInstancePackageInterface not found"); return false; }
-                var setApplyMethod = ifaceType.GetMethod("SetPatternApplyOnSave", BindingFlags.Public | BindingFlags.Static);
-                if (setApplyMethod == null) { Logger.Debug("[APPLY-ON-SAVE] SetPatternApplyOnSave method not found"); return false; }
-                setApplyMethod.Invoke(null, new object[] { host });
-                Logger.Info("[APPLY-ON-SAVE] SetPatternApplyOnSave invoked on host '" + host.Name + "'");
-
-                // Persist the change so the IDE sees the flag flip across the
-                // next refresh — the SDK call mutates in-memory state only.
-                try
-                {
-                    var prefs = new global::Artech.Architecture.Common.Objects.KBObjectSavePreferences
-                    {
-                        ForceSave = true,
-                        ForceSaveDefaultParts = true,
-                        SkipValidation = true
-                    };
-                    host.Save(prefs);
-                }
-                catch (Exception saveEx)
-                {
-                    Logger.Info("[APPLY-ON-SAVE] host.Save threw: " + saveEx.Message + " — trying EnsureSave(true)");
-                    try { host.EnsureSave(true); } catch (Exception ex2) { Logger.Info("[APPLY-ON-SAVE] EnsureSave fallback also failed: " + ex2.Message); }
-                }
-                return true;
-            }
-            catch (TargetInvocationException tie)
-            {
-                var inner = tie.InnerException ?? tie;
-                Logger.Info("[APPLY-ON-SAVE] SetPatternApplyOnSave threw: " + inner.GetType().Name + ": " + inner.Message);
-                return false;
-            }
-            catch (Exception ex)
-            {
-                Logger.Info("[APPLY-ON-SAVE] reflection failed: " + ex.Message);
-                return false;
-            }
+            return GxMcp.Worker.Helpers.WwpApplyOnSaveHelper.TryEnable(host);
         }
 
         internal string ApplyPatternToObject(KBObject obj, Guid patternId, string patternKey, JObject settings, bool reapply, string objectNameForResponse = null)

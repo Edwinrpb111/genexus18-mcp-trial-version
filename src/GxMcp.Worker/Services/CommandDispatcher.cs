@@ -747,6 +747,14 @@ namespace GxMcp.Worker.Services
                             return _applyTemplateService.ListTemplates();
                         }
                         {
+                            // Friction 2026-05-26 — validate=only is the LLM-facing
+                            // contract for "run the write in-memory, do NOT persist".
+                            // Already plumbed for mode=patch and mode=ops; mirror it
+                            // here so PatternInstance / WebForm full-XML writes can
+                            // probe SDK validation without touching disk.
+                            string writeValidate = args?["validate"]?.ToString();
+                            bool writeDryRun = (args?["dryRun"]?.ToObject<bool?>() ?? false)
+                                || string.Equals(writeValidate, "only", StringComparison.OrdinalIgnoreCase);
                             var writeResp = _writeService.WriteObject(
                                 target,
                                 action,
@@ -755,7 +763,7 @@ namespace GxMcp.Worker.Services
                                 true,
                                 false,
                                 true,
-                                args?["dryRun"]?.ToObject<bool?>() ?? false);
+                                writeDryRun);
                             return VisualVerifyResponseHook.MaybeAttach(args, writeResp, _visualVerifyService);
                         }
                     case "editandbuild":

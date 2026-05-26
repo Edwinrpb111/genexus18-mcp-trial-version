@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## v2.7.1 — 2026-05-26
 
 ### Added
 
+- **`genexus_edit validate="only"` now works for `PatternInstance` and `WebForm` full-XML writes.** Previously the in-memory dry-run mode was honoured only for `mode=patch` and `mode=ops`; a full-XML write to a pattern or visual part ignored it and went straight to persistence. You can now dry-run a pattern or layout edit to confirm it parses and round-trips before committing — the response comes back `status:"DryRun"` with nothing written to the KB.
 - **`genexus_whoami` now reports the KB's database configuration.** SQL-generating tools were defaulting to MySQL dialect because nothing surfaced which DBMS the KB was actually configured against. The whoami envelope now carries a `database` block listing every datastore declared in the active environment (e.g. `Default`, `Docente`, `GAM`) with `name`, `type` ("Oracle" / "SqlServer" / "MySQL" / "PostgreSQL" / "Db2" / …), `dialect` (lowercase family token reused across MCP tools), `provider` ("Oracle Data Provider"), `serverName`, `schema`, and an `isDefault` flag. A top-level `database.default` shortcut + `database.dialect` token are pre-extracted so agents can read one field instead of scanning the array. Populated once per session on the first whoami after KB open and cached gateway-side until restart.
 - **`genexus_db` SQL-generating actions inherit the dialect at point-of-use.** When `action` is `sql_ddl`, `sql_navigation`, `optimize_analyze`, `optimize_suggest`, or `optimize_report`, the response now carries `dialect` (e.g. `"oracle"`) and `dialectType` (e.g. `"Oracle"`) drawn from the same gateway cache that powers whoami. Agents that didn't read whoami first still get the correct dialect alongside the generated SQL — no more Oracle KBs receiving MySQL-flavoured queries by default.
 - **`genexus_apply_pattern reapply=true` now surfaces a `slowReapply` signal** when the SDK projection phase exceeds 30 s. The response carries `slowReapply: true`, the measured `projectionMs`, and a `slowReapplyHint` pointing at the most common cause (the GeneXus IDE holding the parent or `WorkWithPlus<Name>` open in a tab — close it and retry; if no IDE is running, restart the worker via `genexus_worker_reload mode=hard`). Previously the slow-projection signal only hit the worker log; agents had no structured way to react. The STA constraint still prevents a hard wall-clock abort of the SDK call itself — combine this signal with the existing `IdeHoldsLock` pre-check for the full safety net.
@@ -15,11 +16,17 @@
 
 ### Fixed
 
+- **The IDE's "Apply this pattern on save" checkbox now stays checked after the MCP edits a WorkWithPlus pattern.** Editing a host's `PatternInstance` through `genexus_edit` used to silently clear the flag the GeneXus IDE renders as that checkbox, so the next time you opened the object the box was unchecked and the layout no longer regenerated on save. The MCP now re-asserts the flag after every successful pattern write; the response carries `applyOnSaveReenabled: true` so you can confirm it took.
+- **GeneXus no longer pops the "different installation than last time" dialog after the MCP opens a Knowledge Base.** On installs where the GeneXus executable's file-version build differs from its product-version build, the MCP was stamping the KB with the file-version build (e.g. `18.0.48055 U7`) while the IDE identifies itself by the product-version build (e.g. `18.0.179127 U7`). Every MCP open rewrote the stamp to the wrong value, so the next IDE open warned about a version mismatch. The MCP now reads the product-version string and writes each `.gxw` version field in the exact format the IDE uses, so opening the same KB in the IDE after using the MCP no longer triggers the prompt.
+- **`genexus_edit part=PatternInstance` verification failures now carry the actual SDK error and a stable code.** A failed pattern write previously returned a generic `"Pattern write verification failed"` with nothing to act on. The error envelope now includes a machine-readable `code` (`PatternInvalidXml`, `PatternPartNotFound`, `PatternVerificationMismatch`, or `PatternSaveFailed`) and, when the SDK throws while saving, an `sdkSaveError` block with the exception type, message, and inner-exception chain — so you can see why the SDK rewrote or rejected the bytes instead of guessing.
+- **Union-typed tool parameters no longer use a JSON-Schema `anyOf`.** The `patch` parameter (on `genexus_edit` / `genexus_edit_and_build`) and `gamSession` (on `genexus_run_object`) declared their string-or-object shape with `anyOf`, which some MCP clients reject when relaying the tool list to their model API (HTTP 400, "input_schema does not support oneOf, allOf, or anyOf"). They accept exactly the same values as before; only the schema shape changed. A new schema check fails the build if a combinator reappears.
 - **`genexus_list_objects` compact shape now returns `parentPath`.** The gateway's default (`axiCompact=true`) projection promised `{name, type, path, parentPath, lastUpdate}`, but the worker only emitted `parentPath` when `verbose=true` — so default callers got the field projected to nothing. Compact responses now carry `parentPath` whenever the index knows it (e.g. `"Root Module/ClickSign"`); verbose callers are unchanged.
 
 ### Changed
 
 - **Faster hierarchy lookups on a warm KB.** `genexus_list_objects`, `genexus_inspect`, and other tools that resolve an object's parent chain no longer re-walk `obj.Parent` per sibling on the first hot call after a KB open. The hierarchy cache is now primed from the on-disk index at hydration time, so lookups are O(1) from the first call. Most visible on large KBs where the prior cold-list spent measurable time re-resolving identical parent paths across hundreds of siblings.
+
+## v2.7.0 — 2026-05-26
 
 ### Changed
 
