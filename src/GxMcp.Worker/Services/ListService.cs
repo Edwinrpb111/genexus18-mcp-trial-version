@@ -129,10 +129,11 @@ namespace GxMcp.Worker.Services
                         ["code"] = "IndexNotReady",
                         ["indexStatus"] = indexState?.Status ?? "Cold",
                         ["totalObjects"] = indexState?.TotalObjects ?? 0,
-                        ["message"] = "Index still building; retry in 2-5 seconds.",
+                        ["message"] = BuildIndexingMessage(indexState),
                         ["hint"] = "Call genexus_whoami to observe progress, then re-issue list_objects."
                     };
                     if (indexState?.Progress != null) envelope["progress"] = indexState.Progress.Value;
+                    if (indexState?.EtaMs != null) envelope["etaMs"] = indexState.EtaMs.Value;
                     return Finalize(envelope.ToString(Newtonsoft.Json.Formatting.None));
                 }
                 if (index.Objects.Count > 0)
@@ -858,6 +859,36 @@ namespace GxMcp.Worker.Services
                 Path = resolvedPath,
                 ModuleName = moduleName ?? string.Empty,
             };
+        }
+
+        private static string BuildIndexingMessage(GxMcp.Worker.Models.IndexState state)
+        {
+            string status = state?.Status ?? "Cold";
+            int? etaMs = state?.EtaMs;
+            double? progress = state?.Progress;
+
+            string etaSegment = null;
+            if (etaMs.HasValue && etaMs.Value > 0)
+            {
+                int seconds = (int)Math.Ceiling(etaMs.Value / 1000.0);
+                etaSegment = seconds <= 1 ? "~1s remaining" : $"~{seconds}s remaining";
+            }
+
+            string progressSegment = null;
+            if (progress.HasValue && progress.Value > 0 && progress.Value < 1)
+            {
+                progressSegment = $"{(int)Math.Round(progress.Value * 100)}% complete";
+            }
+
+            string phase = string.Equals(status, "Reindexing", StringComparison.OrdinalIgnoreCase) ? "Rebuilding index"
+                : string.Equals(status, "UltraLiteReady", StringComparison.OrdinalIgnoreCase) ? "Walking KB (ultra-lite pass)"
+                : string.Equals(status, "Cold", StringComparison.OrdinalIgnoreCase) ? "Building index from cold start"
+                : "Building index";
+
+            var parts = new List<string> { phase };
+            if (progressSegment != null) parts.Add(progressSegment);
+            if (etaSegment != null) parts.Add(etaSegment);
+            return string.Join(", ", parts) + ".";
         }
 
         private bool IsLikelyType(string s)

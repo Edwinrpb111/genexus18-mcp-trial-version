@@ -2556,10 +2556,11 @@ namespace GxMcp.Gateway
                                 ["code"] = "IndexNotReady",
                                 ["indexStatus"] = idxSnap?.Status ?? "Cold",
                                 ["totalObjects"] = idxSnap?.TotalObjects ?? 0,
-                                ["message"] = "Index still building; retry in 2-5 seconds.",
+                                ["message"] = BuildIndexingMessage(idxSnap?.Status, idxSnap?.Progress, idxSnap?.EtaMs),
                                 ["hint"] = "Call genexus_whoami to observe progress, then re-issue this tool."
                             };
                             if (idxSnap?.Progress != null) indexingEnvelope["progress"] = idxSnap.Progress.Value;
+                            if (idxSnap?.EtaMs != null) indexingEnvelope["etaMs"] = idxSnap.EtaMs.Value;
                             return new JObject
                             {
                                 ["isError"] = false,
@@ -4030,6 +4031,27 @@ namespace GxMcp.Gateway
             }
             // Unknown projection level — treat like default (caller will fall back).
             return null;
+        }
+
+        private static string BuildIndexingMessage(string? status, double? progress, int? etaMs)
+        {
+            string s = status ?? "Cold";
+            string phase = string.Equals(s, "Reindexing", StringComparison.OrdinalIgnoreCase) ? "Rebuilding index"
+                : string.Equals(s, "UltraLiteReady", StringComparison.OrdinalIgnoreCase) ? "Walking KB (ultra-lite pass)"
+                : string.Equals(s, "Cold", StringComparison.OrdinalIgnoreCase) ? "Building index from cold start"
+                : "Building index";
+
+            var parts = new System.Collections.Generic.List<string> { phase };
+            if (progress.HasValue && progress.Value > 0 && progress.Value < 1)
+            {
+                parts.Add($"{(int)Math.Round(progress.Value * 100)}% complete");
+            }
+            if (etaMs.HasValue && etaMs.Value > 0)
+            {
+                int seconds = (int)Math.Ceiling(etaMs.Value / 1000.0);
+                parts.Add(seconds <= 1 ? "~1s remaining" : $"~{seconds}s remaining");
+            }
+            return string.Join(", ", parts) + ".";
         }
 
         private static HashSet<string>? GetDefaultCompactFields(string toolName)

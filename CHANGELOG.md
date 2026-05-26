@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **`Indexing` envelope now reports real progress and ETA.** The cold-start `{status:"Indexing", code:"IndexNotReady"}` envelope (returned by `genexus_list_objects` and the gateway's pre-worker guard when the index isn't ready yet) previously hardcoded `"Index still building; retry in 2-5 seconds."` regardless of KB size. The message is now templated from the index phase (`"Building index from cold start"` / `"Walking KB (ultra-lite pass)"` / `"Rebuilding index"`) with `N% complete` and `~Ns remaining` appended when the worker has populated them. `etaMs` is also surfaced on the envelope so an agent can pace its retry instead of polling blindly. Agents on large KBs (10k+ objects) get a realistic wait estimate; small-KB callers see the same sub-second behavior as before.
+
 ### Fixed
 
 - **`genexus_list_objects` compact shape now returns `parentPath`.** The gateway's default (`axiCompact=true`) projection promised `{name, type, path, parentPath, lastUpdate}`, but the worker only emitted `parentPath` when `verbose=true` — so default callers got the field projected to nothing. Compact responses now carry `parentPath` whenever the index knows it (e.g. `"Root Module/ClickSign"`); verbose callers are unchanged.
