@@ -29,6 +29,22 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void LeaseHeartbeatInterval_MustStayWellUnderStaleWindow()
+        {
+            // Regression guard for the intermittent "Transport closed" bug: a live
+            // master refreshes its lease every LeaseHeartbeatInterval. If that isn't
+            // comfortably below LeaseStaleAfter, a newly-spawned gateway treats the
+            // live master as stale, re-registers, fails to bind the port, and kills
+            // the master. Require room for at least one missed beat.
+            Assert.True(
+                GatewayProcessLease.LeaseHeartbeatInterval > TimeSpan.Zero,
+                "Heartbeat interval must be positive.");
+            Assert.True(
+                GatewayProcessLease.LeaseHeartbeatInterval * 2 <= GatewayProcessLease.LeaseStaleAfter,
+                $"Heartbeat ({GatewayProcessLease.LeaseHeartbeatInterval}) must be <= half the stale window ({GatewayProcessLease.LeaseStaleAfter}).");
+        }
+
+        [Fact]
         public void TryRegisterCurrentProcess_ShouldRecoverStaleLease()
         {
             var config = CreateConfig(

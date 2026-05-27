@@ -10,6 +10,16 @@ namespace GxMcp.Gateway
     internal static class GatewayProcessLease
     {
         internal static readonly TimeSpan LeaseStaleAfter = TimeSpan.FromSeconds(45);
+
+        // A live master must refresh its lease well within LeaseStaleAfter. If a
+        // master's lease is allowed to age past LeaseStaleAfter, a newly-spawned
+        // gateway treats the (still-alive) master as dead, re-registers itself,
+        // fails to bind the HTTP port the master already holds, and kills the
+        // master during port recovery — which the client sees as an intermittent
+        // "Transport closed". Keep this at ~1/3 of LeaseStaleAfter so a beat (or
+        // two) can be missed without ever crossing the stale threshold.
+        internal static readonly TimeSpan LeaseHeartbeatInterval = TimeSpan.FromSeconds(15);
+
         private const string LeaseFolderName = "GenexusMCP\\gateway-leases";
 
         internal static string BuildInstanceKey(Configuration config)

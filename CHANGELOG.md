@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.7.2 — 2026-05-26
+
+### Fixed
+
+- **Intermittent `Transport closed` / dropped connection when more than one gateway was running.** Each MCP client session starts a gateway; the first one binds the local port and becomes the "master", the rest attach to it as proxies. The master kept its instance lease alive by refreshing it every 60 seconds, but a lease was treated as stale after only 45 seconds — so for roughly 15 seconds of every minute a newly-launched gateway saw the live master as dead, tried to take over the port, failed to bind it, and killed the running master during port recovery. Clients (Codex, Cursor, …) experienced this as the connection dropping just as it started working, and restarting the client on every prompt was the only workaround. The active gateway now refreshes its lease every 15 seconds — well inside the staleness window — so a second gateway correctly attaches as a proxy instead of evicting the live one.
+- **`genexus_gxserver` now detects GeneXus Server links that the IDE sees.** The tool reported `connected:false` on Knowledge Bases that were in fact linked to a GeneXus Server, because it looked for marker files on disk — but the server link is stored in the KB metadata, not in files. It now reads the link through the GeneXus SDK (the same source as the IDE's Team Development tab): `status` returns the real `serverUrl`, `host`, and `remoteKbName`; `pending` lists the objects with uncommitted local changes (`name`, `operation`, `lastChange`, `user`); and `conflicts` reports actual update conflicts. Still read-only — no commit or update is performed. Falls back to the previous file-based detection when the Team Development service isn't loaded.
+
+### Internal
+
+- Gateway lease heartbeat moved to a dedicated loop paced at `GatewayProcessLease.LeaseHeartbeatInterval` (1/3 of `LeaseStaleAfter`), decoupled from the 1-minute session-cleanup loop. A regression test asserts the heartbeat stays at most half the stale window so the two constants can't drift apart again.
+- `GxServerSyncService` resolves the model-level `ITeamDevClientService` via `Services.TryGetService<…>()` and projects `GetLocalChanges` / `GetConflictEntities`; the legacy filesystem-probe envelopes remain as the fallback path and still back the existing unit tests.
+
 ## v2.7.1 — 2026-05-26
 
 ### Added

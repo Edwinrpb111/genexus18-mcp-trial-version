@@ -147,6 +147,31 @@ namespace GxMcp.Gateway
             } catch { }
         }
 
+        // Keeps the master's gateway lease fresh. Paced by LeaseHeartbeatInterval,
+        // which is deliberately well under GatewayProcessLease.LeaseStaleAfter — see
+        // that constant for why the two MUST NOT drift apart. (Previously the lease
+        // was only refreshed by the 1-minute session-cleanup loop, leaving a ~15s
+        // window each minute where a live master looked stale and got killed by a
+        // newly-spawned gateway → intermittent "Transport closed".)
+        private static async Task RunLeaseHeartbeatLoop(CancellationToken cancellationToken)
+        {
+            using var timer = new PeriodicTimer(GatewayProcessLease.LeaseHeartbeatInterval);
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cancellationToken))
+                {
+                    if (_activeConfig != null)
+                    {
+                        try { GatewayProcessLease.RefreshCurrentProcess(_activeConfig); }
+                        catch (Exception ex) { Log($"[Gateway] Lease heartbeat failed: {ex.Message}"); }
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
         private static async Task RunSessionCleanupLoop(CancellationToken cancellationToken)
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
@@ -154,11 +179,6 @@ namespace GxMcp.Gateway
             {
                 while (await timer.WaitForNextTickAsync(cancellationToken))
                 {
-                    if (_activeConfig != null)
-                    {
-                        GatewayProcessLease.RefreshCurrentProcess(_activeConfig);
-                    }
-
                     int removed = _httpSessions.CleanupExpired();
                     if (removed > 0)
                     {
@@ -4399,6 +4419,7 @@ namespace GxMcp.Gateway
             var app = builder.Build();
             app.UseResponseCompression();
             _ = Task.Run(() => RunSessionCleanupLoop(app.Lifetime.ApplicationStopping));
+            _ = Task.Run(() => RunLeaseHeartbeatLoop(app.Lifetime.ApplicationStopping));
 
             app.Use(async (context, next) =>
             {
