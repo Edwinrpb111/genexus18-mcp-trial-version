@@ -85,7 +85,7 @@ namespace GxMcp.Worker.Services
                 {
                     // Reuse existing not-found shape (best-effort: tests may inject a null _objectService)
                     if (_objectService != null)
-                        return HealingService.FormatNotFoundError(objectName, _objectService.GetIndex());
+                        return HealingService.FormatNotFoundError(objectName, _objectService.GetLoadedIndexOrNull());
                     return McpResponse.Error("Object not found", objectName);
                 }
 
@@ -106,6 +106,13 @@ namespace GxMcp.Worker.Services
                     string reject = TryBuildTypeGateRejection(obj.Name, patternKey, parentType, callerTemplate, availableTemplates);
                     if (reject != null) return reject;
                 }
+
+                // IDE lock pre-check (parity with ReapplyPattern). The SDK
+                // apply call deadlocks 10+ min when the GeneXus IDE holds the
+                // object (or its WWP host) open. Fail fast with a structured
+                // IdeHoldsLock error instead of hanging the worker thread.
+                string lockReject = TryBuildIdeLockRejection(obj, objectName);
+                if (lockReject != null) return lockReject;
 
                 return ApplyPatternToObject(obj, patternId, patternKey, settings, reapply: false);
             }
@@ -130,7 +137,7 @@ namespace GxMcp.Worker.Services
                 if (obj == null)
                 {
                     if (_objectService != null)
-                        return HealingService.FormatNotFoundError(objectName, _objectService.GetIndex());
+                        return HealingService.FormatNotFoundError(objectName, _objectService.GetLoadedIndexOrNull());
                     return McpResponse.Error("Object not found", objectName);
                 }
 

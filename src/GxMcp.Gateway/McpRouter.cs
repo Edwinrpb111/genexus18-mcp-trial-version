@@ -1584,6 +1584,61 @@ namespace GxMcp.Gateway
         public const int HeartbeatIntervalSeconds = 15;
 
         /// <summary>
+        /// Awaits <paramref name="completion"/> while keeping a synchronous MCP request alive:
+        /// when the client supplied a usable <paramref name="progressToken"/> and a
+        /// <paramref name="heartbeat"/> writer, emits an MCP <c>notifications/progress</c> payload
+        /// every <paramref name="heartbeatIntervalSeconds"/> until the work completes or
+        /// <paramref name="timeoutMs"/> elapses. This is the spec-native keepalive for long-running
+        /// synchronous tool calls (e.g. a first <c>apply_pattern</c>) so the client doesn't fire its
+        /// own request timeout (<c>-32001</c>) on work that is still progressing on the server.
+        /// Returns <c>true</c> when <paramref name="completion"/> finished, <c>false</c> on timeout.
+        /// A heartbeat write that throws is swallowed — liveness signalling must never abort the call.
+        /// </summary>
+        internal static async Task<bool> AwaitWithHeartbeat(
+            Task completion,
+            int timeoutMs,
+            JToken? progressToken,
+            Func<JObject, Task>? heartbeat,
+            string toolName,
+            int heartbeatIntervalSeconds = HeartbeatIntervalSeconds)
+        {
+            bool canHeartbeat = heartbeat != null
+                && progressToken != null
+                && progressToken.Type != Newtonsoft.Json.Linq.JTokenType.Null
+                && heartbeatIntervalSeconds > 0;
+
+            if (!canHeartbeat)
+            {
+                var done = await Task.WhenAny(completion, Task.Delay(timeoutMs));
+                return done == completion;
+            }
+
+            var deadlineTask = Task.Delay(timeoutMs);
+            int elapsedSec = 0;
+            while (true)
+            {
+                var beatTask = Task.Delay(TimeSpan.FromSeconds(heartbeatIntervalSeconds));
+                var winner = await Task.WhenAny(completion, deadlineTask, beatTask);
+                if (winner == completion) return true;
+                if (winner == deadlineTask) return false;
+
+                elapsedSec += heartbeatIntervalSeconds;
+                var note = new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["method"] = "notifications/progress",
+                    ["params"] = new JObject
+                    {
+                        ["progressToken"] = progressToken!.DeepClone(),
+                        ["progress"] = elapsedSec,
+                        ["message"] = $"{toolName} still running ({elapsedSec}s elapsed)…"
+                    }
+                };
+                try { await heartbeat!(note); } catch { /* liveness signalling is best-effort */ }
+            }
+        }
+
+        /// <summary>
         /// Long-polls <paramref name="registry"/> for <paramref name="jobId"/> until it reaches a terminal
         /// state or <paramref name="waitSeconds"/> elapses (clamped 0–<see cref="MaxLongPollSeconds"/>).
         /// Returns a status envelope.

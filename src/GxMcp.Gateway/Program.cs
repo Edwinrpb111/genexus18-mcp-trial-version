@@ -1552,6 +1552,10 @@ namespace GxMcp.Gateway
             return rpc;
         }
 
+        // Safety ceiling for waiting on worker SDK-ready before billing the op timeout.
+        // Generous (cold-start is ~50s); only caps a wedged/never-ready worker.
+        private const int WorkerSdkReadyCeilingMs = 180000;
+
         private static async Task<JObject?> SendWorkerCommandAsync(
             JObject workerCommand,
             int timeoutMs,
@@ -1560,7 +1564,9 @@ namespace GxMcp.Gateway
             Func<string?, string, JObject> onTimeout,
             string toolName = "unknown",
             JObject? toolArgs = null,
-            bool trackOperation = false)
+            bool trackOperation = false,
+            JToken? progressToken = null,
+            Func<JObject, Task>? heartbeat = null)
         {
             string requestId = Guid.NewGuid().ToString();
             string correlationId = Guid.NewGuid().ToString("N");
@@ -1584,6 +1590,20 @@ namespace GxMcp.Gateway
             workerCommand["correlationId"] = correlationId;
             var workerRequest = BuildWorkerRpcRequest(workerCommand, requestId, operationId);
             var worker = await GetActiveWorkerAsync();
+
+            // Don't bill worker cold-start against the per-tool timeout. If the worker is
+            // still initializing (SDK init ~50s on a large KB), wait for its sdk_ready signal
+            // FIRST — emitting progress heartbeats so the client stays alive — and only then
+            // start the operation's timeout clock below. Capped so a wedged worker can't block
+            // forever; on cap we proceed and let the normal op timeout apply.
+            if (!worker.IsSdkReady)
+            {
+                bool ready = await McpRouter.AwaitWithHeartbeat(
+                    worker.SdkReadyTask, WorkerSdkReadyCeilingMs, progressToken, heartbeat, $"{toolName} (worker starting)");
+                if (!ready)
+                    Log($"[Gateway] worker not SDK-ready after {WorkerSdkReadyCeilingMs}ms for tool {toolName}; proceeding — op timeout applies.");
+            }
+
             var pending = new PendingWorkerRequest
             {
                 CompletionSource = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -1597,8 +1617,14 @@ namespace GxMcp.Gateway
 
             await worker.SendCommandAsync(workerRequest.ToString(Formatting.None));
 
-            var completedTask = await Task.WhenAny(pending.CompletionSource.Task, Task.Delay(timeoutMs));
-            if (completedTask == pending.CompletionSource.Task)
+            // MCP-spec keepalive for long synchronous tool calls: while waiting on the
+            // worker, emit `notifications/progress` every HeartbeatIntervalSeconds when the
+            // client supplied a progressToken, so it doesn't fire its own request timeout
+            // (the -32001 "Request timed out" users hit on long apply_pattern / delete).
+            // The call stays synchronous and returns the real result inline — not a job.
+            bool workerCompleted = await McpRouter.AwaitWithHeartbeat(
+                pending.CompletionSource.Task, timeoutMs, progressToken, heartbeat, toolName);
+            if (workerCompleted)
             {
                 var workerResponse = JObject.Parse(await pending.CompletionSource.Task);
                 if (workerResponse["result"] is JObject workerResultObj && workerResultObj["correlationId"] == null)
@@ -3073,6 +3099,12 @@ namespace GxMcp.Gateway
                     }
 
                     JObject? innerResult = null;
+                    // MCP keepalive: when the client supplied a progressToken, emit
+                    // notifications/progress while the worker runs so long synchronous
+                    // tools (apply_pattern, delete, analyze, …) don't trip the client's
+                    // request timeout. No-op when the client omits the token.
+                    var toolProgressToken = (request["params"] as JObject)?["_meta"]?["progressToken"];
+                    bool toolHasProgressToken = toolProgressToken != null && toolProgressToken.Type != JTokenType.Null;
                     innerResult = await SendWorkerCommandAsync(
                         workerCmd,
                         timeoutMs,
@@ -3231,7 +3263,9 @@ namespace GxMcp.Gateway
                         },
                         toolName: tName,
                         toolArgs: tArgs,
-                        trackOperation: true);
+                        trackOperation: true,
+                        progressToken: toolProgressToken,
+                        heartbeat: toolHasProgressToken ? (n => TryWriteStdout(n.ToString(Formatting.None))) : null);
 
                     // apply_pattern { validate: true } — post-apply build of the
                     // generated host so the LLM sees compile failures in a single

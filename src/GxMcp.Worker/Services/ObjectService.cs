@@ -60,6 +60,12 @@ namespace GxMcp.Worker.Services
 
         public SearchIndex GetIndex() { return _kbService.GetIndexCache().GetIndex(); }
 
+        // Non-blocking index accessor: returns the in-memory index if it's already
+        // loaded, otherwise null — never triggers a synchronous 30-60s cold load on
+        // the STA thread. Prefer this on hot paths (object resolution, not-found
+        // suggestions) so one cold KB doesn't stall every queued tool call.
+        public SearchIndex GetLoadedIndexOrNull() { return _kbService.GetIndexCache().TryGetLoadedIndex(); }
+
         /// <summary>
         /// Returns all index entries whose name matches <paramref name="name"/> (case-insensitive).
         /// Works without a KB open — the index may be pre-populated via IndexCacheService.UpdateIndex().
@@ -501,7 +507,7 @@ namespace GxMcp.Worker.Services
                 }
 
                 var obj = FindObject(target, typeFilter);
-                if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+                if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
                 string objName = obj.Name;
                 string objType = obj.TypeDescriptor?.Name ?? "Unknown";
@@ -998,8 +1004,11 @@ namespace GxMcp.Worker.Services
                 namePart = parts[1].Trim();
             }
 
-            // 1. FAST PATH: Use Search Index
-            var index = GetIndex();
+            // 1. FAST PATH: Use Search Index — non-blocking. If the index hasn't been
+            // loaded yet we DON'T cold-load it here (that blocks the shared STA thread
+            // 30-60s and stalls every queued tool call); we fall through to the SDK's
+            // own name index below, which is fast and also sees not-yet-indexed objects.
+            var index = GetLoadedIndexOrNull();
             if (index != null && index.Objects != null)
             {
                 if (typePart != null)
@@ -1045,6 +1054,9 @@ namespace GxMcp.Worker.Services
             }
 
             // 2. SLOW PATH: Fallback to SDK GetByName (for safety with new objects not yet indexed)
+            // If the index wasn't loaded, kick off the background warm so subsequent
+            // lookups hit the fast path — idempotent, fire-and-forget, never blocks.
+            if (index == null) { try { _kbService.GetIndexCache().EnsureLoadStarted(); } catch { /* best-effort */ } }
             var sdkMatches = kb.DesignModel.Objects.GetByName(null, null, namePart);
             if (typePart != null)
             {
@@ -1087,7 +1099,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = FindObject(target, typeFilter);
-                if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+                if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
                 var result = new JObject { ["name"] = obj.Name, ["parts"] = new JObject() };
                 string[] partsToFetch = { "Source", "Rules", "Events", "Variables", "Documentation", "Help" };
@@ -1116,7 +1128,7 @@ namespace GxMcp.Worker.Services
         public string ReadObject(string target, string typeFilter = null)
         {
             var obj = FindObject(target, typeFilter);
-            if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+            if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
             var parts = new JArray();
             foreach (KBObjectPart p in obj.Parts)
@@ -1145,7 +1157,7 @@ namespace GxMcp.Worker.Services
         public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false, string typeFilter = null)
         {
             var obj = FindObject(target, typeFilter);
-            if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+            if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
             string resolvedPart = ResolvePartName(obj, partName);
             if (ShouldUseReadCache(client, minimize))
@@ -1177,7 +1189,7 @@ namespace GxMcp.Worker.Services
         public string ReadObjectSourceParts(string target, IEnumerable<string> requestedParts, string typeFilter = null)
         {
             var obj = FindObject(target, typeFilter);
-            if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+            if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
             string[] partsToFetch = (requestedParts != null && requestedParts.Any())
                 ? requestedParts.Select(p => p.Trim()).Where(p => !string.IsNullOrEmpty(p)).ToArray()
@@ -1243,7 +1255,7 @@ namespace GxMcp.Worker.Services
                     return Models.McpResponse.Error("Output path is required.", target);
 
                 var obj = FindObject(target, typeFilter);
-                if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+                if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
 
                 string normalizedPart = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
                 string exportJson = ReadObjectSourceInternal(obj, normalizedPart, 0, int.MaxValue, "mcp", false);

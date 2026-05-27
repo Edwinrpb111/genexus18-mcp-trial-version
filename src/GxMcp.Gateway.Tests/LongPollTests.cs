@@ -219,6 +219,75 @@ public class LongPollTests
         Assert.Equal("succeeded", result["status"]!.ToString());
     }
 
+    // ── AwaitWithHeartbeat tests (synchronous tool-call keepalive, -32001 fix) ──
+
+    [Fact]
+    public async Task AwaitWithHeartbeat_NoProgressToken_ReturnsTrueWithoutHeartbeats()
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Task.Run(async () => { await Task.Delay(100); tcs.SetResult(true); });
+
+        int beats = 0;
+        Func<JObject, Task> heartbeat = _ => { beats++; return Task.CompletedTask; };
+
+        bool completed = await McpRouter.AwaitWithHeartbeat(
+            tcs.Task, timeoutMs: 5000, progressToken: null, heartbeat: heartbeat, toolName: "genexus_apply_pattern");
+
+        Assert.True(completed);
+        Assert.Equal(0, beats); // no token → no heartbeats emitted
+    }
+
+    [Fact]
+    public async Task AwaitWithHeartbeat_EmitsProgress_WhileWorkerRuns()
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Task.Run(async () => { await Task.Delay(1200); tcs.SetResult(true); });
+
+        int beats = 0;
+        Func<JObject, Task> heartbeat = n =>
+        {
+            beats++;
+            Assert.Equal("notifications/progress", n["method"]!.ToString());
+            Assert.Equal("tok-1", n["params"]!["progressToken"]!.ToString());
+            Assert.NotNull(n["params"]!["progress"]); // monotonically increasing elapsed seconds
+            return Task.CompletedTask;
+        };
+
+        bool completed = await McpRouter.AwaitWithHeartbeat(
+            tcs.Task, timeoutMs: 10000, progressToken: JToken.FromObject("tok-1"),
+            heartbeat: heartbeat, toolName: "genexus_apply_pattern", heartbeatIntervalSeconds: 1);
+
+        Assert.True(completed);
+        Assert.True(beats >= 1, $"Expected at least one progress notification, got {beats}");
+    }
+
+    [Fact]
+    public async Task AwaitWithHeartbeat_Timeout_ReturnsFalse()
+    {
+        var tcs = new TaskCompletionSource<bool>(); // never completes
+
+        bool completed = await McpRouter.AwaitWithHeartbeat(
+            tcs.Task, timeoutMs: 300, progressToken: JToken.FromObject("t"),
+            heartbeat: _ => Task.CompletedTask, toolName: "genexus_delete_object", heartbeatIntervalSeconds: 1);
+
+        Assert.False(completed);
+    }
+
+    [Fact]
+    public async Task AwaitWithHeartbeat_HeartbeatThrows_DoesNotAbort()
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = Task.Run(async () => { await Task.Delay(1200); tcs.SetResult(true); });
+
+        Func<JObject, Task> badHeartbeat = _ => throw new InvalidOperationException("stdio dead");
+
+        bool completed = await McpRouter.AwaitWithHeartbeat(
+            tcs.Task, timeoutMs: 10000, progressToken: JToken.FromObject("t"),
+            heartbeat: badHeartbeat, toolName: "genexus_apply_pattern", heartbeatIntervalSeconds: 1);
+
+        Assert.True(completed); // a throwing heartbeat must not abort the awaited work
+    }
+
     // ── target-parameter tests ────────────────────────────────────────────────
 
     [Fact]

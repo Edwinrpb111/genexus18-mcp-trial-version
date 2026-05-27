@@ -32,6 +32,12 @@ namespace GxMcp.Gateway
         private StreamReader? _pipeReader;
         private StreamWriter? _pipeWriter;
         private TaskCompletionSource<bool> _pipeReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Completes when the worker signals SDK-ready (KB open + SDK init done). The gateway
+        // waits on this before starting a tool's timeout clock so worker cold-start (~50s)
+        // isn't billed against the operation budget.
+        private TaskCompletionSource<bool> _sdkReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task SdkReadyTask => _sdkReady.Task;
+        public bool IsSdkReady => _sdkReady.Task.IsCompleted;
         private string _lastOperationInfo = "None";
         private bool _isStarting;
         private bool _suppressAutoRestart;
@@ -343,8 +349,45 @@ namespace GxMcp.Gateway
             }
         }
 
-        private static void KillOrphanWorkers()
+        // Hard "exactly one worker per KB" backstop. Run at the top of every Start():
+        // kill any OTHER GxMcp.Worker process bound to this KB (matched on the --kb path
+        // in its command line) before we spawn ours. This reaps orphans left by crashes,
+        // reload races, or a gateway that died without cleaning up — so a KB can never
+        // accumulate duplicate workers regardless of how the previous one ended. Our own
+        // live process (when self != exited) is preserved. Best-effort per process.
+        private void KillOrphanWorkers()
         {
+            try
+            {
+                string norm = (Kb?.Path ?? string.Empty).Trim().TrimEnd('\\', '/').ToLowerInvariant();
+                if (norm.Length == 0) return;
+
+                int? ourPid = null;
+                try { ourPid = _process?.HasExited == false ? _process.Id : (int?)null; } catch { }
+
+                foreach (var proc in Process.GetProcessesByName("GxMcp.Worker"))
+                {
+                    try
+                    {
+                        if (ourPid.HasValue && proc.Id == ourPid.Value) continue;
+                        string cmd = GetCommandLine(proc);
+                        if (string.IsNullOrEmpty(cmd)) continue;
+                        if (!cmd.ToLowerInvariant().Contains(norm)) continue;
+
+                        Program.Log($"[Gateway] KillOrphanWorkers: reaping duplicate worker pid={proc.Id} for KB '{Kb?.Alias}'.");
+                        proc.Kill(true);
+                        proc.WaitForExit(3000);
+                    }
+                    catch (Exception ex)
+                    {
+                        Program.Log($"[Gateway] KillOrphanWorkers: probe/kill pid={proc.Id} failed: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"[Gateway] KillOrphanWorkers: enumeration failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -418,6 +461,7 @@ namespace GxMcp.Gateway
                 _stopReason = "none";
                 MarkActivity();
                 _pipeReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _sdkReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string workerPath = _config.GeneXus?.WorkerExecutable ?? string.Empty;
@@ -518,42 +562,27 @@ namespace GxMcp.Gateway
                     {
                     }
 
-                    var restartAllowed = !_cts.Token.IsCancellationRequested && !_suppressAutoRestart;
                     // FR#19: exit code 17 means a sibling worker already serves this KB
-                    // (single-instance reject). Auto-restarting would just bounce off the
-                    // same lock — log and back off; the live worker continues to serve.
+                    // (single-instance reject). Don't respawn — the live worker is authoritative.
                     bool busyReject = exitCode == 17;
-                    // FR#20: exit code 0 after a soft reload is INTENTIONAL — respawn fast
-                    // (no 2s crash-cooldown) so the developer sees minimal downtime.
-                    bool softReload = exitCode == 0 && !_suppressAutoRestart && _stopReason == "none";
-                    Program.Log($"[Gateway] Worker process EXITED with code {exitCode}. reason={_stopReason} restartAllowed={restartAllowed} busyReject={busyReject} softReload={softReload}");
-                    OnWorkerExited?.Invoke();
+                    Program.Log($"[Gateway] Worker process EXITED with code {exitCode}. reason={_stopReason} busyReject={busyReject}");
+
+                    // SINGLE RESPAWN AUTHORITY. The WorkerPool owns the worker lifecycle:
+                    // firing OnWorkerExited lets the pool drop this KB's entry and spawn
+                    // exactly ONE replacement (Program's eager-respawn handler, or the lazy
+                    // AcquireAsync path on the next call). The WorkerProcess deliberately does
+                    // NOT also restart itself in place. Having both paths active spawned two
+                    // live processes per exit — one tracked by the pool, one orphaned-but-alive
+                    // — which compounded into a runaway worker-process explosion (a real memory
+                    // leak: hundreds of GxMcp.Worker for a single KB). KillOrphanWorkers() at
+                    // the top of Start() is the hard "exactly one worker per KB" backstop.
                     if (busyReject)
                     {
-                        // Don't retry — the existing worker is authoritative. Caller (gateway
-                        // orchestration) can adopt via WorkerProcess.TryAdoptExistingWorker.
+                        // A sibling already owns the KB — suppress any respawn attempt so we
+                        // don't bounce off the single-instance lock in a loop.
                         _suppressAutoRestart = true;
-                        return;
                     }
-                    if (restartAllowed)
-                    {
-                        int respawnDelayMs = softReload ? 250 : 2000;
-                        Task.Delay(respawnDelayMs, _cts.Token).ContinueWith(_ =>
-                        {
-                            if (!_cts.Token.IsCancellationRequested && (_process == null || _process.HasExited))
-                            {
-                                Program.Log($"[Gateway] Auto-restarting Worker after {(softReload ? "soft reload" : "crash")}...");
-                                try
-                                {
-                                    Start();
-                                }
-                                catch (Exception ex)
-                                {
-                                    Program.Log($"[Gateway] Failed to auto-restart: {ex.Message}");
-                                }
-                            }
-                        }, TaskContinuationOptions.OnlyOnRanToCompletion);
-                    }
+                    OnWorkerExited?.Invoke();
                 };
 
                 _spawnWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -741,7 +770,12 @@ namespace GxMcp.Gateway
                     // Notification path — handle soft-reload persist request inline so
                     // the JobRegistry survives the worker's clean exit (FR#20).
                     var method = payload["method"]?.ToString();
-                    if (string.Equals(method, "notifications/worker/persist_jobs_request", StringComparison.Ordinal))
+                    if (string.Equals(method, "notifications/worker/sdk_ready", StringComparison.Ordinal))
+                    {
+                        if (_sdkReady.TrySetResult(true))
+                            Program.Log($"[Gateway] worker SDK ready (KB '{Kb?.Alias}').");
+                    }
+                    else if (string.Equals(method, "notifications/worker/persist_jobs_request", StringComparison.Ordinal))
                     {
                         TryPersistJobsForSoftReload(payload["params"] as JObject);
                     }
@@ -754,6 +788,10 @@ namespace GxMcp.Gateway
 
                 if (!string.Equals(id, "heartbeat", StringComparison.OrdinalIgnoreCase))
                 {
+                    // Fallback readiness signal: a real response means the worker is processing
+                    // commands, so it's SDK-ready even if the sdk_ready notification was missed
+                    // (e.g. an older worker binary that doesn't emit it).
+                    _sdkReady.TrySetResult(true);
                     MarkActivity();
                     CompleteInFlight();
                 }

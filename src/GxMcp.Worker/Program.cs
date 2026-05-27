@@ -219,6 +219,10 @@ namespace GxMcp.Worker
                 }
 
                 Logger.Info("Worker SDK ready.");
+                // Tell the gateway the SDK is up so it can start the per-tool timeout
+                // clock only AFTER cold-start finishes (KB open + SDK init can take ~50s).
+                // Without this, the first tool call's timeout budget is consumed by boot.
+                try { SendNotification("notifications/worker/sdk_ready", new { kb = kbPath }); } catch { }
 
                 // FR#20: best-effort restore of BackgroundJobRegistry rehydration state
                 // written by the previous (soft-reloaded) worker. JobEntry lives in the
@@ -420,8 +424,14 @@ namespace GxMcp.Worker
         // (e.g. SDK install layout mismatch) the in-process build path will be
         // dead for this worker session, but the external MSBuild.exe fallback
         // still works.
+        // Set true once the ArtechTask cctor has activated the GxServiceManager, so
+        // InitializeSdk can skip the redundant (and ~35s-wasteful) Connector SM activation
+        // that otherwise throws "O Service Manager já foi ativado".
+        private static bool _serviceManagerActivatedByWarmup;
+
         private static void TryWarmupArtechTaskCctor(string gxPath)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 string asmPath = Path.Combine(gxPath, "Genexus.MsBuild.Tasks.dll");
@@ -445,7 +455,8 @@ namespace GxMcp.Worker
                     return;
                 }
                 System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(artechBase.TypeHandle);
-                Logger.Info("[ArtechTask-warmup] OK — Service Manager activated by ArtechTask cctor");
+                _serviceManagerActivatedByWarmup = true;
+                Logger.Info($"[ArtechTask-warmup] OK — Service Manager activated by ArtechTask cctor in {sw.ElapsedMilliseconds}ms");
             }
             catch (Exception ex)
             {
@@ -460,44 +471,88 @@ namespace GxMcp.Worker
 
         private static void InitializeSdk(string gxPath)
         {
+            // Per-step timing + full exception-chain logging. Cold-start was observed at
+            // ~92s (51s ArtechTask warmup + ~35s here + 6s KB open) and this block ended in
+            // a swallowed TargetInvocationException whose real cause was hidden behind the
+            // outer message. We now log each step's elapsed ms and, on failure, unwrap the
+            // inner-exception chain so the actual culprit + the slow step are visible.
+            var swTotal = System.Diagnostics.Stopwatch.StartNew();
+            string lastStep = "(none)";
+            void Step(string name, Action body)
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                lastStep = name;
+                body();
+                sw.Stop();
+                Logger.Info($"[SDK-INIT] {name} OK in {sw.ElapsedMilliseconds}ms");
+            }
             try {
                 Logger.Debug($"Setting current directory to {gxPath}");
                 Directory.SetCurrentDirectory(gxPath);
-                
-                var archAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.Common.dll"));
-                var contextServiceType = archAsm.GetType("Artech.Architecture.Common.Services.ContextService");
-                contextServiceType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
 
-                var blAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.BL.Framework.dll"));
-                var blCommonType = blAsm.GetType("Artech.Architecture.BL.Framework.Services.CommonServices");
-                blCommonType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                Assembly archAsm = null, connAsm = null;
+                Step("LoadFrom Artech.Architecture.Common", () => archAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.Common.dll")));
+                Step("ContextService.Initialize", () => {
+                    var t = archAsm.GetType("Artech.Architecture.Common.Services.ContextService");
+                    t?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                });
 
-                var uiAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.UI.Framework.dll"));
-                var uiType = uiAsm.GetType("Artech.Architecture.UI.Framework.Services.UIServices");
-                uiType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                Step("CommonServices.Initialize", () => {
+                    var blAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.BL.Framework.dll"));
+                    var t = blAsm.GetType("Artech.Architecture.BL.Framework.Services.CommonServices");
+                    t?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                });
 
-                var commonAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Genexus.Common.dll"));
-                var initType = commonAsm.GetType("Artech.Genexus.Common.KBModelObjectsInitializer");
-                initType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                Step("UIServices.Initialize", () => {
+                    var uiAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.UI.Framework.dll"));
+                    var t = uiAsm.GetType("Artech.Architecture.UI.Framework.Services.UIServices");
+                    t?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                });
 
-                var connAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Connector.dll"));
-                var connType = connAsm.GetType("Artech.Core.Connector");
-                connType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                connType?.GetMethod("Start", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                
-                var kbBaseType = archAsm.GetType("Artech.Architecture.Common.Objects.KnowledgeBase");
-                var factoryProp = kbBaseType?.GetProperty("KBFactory", BindingFlags.Public | BindingFlags.Static);
-                if (factoryProp != null) {
-                    var factoryType = connAsm.GetType("Connector.KBFactory");
-                    if (factoryType != null) {
-                        factoryProp.SetValue(null, Activator.CreateInstance(factoryType));
-                        Logger.Info("KBFactory Linked successfully.");
+                Step("KBModelObjectsInitializer.Initialize", () => {
+                    var commonAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Genexus.Common.dll"));
+                    var t = commonAsm.GetType("Artech.Genexus.Common.KBModelObjectsInitializer");
+                    t?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                });
+
+                Step("Connector.Initialize+Start", () => {
+                    connAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Connector.dll"));
+                    if (_serviceManagerActivatedByWarmup)
+                    {
+                        // The ArtechTask warmup already activated the GxServiceManager.
+                        // Calling Connector.Initialize/Start here re-activates it, which
+                        // wastes ~35s and then throws "O Service Manager já foi ativado".
+                        // Skip it — SM is up, and KBFactory link + OpenKB below cover the rest.
+                        Logger.Info("[SDK-INIT] Connector.Initialize+Start skipped — Service Manager already activated by ArtechTask warmup (avoids the ~35s redundant re-activation).");
+                        return;
                     }
+                    var connType = connAsm.GetType("Artech.Core.Connector");
+                    connType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                    connType?.GetMethod("Start", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
+                });
+
+                Step("Link KBFactory", () => {
+                    var kbBaseType = archAsm.GetType("Artech.Architecture.Common.Objects.KnowledgeBase");
+                    var factoryProp = kbBaseType?.GetProperty("KBFactory", BindingFlags.Public | BindingFlags.Static);
+                    if (factoryProp != null) {
+                        var factoryType = connAsm.GetType("Connector.KBFactory");
+                        if (factoryType != null) {
+                            factoryProp.SetValue(null, Activator.CreateInstance(factoryType));
+                            Logger.Info("KBFactory Linked successfully.");
+                        }
+                    }
+                });
+
+                Logger.Info($"Full SDK Initialization SUCCESS in {swTotal.ElapsedMilliseconds}ms.");
+            } catch (Exception ex) {
+                Logger.Error($"CRITICAL Init Error at step '{lastStep}' after {swTotal.ElapsedMilliseconds}ms (worker still serves via OpenKB):");
+                // Unwrap TargetInvocationException + TypeInitializationException layers so the
+                // real cause is visible instead of the generic "exception by invocation target".
+                int depth = 0;
+                for (Exception e = ex; e != null && depth < 8; e = e.InnerException, depth++)
+                {
+                    Logger.Error($"[SDK-INIT] ex[{depth}] {e.GetType().FullName}: {e.Message}");
                 }
-                
-                Logger.Info("Full SDK Initialization SUCCESS.");
-            } catch (Exception ex) { 
-                Logger.Error("CRITICAL Init Error: " + ex.Message); 
             }
         }
 

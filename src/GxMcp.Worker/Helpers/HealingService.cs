@@ -37,7 +37,21 @@ namespace GxMcp.Worker.Helpers
                 result["suggestion"] = $"Did you mean one of these? {string.Join(", ", suggestions)}";
                 result["actionable_tip"] = "Use 'genexus_list_objects' with a broad filter to explore the KB if unsure.";
             }
-            
+            else if (index == null)
+            {
+                // Cold window: the name index isn't loaded yet, so we can't offer
+                // "did you mean" suggestions. The lookup itself was authoritative
+                // (the SDK name lookup ran), so this is a genuine miss — but never
+                // leave the agent at a dead end: tell it the index is warming and
+                // how to recover. A retry in a couple seconds gets full suggestions.
+                result["code"] = "ObjectNotFoundIndexWarming";
+                result["actionable_tip"] = "The KB name index is still loading, so name suggestions aren't available yet. Retry this call in 2-3 seconds to get 'did you mean' suggestions, or call 'genexus_list_objects' with a broad filter to find the exact object name.";
+            }
+            else
+            {
+                result["actionable_tip"] = "No similar names found. Call 'genexus_list_objects' with a broad filter to discover the exact object name.";
+            }
+
             return result.ToString();
         }
 
