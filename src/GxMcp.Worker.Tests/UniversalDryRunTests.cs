@@ -61,9 +61,10 @@ namespace GxMcp.Worker.Tests
             var resultJson = svc.CreatePopup("MyPopup", SimpleSpec(), dryRun: true);
             var json = JObject.Parse(resultJson);
 
-            Assert.Equal("DryRun", json["status"]?.ToString());
-            Assert.Equal(true, json["dryRun"]?.ToObject<bool>());
-            Assert.False(string.IsNullOrEmpty(json["webFormXml"]?.ToString()));
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Equal("DryRun", json["code"]?.ToString());
+            Assert.Equal(true, json["result"]?["dryRun"]?.ToObject<bool>());
+            Assert.False(string.IsNullOrEmpty(json["result"]?["webFormXml"]?.ToString()));
             Assert.Empty(backend.Creates);
             Assert.Empty(backend.Vars);
             Assert.Empty(backend.Writes);

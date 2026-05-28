@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -165,19 +166,18 @@ namespace GxMcp.Worker.Services
             {
                 byObject.Add(RowToJson(r, total));
             }
-            var result = new JObject
+            var payload = new JObject
             {
-                ["status"] = "Success",
                 ["totalSampleMs"] = total,
                 ["sampleCount"] = sampleCount,
                 ["byObject"] = byObject
             };
             if (warnings.Count > 0)
             {
-                result["note"] = "Schema may not be fully recognized — see parserWarnings.";
-                result["parserWarnings"] = new JArray(warnings);
+                payload["note"] = "Schema may not be fully recognized — see parserWarnings.";
+                payload["parserWarnings"] = new JArray(warnings);
             }
-            return result.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(code: "ProfileAnalyzed", result: payload);
         }
 
         private static string BuildHotspotsEnvelope(IList<TimingRow> rows, int top, IList<string> warnings)
@@ -188,15 +188,14 @@ namespace GxMcp.Worker.Services
             {
                 hotspots.Add(RowToJson(r, total));
             }
-            var result = new JObject
+            var payload = new JObject
             {
-                ["status"] = "Success",
                 ["top"] = top,
                 ["totalSampleMs"] = total,
                 ["hotspots"] = hotspots
             };
-            if (warnings.Count > 0) result["parserWarnings"] = new JArray(warnings);
-            return result.ToString(Newtonsoft.Json.Formatting.None);
+            if (warnings.Count > 0) payload["parserWarnings"] = new JArray(warnings);
+            return McpResponse.Ok(code: "ProfileHotspots", result: payload);
         }
 
         private static string BuildCorrelateEnvelope(IList<TimingRow> rows, string target, IList<string> warnings)
@@ -205,24 +204,26 @@ namespace GxMcp.Worker.Services
             var matches = rows.Where(r => r.Name.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
             if (matches.Count == 0)
             {
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["target"] = target,
-                    ["matches"] = new JArray(),
-                    ["note"] = "target '" + target + "' not found in profile.",
-                    ["parserWarnings"] = new JArray(warnings)
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    target: target,
+                    code: "ProfileCorrelated",
+                    result: new JObject
+                    {
+                        ["matches"] = new JArray(),
+                        ["note"] = "target '" + target + "' not found in profile.",
+                        ["parserWarnings"] = new JArray(warnings)
+                    });
             }
             var arr = new JArray();
             foreach (var r in matches) arr.Add(RowToJson(r, total));
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["target"] = target,
-                ["matches"] = arr,
-                ["totalSampleMs"] = total
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                target: target,
+                code: "ProfileCorrelated",
+                result: new JObject
+                {
+                    ["matches"] = arr,
+                    ["totalSampleMs"] = total
+                });
         }
 
         private static JObject RowToJson(TimingRow r, double total)
@@ -242,11 +243,11 @@ namespace GxMcp.Worker.Services
         // ---- error envelope --------------------------------------------------
 
         private static string Err(string code, string message)
-            => new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            => McpResponse.Err(
+                code: code,
+                message: message,
+                nextSteps: new JArray {
+                    McpResponse.NextStep("genexus_profile", new JObject { ["action"] = "analyze", ["path"] = "<path to profile XML>" }, "Retry with a valid profile XML path.")
+                });
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -63,26 +64,22 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "ReorgPreviewFailed",
-                    ["message"] = ex.Message,
-                    ["source"] = "reorg_plan"
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "ReorgPreviewFailed",
+                    message: ex.Message,
+                    hint: "The reorg preview call threw. Check that the SDK build service is available.",
+                    extra: new JObject { ["source"] = "reorg_plan" });
             }
 
             JObject reorg;
             try { reorg = JObject.Parse(reorgJson ?? "{}"); }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "ReorgPreviewMalformed",
-                    ["message"] = ex.Message,
-                    ["source"] = "reorg_plan"
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "ReorgPreviewMalformed",
+                    message: "Failed to parse reorg preview JSON: " + ex.Message,
+                    hint: "The BuildService.ReorgPreview returned malformed JSON.",
+                    extra: new JObject { ["source"] = "reorg_plan" });
             }
 
             var ddl = reorg["ddl"] as JArray ?? new JArray();
@@ -121,9 +118,8 @@ namespace GxMcp.Worker.Services
             // that distinction so the agent doesn't assume "drift=0" means in-sync.
             bool reorgIsStub = string.Equals(reorg["status"]?.ToString(), "Stub", StringComparison.OrdinalIgnoreCase);
 
-            var result = new JObject
+            var resultPayload = new JObject
             {
-                ["status"] = "Success",
                 ["target"] = target ?? string.Empty,
                 ["source"] = "reorg_plan",
                 ["tables"] = tables,
@@ -137,7 +133,7 @@ namespace GxMcp.Worker.Services
 
             if (reorgIsStub)
             {
-                result["note"] = "reorg_preview is currently a stub on this worker; drift detection cannot be confirmed without running action=reorg on a non-production environment. Empty 'tables' array means 'no signal' rather than 'no drift'.";
+                resultPayload["note"] = "reorg_preview is currently a stub on this worker; drift detection cannot be confirmed without running action=reorg on a non-production environment. Empty 'tables' array means 'no signal' rather than 'no drift'.";
             }
 
             if (includeReport)
@@ -162,10 +158,10 @@ namespace GxMcp.Worker.Services
                         lines.Add(string.Format("- [{0}] {1}: {2}", d["severity"], d["kind"], d["detail"]));
                     }
                 }
-                result["report"] = string.Join("\n", lines);
+                resultPayload["report"] = string.Join("\n", lines);
             }
 
-            return result.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(target: target, code: "DbDriftDetected", result: resultPayload);
         }
 
         private static int SeverityRank(string severity)

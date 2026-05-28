@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -83,7 +84,7 @@ namespace GxMcp.Worker.Services
                 findings.Add(Finding("info", "KbPathUnknown",
                     "No KB is currently open; cannot scan sources.",
                     "Open a KB first via genexus_kb action=open, then re-run."));
-                return Envelope(findings).ToString();
+                return McpResponse.Ok(code: "SecurityAuditCompleted", result: Envelope(findings));
             }
 
             try
@@ -132,7 +133,7 @@ namespace GxMcp.Worker.Services
                 findings.Add(Finding("warn", "ScanError",
                     "Secret scan failed: " + ex.Message, "Inspect the KB manually if findings are missing."));
             }
-            return Envelope(findings).ToString();
+            return McpResponse.Ok(code: "SecurityAuditCompleted", result: Envelope(findings));
         }
 
         public string AuditGam()
@@ -146,7 +147,7 @@ namespace GxMcp.Worker.Services
                 findings.Add(Finding("info", "KbPathUnknown",
                     "No KB is currently open; cannot audit GAM settings.",
                     "Open a KB first via genexus_kb action=open, then re-run."));
-                return Envelope(findings).ToString();
+                return McpResponse.Ok(code: "SecurityAuditCompleted", result: Envelope(findings));
             }
 
             string envDir = Path.Combine(kbPath, "Environments");
@@ -155,7 +156,7 @@ namespace GxMcp.Worker.Services
                 findings.Add(Finding("info", "NoEnvironments",
                     "No Environments directory found in KB.",
                     "The KB has no targets configured. Configure a target environment in the IDE."));
-                return Envelope(findings).ToString();
+                return McpResponse.Ok(code: "SecurityAuditCompleted", result: Envelope(findings));
             }
 
             try
@@ -203,7 +204,7 @@ namespace GxMcp.Worker.Services
                     "Audit walk failed: " + ex.Message, "Inspect the KB manually if findings are missing."));
             }
 
-            return Envelope(findings).ToString();
+            return McpResponse.Ok(code: "SecurityAuditCompleted", result: Envelope(findings));
         }
 
         private static JObject Finding(string severity, string code, string message, string remediation)
@@ -226,9 +227,9 @@ namespace GxMcp.Worker.Services
                 if (s == "critical") { worst = "critical"; break; }
                 if (s == "warn" && worst != "critical") worst = "warn";
             }
+            // Canonical v2.8.0: return result payload JObject (callers wrap in McpResponse.Ok).
             return new JObject
             {
-                ["status"] = "Success",
                 ["findingsCount"] = findings.Count,
                 ["worstSeverity"] = findings.Count == 0 ? "ok" : worst,
                 ["findings"] = findings

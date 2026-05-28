@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -27,12 +28,7 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrWhiteSpace(target))
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "MissingTarget",
-                    ["message"] = "target is required."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "MissingTarget", message: "target is required.");
             }
 
             string webform;
@@ -42,31 +38,21 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "ReadFailed",
-                    ["message"] = ex.Message,
-                    ["target"] = target
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "ReadFailed", message: ex.Message, target: target);
             }
 
             if (string.IsNullOrEmpty(webform))
             {
-                return new JObject
+                return McpResponse.Ok(target: target, code: "WcagCheckCompleted", result: new JObject
                 {
-                    ["status"] = "Success",
-                    ["target"] = target,
                     ["violations"] = new JArray(),
                     ["note"] = "No WebForm part on this object."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                });
             }
 
             var violations = AnalyzeWebForm(webform);
-            return new JObject
+            return McpResponse.Ok(target: target, code: "WcagCheckCompleted", result: new JObject
             {
-                ["status"] = "Success",
-                ["target"] = target,
                 ["violations"] = violations,
                 ["checked"] = new JArray
                 {
@@ -74,7 +60,7 @@ namespace GxMcp.Worker.Services
                     "caption-too-long",
                     "html-in-plain-caption"
                 }
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            });
         }
 
         /// <summary>

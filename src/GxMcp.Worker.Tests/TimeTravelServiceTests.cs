@@ -59,8 +59,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new TimeTravelService(kbService: null, objectService: null);
             var j = JObject.Parse(svc.Recover("", "abc1234"));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Equal("name is required.", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("name is required.", (string)j["error"]["message"]);
         }
 
         [Fact]
@@ -68,8 +68,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new TimeTravelService(kbService: null, objectService: null);
             var j = JObject.Parse(svc.Recover("MyObj", ""));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Equal("at is required (ISO timestamp or commit sha).", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("at is required (ISO timestamp or commit sha).", (string)j["error"]["message"]);
         }
 
         [Fact]
@@ -79,8 +79,8 @@ namespace GxMcp.Worker.Tests
             var kbSvc = BuildKbServiceWithPath(_tempDir);
             var svc = new TimeTravelService(kbSvc, objectService: null);
             var j = JObject.Parse(svc.Recover("MyObj", "abc1234"));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Equal("KbNotInGit", (string)j["code"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("KbNotInGit", (string)j["error"]["code"]);
         }
 
         [Fact]
@@ -112,11 +112,11 @@ namespace GxMcp.Worker.Tests
             var svc = new TimeTravelService(kbSvc, objectService: null);
 
             var j = JObject.Parse(svc.Recover("MyProc", sha));
-            Assert.Equal("Success", (string)j["status"]);
-            Assert.Equal("MyProc", (string)j["name"]);
-            Assert.Equal(sha, (string)j["recoveredFromCommit"]);
+            Assert.Equal("ok", (string)j["status"]);
+            Assert.Equal("MyProc", (string)j["target"]);
+            Assert.Equal(sha, (string)j["result"]["recoveredFromCommit"]);
 
-            var parts = (JArray)j["parts"];
+            var parts = (JArray)j["result"]["parts"];
             Assert.NotNull(parts);
             Assert.True(parts.Count >= 1, "expected at least one recovered part, got " + parts.Count);
             Assert.Contains(parts, p => ((string)p["content"]).Contains("hello world"));

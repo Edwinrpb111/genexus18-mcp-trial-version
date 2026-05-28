@@ -28,7 +28,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "Verify the object name and ensure the KB is open.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["type"] = "Transaction" },
+                        why: "Lists available Transaction objects in the KB.")),
+                    target: target);
 
                 Table tbl = null;
                 Transaction trnObj = null;
@@ -42,7 +50,11 @@ namespace GxMcp.Worker.Services
                     tbl = obj as Table;
                 }
 
-                if (tbl == null) return Models.McpResponse.Error("Associated table not found", target, null, "The target object does not resolve to a Transaction or Table with physical structure.");
+                if (tbl == null) return Models.McpResponse.Err(
+                    code: "TableNotFound",
+                    message: "The target object does not resolve to a Transaction or Table with physical structure.",
+                    hint: "Ensure the target is a Transaction or Table object.",
+                    target: target);
 
                 dynamic kb = _kbService.GetKB();
                 var model = kb.DesignModel.Environment.TargetModel;
@@ -97,11 +109,15 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return result.ToString();
+                return Models.McpResponse.Ok(target: target, code: "TableDDL", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "TableDDLFailed",
+                    message: ex.Message,
+                    hint: "Check that the target is a Transaction or Table and the KB is open.",
+                    target: target);
             }
         }
 
@@ -246,7 +262,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "Verify the object name and ensure the KB is open.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject(),
+                        why: "Lists available objects in the KB.")),
+                    target: target);
 
                 var result = new JObject();
                 result["objectName"] = obj.Name;
@@ -292,11 +316,15 @@ namespace GxMcp.Worker.Services
                 result["dataSchema"] = tableSchemas;
                 result["variables"] = GetVariables(obj);
 
-                return result.ToString();
+                return Models.McpResponse.Ok(target: target, code: "DataContextRead", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "DataContextFailed",
+                    message: ex.Message,
+                    hint: "Check that the KB is open and the object is accessible.",
+                    target: target);
             }
         }
 

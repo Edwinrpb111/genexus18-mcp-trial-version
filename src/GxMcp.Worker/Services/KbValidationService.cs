@@ -35,7 +35,14 @@ namespace GxMcp.Worker.Services
             {
                 var index = _indexCacheService.GetIndex();
                 if (index == null || index.Objects.Count == 0)
-                    return McpResponse.Error("Index empty", null, null, "Run genexus_lifecycle(action='index') first.");
+                    return McpResponse.Err(
+                        code: "IndexEmpty",
+                        message: "Search index is empty.",
+                        hint: "Run genexus_lifecycle action=index first.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_lifecycle",
+                            args: new JObject { ["action"] = "index" },
+                            why: "Builds the on-disk search index required for validation.")));
 
                 var attrNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var entry in index.Objects.Values)
@@ -102,19 +109,23 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                var result = new JObject
-                {
-                    ["status"] = issues.Count == 0 ? "Ok" : "IssuesFound",
-                    ["scannedObjects"] = scanned,
-                    ["patternInstancesInspected"] = patternsFound,
-                    ["issuesCount"] = issues.Count,
-                    ["issues"] = issues
-                };
-                return result.ToString();
+                string resultCode = issues.Count == 0 ? "ConditionsOk" : "IssuesFound";
+                return McpResponse.Ok(
+                    code: resultCode,
+                    result: new JObject
+                    {
+                        ["scannedObjects"] = scanned,
+                        ["patternInstancesInspected"] = patternsFound,
+                        ["issuesCount"] = issues.Count,
+                        ["issues"] = issues
+                    });
             }
             catch (Exception ex)
             {
-                return McpResponse.Error("ValidateConditions failed", null, null, ex.Message);
+                return McpResponse.Err(
+                    code: "ValidateConditionsFailed",
+                    message: ex.Message,
+                    hint: "Ensure the search index is built and the KB is open.");
             }
         }
 
@@ -123,9 +134,20 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrEmpty(target))
-                    return McpResponse.Error("target required", target, null, "Provide object name to list snapshots.");
+                    return McpResponse.Err(
+                        code: "MissingTarget",
+                        message: "target is required.",
+                        hint: "Provide the object name to list pattern snapshots.");
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return McpResponse.Error("Object not found", target, null, "Use type=<...> to disambiguate.");
+                if (obj == null) return McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "Use type=<...> to disambiguate if multiple objects share the name.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject(),
+                        why: "Lists objects so you can find the correct name and type.")),
+                    target: target);
 
                 var files = PatternSnapshotStore.List(obj.Guid.ToString());
                 var arr = new JArray();
@@ -135,9 +157,12 @@ namespace GxMcp.Worker.Services
                     ["fileName"] = System.IO.Path.GetFileName(f),
                     ["sizeBytes"] = new System.IO.FileInfo(f).Length
                 });
-                return new JObject { ["count"] = arr.Count, ["target"] = obj.Name, ["snapshots"] = arr }.ToString();
+                return McpResponse.Ok(
+                    target: obj.Name,
+                    code: "PatternSnapshotList",
+                    result: new JObject { ["count"] = arr.Count, ["snapshots"] = arr });
             }
-            catch (Exception ex) { return McpResponse.Error("ListPatternSnapshots failed", target, null, ex.Message); }
+            catch (Exception ex) { return McpResponse.Err(code: "ListPatternSnapshotsFailed", message: ex.Message, target: target); }
         }
 
         public string RestorePatternSnapshot(string target, string snapshotPath, WriteService writeService)
@@ -145,15 +170,27 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrEmpty(target) || string.IsNullOrEmpty(snapshotPath))
-                    return McpResponse.Error("target and snapshotPath required", target, "PatternInstance", "Use snapshots-list to find available paths.");
+                    return McpResponse.Err(
+                        code: "MissingArguments",
+                        message: "target and snapshotPath are required.",
+                        hint: "Use the snapshots-list action to find available paths.",
+                        target: target);
 
                 var xml = PatternSnapshotStore.ReadSnapshot(snapshotPath);
                 if (string.IsNullOrEmpty(xml))
-                    return McpResponse.Error("Snapshot read failed", target, "PatternInstance", "File missing or unreadable: " + snapshotPath);
+                    return McpResponse.Err(
+                        code: "SnapshotReadFailed",
+                        message: "File missing or unreadable: " + snapshotPath,
+                        hint: "List available snapshots to find a valid path.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_kb_validate",
+                            args: new JObject { ["action"] = "snapshots-list", ["target"] = target },
+                            why: "Lists available pattern snapshots for this object.")),
+                        target: target);
 
                 return writeService.WriteObject(target, "PatternInstance", xml);
             }
-            catch (Exception ex) { return McpResponse.Error("RestorePatternSnapshot failed", target, "PatternInstance", ex.Message); }
+            catch (Exception ex) { return McpResponse.Err(code: "RestorePatternSnapshotFailed", message: ex.Message, target: target); }
         }
 
         public List<BrokenRef> AnalyzeImpact(string targetName, string afterXml)

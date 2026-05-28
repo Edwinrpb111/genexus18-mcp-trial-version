@@ -6,6 +6,7 @@ using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Parts;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -21,29 +22,77 @@ namespace GxMcp.Worker.Services
         public string TranslateTo(string targetName, string targetLanguage)
         {
             try {
-                if (string.IsNullOrWhiteSpace(targetName)) return McpResponse.Error("Object name is required", targetName, null, "Provide the GeneXus object name to translate.");
-                if (string.IsNullOrWhiteSpace(targetLanguage)) return McpResponse.Error("Target language is required", targetName, null, "Provide the destination language, for example 'csharp' or 'typescript'.");
+                if (string.IsNullOrWhiteSpace(targetName))
+                    return McpResponse.Err(
+                        code: "ObjectNameRequired",
+                        message: "Object name is required.",
+                        hint: "Provide the GeneXus object name to translate.",
+                        // no-nextStep: the caller must supply the object name; no tool can infer it
+                        target: targetName);
+
+                if (string.IsNullOrWhiteSpace(targetLanguage))
+                    return McpResponse.Err(
+                        code: "TargetLanguageRequired",
+                        message: "Target language is required.",
+                        hint: "Provide the destination language, for example 'csharp' or 'typescript'.",
+                        nextSteps: new JArray(
+                            McpResponse.NextStep(
+                                tool: "genexus_inspect",
+                                args: new JObject { ["name"] = targetName },
+                                why: "Inspect the object first to confirm it exists, then retry with a language.")),
+                        target: targetName);
 
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null)
+                    return McpResponse.Err(
+                        code: "ObjectNotFound",
+                        message: "Object not found.",
+                        hint: "The requested object is not available in the active Knowledge Base.",
+                        nextSteps: new JArray(
+                            McpResponse.NextStep(
+                                tool: "genexus_search",
+                                args: new JObject { ["query"] = targetName },
+                                why: "Search for similarly named objects to find the correct name.")),
+                        target: targetName);
 
-                string result = "";
+                string code = "";
                 if (targetLanguage.Equals("csharp", StringComparison.OrdinalIgnoreCase) || targetLanguage.Equals("cs", StringComparison.OrdinalIgnoreCase))
                 {
-                    result = TranslateToCSharp(obj);
+                    code = TranslateToCSharp(obj);
                 }
                 else if (targetLanguage.Equals("typescript", StringComparison.OrdinalIgnoreCase) || targetLanguage.Equals("ts", StringComparison.OrdinalIgnoreCase))
                 {
-                    result = TranslateToTypeScript(obj);
+                    code = TranslateToTypeScript(obj);
                 }
                 else
                 {
-                    return McpResponse.Error("Target language not supported", targetName, null, "Supported languages are 'csharp' and 'typescript'.");
+                    return McpResponse.Err(
+                        code: "TargetLanguageNotSupported",
+                        message: "Target language not supported.",
+                        hint: "Supported languages are 'csharp' and 'typescript'.",
+                        // no-nextStep: the caller must choose a supported language; no tool can select it for them
+                        target: targetName);
                 }
 
-                return "{\"status\":\"Success\", \"code\":\"" + CommandDispatcher.EscapeJsonString(result) + "\"}";
+                return McpResponse.Ok(
+                    target: targetName,
+                    code: "TranslationOk",
+                    result: new JObject
+                    {
+                        ["language"] = targetLanguage,
+                        ["code"] = code
+                    });
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "TranslationFailed",
+                    message: ex.Message,
+                    hint: "Verify the object exists and has a supported structure for conversion.",
+                    nextSteps: new JArray(
+                        McpResponse.NextStep(
+                            tool: "genexus_inspect",
+                            args: new JObject { ["name"] = targetName },
+                            why: "Inspect the object to confirm its type and parts before retrying.")),
+                    target: targetName);
             }
         }
 
@@ -111,4 +160,3 @@ namespace GxMcp.Worker.Services
         }
     }
 }
-

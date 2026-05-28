@@ -23,8 +23,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new ProfileService();
             var obj = JObject.Parse(svc.Run(new JObject { ["path"] = "x" }));
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("InvalidAction", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("InvalidAction", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -36,8 +36,8 @@ namespace GxMcp.Worker.Tests
                 ["action"] = "analyze",
                 ["path"] = @"C:\does\not\exist\nope.xml"
             }));
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("FileNotFound", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("FileNotFound", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -58,9 +58,9 @@ namespace GxMcp.Worker.Tests
                     ["action"] = "analyze",
                     ["path"] = path
                 }));
-                Assert.Equal("Success", obj["status"]?.ToString());
-                Assert.Equal(180.0, obj["totalSampleMs"]?.Value<double>());
-                var byObj = (JArray)obj["byObject"];
+                Assert.Equal("ok", obj["status"]?.ToString());
+                Assert.Equal(180.0, obj["result"]?["totalSampleMs"]?.Value<double>());
+                var byObj = (JArray)obj["result"]?["byObject"];
                 Assert.Equal(2, byObj.Count);
 
                 var foo = byObj.OfType<JObject>().Single(o => o["name"]?.ToString() == "Foo");
@@ -86,10 +86,10 @@ namespace GxMcp.Worker.Tests
                     ["action"] = "analyze",
                     ["path"] = path
                 }));
-                Assert.Equal("Success", obj["status"]?.ToString());
-                Assert.Equal(0.0, obj["totalSampleMs"]?.Value<double>());
-                Assert.NotNull(obj["parserWarnings"]);
-                var warns = (JArray)obj["parserWarnings"];
+                Assert.Equal("ok", obj["status"]?.ToString());
+                Assert.Equal(0.0, obj["result"]?["totalSampleMs"]?.Value<double>());
+                Assert.NotNull(obj["result"]?["parserWarnings"]);
+                var warns = (JArray)obj["result"]?["parserWarnings"];
                 Assert.Contains(warns, w => w.ToString().Contains("no elements with name+timing"));
             }
             finally { File.Delete(path); }
@@ -112,11 +112,11 @@ namespace GxMcp.Worker.Tests
                     ["path"] = path,
                     ["top"] = 100   // requested 100, capped at 50 by service
                 }));
-                Assert.Equal("Success", obj["status"]?.ToString());
-                Assert.Equal(50, obj["top"]?.Value<int>());
-                Assert.Equal(50, ((JArray)obj["hotspots"]).Count);
+                Assert.Equal("ok", obj["status"]?.ToString());
+                Assert.Equal(50, obj["result"]?["top"]?.Value<int>());
+                Assert.Equal(50, ((JArray)obj["result"]?["hotspots"]).Count);
                 // Top entry = highest totalTime.
-                Assert.Equal("Obj60", ((JArray)obj["hotspots"])[0]["name"]?.ToString());
+                Assert.Equal("Obj60", ((JArray)obj["result"]?["hotspots"])[0]["name"]?.ToString());
             }
             finally { File.Delete(path); }
         }
@@ -140,9 +140,9 @@ namespace GxMcp.Worker.Tests
                     ["path"] = path,
                     ["target"] = "Order"
                 }));
-                Assert.Equal("Success", obj["status"]?.ToString());
+                Assert.Equal("ok", obj["status"]?.ToString());
                 Assert.Equal("Order", obj["target"]?.ToString());
-                var matches = (JArray)obj["matches"];
+                var matches = (JArray)obj["result"]?["matches"];
                 Assert.Equal(2, matches.Count);
                 Assert.All(matches, m =>
                     Assert.Contains("Order", m["name"]?.ToString()));

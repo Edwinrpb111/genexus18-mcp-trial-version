@@ -43,10 +43,11 @@ namespace GxMcp.Worker.Tests
             }, cts.Token);
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Cancelled", obj["status"]?.ToString());
-            Assert.NotNull(obj["partialHits"]);
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.Equal("Cancelled", obj["code"]?.ToString());
+            Assert.NotNull(obj["result"]?["partialHits"]);
             // Pre-cancelled token trips on the very first iteration, so scanned should be 0.
-            Assert.Equal(0, obj["totalScanned"]!.Value<int>());
+            Assert.Equal(0, obj["result"]!["totalScanned"]!.Value<int>());
         }
 
         [Fact]

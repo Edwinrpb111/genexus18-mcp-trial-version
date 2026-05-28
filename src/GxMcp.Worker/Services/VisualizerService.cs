@@ -55,11 +55,29 @@ namespace GxMcp.Worker.Services
                     filterDomain = payload ?? "All";
                 }
                 if (!File.Exists(_indexPath))
-                    return McpResponse.Error("Search Index not found", filterName ?? payload, null, "Build the search index before generating the dependency graph.");
+                    return McpResponse.Err(
+                        code: "SearchIndexMissing",
+                        message: "Search index not found.",
+                        hint: "Build the search index before generating the dependency graph.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_lifecycle",
+                            args: new JObject { ["action"] = "index" },
+                            why: "Builds the on-disk search index required for the dependency graph.")),
+                        retryAfterMs: 10000,
+                        target: filterName ?? payload);
 
                 var index = SearchIndex.FromJson(File.ReadAllText(_indexPath));
                 if (index == null || index.Objects.Count == 0)
-                    return McpResponse.Error("Search Index is empty", filterName ?? payload, null, "The dependency graph cannot be generated until the search index contains objects.");
+                    return McpResponse.Err(
+                        code: "SearchIndexEmpty",
+                        message: "Search index is empty.",
+                        hint: "The dependency graph cannot be generated until the search index contains objects.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_lifecycle",
+                            args: new JObject { ["action"] = "index", ["force"] = true },
+                            why: "Forces a full rebuild of the search index on the active KB.")),
+                        retryAfterMs: 10000,
+                        target: filterName ?? payload);
 
                 var nodes = new List<object>();
                 var edges = new List<object>();
@@ -164,17 +182,22 @@ namespace GxMcp.Worker.Services
                     mermaid.AppendLine(string.Format("  {0} --> {1}", e.data.source.Replace(" ", "_"), e.data.target.Replace(" ", "_")));
                 }
 
-                return new JObject { 
-                    ["status"] = "Success", 
-                    ["url"] = filePath.Replace("\\", "/"), 
-                    ["mermaid"] = mermaid.ToString(),
-                    ["nodes"] = nodes.Count, 
-                    ["edges"] = edges.Count 
-                }.ToString();
+                return McpResponse.Ok(
+                    code: "GraphGenerated",
+                    result: new JObject
+                    {
+                        ["url"] = filePath.Replace("\\", "/"),
+                        ["mermaid"] = mermaid.ToString(),
+                        ["nodes"] = nodes.Count,
+                        ["edges"] = edges.Count
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "GraphGenerationFailed",
+                    message: ex.Message,
+                    hint: "Check that the search index is built and the output directory is writable.");
             }
         }
 

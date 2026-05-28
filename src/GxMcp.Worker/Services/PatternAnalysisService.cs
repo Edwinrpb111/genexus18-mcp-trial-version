@@ -24,7 +24,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "The requested object is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_search",
+                        args: new JObject { ["query"] = target },
+                        why: "Search for objects matching the name to find the correct identifier.")),
+                    target: target);
 
                 // Fast type guard — WWP only applies to WorkWithPlus instances or to
                 // Transaction/WebPanel parents that may own one. For Procedure/SDT/
@@ -36,33 +44,75 @@ namespace GxMcp.Worker.Services
                                 || string.Equals(typeName, "WebPanel", StringComparison.OrdinalIgnoreCase);
                 if (!wwpEligible)
                 {
-                    return Models.McpResponse.Error(
-                        "Object type not eligible for WorkWithPlus pattern",
-                        target,
-                        null,
-                        $"pattern_metadata applies to WorkWithPlus / Transaction / WebPanel objects; '{target}' is a {typeName}.",
-                        obj.Name,
-                        typeName);
+                    return Models.McpResponse.Err(
+                        code: "TypeNotEligibleForWWP",
+                        message: $"Object type not eligible for WorkWithPlus pattern.",
+                        hint: $"pattern_metadata applies to WorkWithPlus / Transaction / WebPanel objects; '{target}' is a {typeName}.",
+                        nextSteps: new JArray(Models.McpResponse.NextStep(
+                            tool: "genexus_inspect",
+                            args: new JObject { ["name"] = target },
+                            why: "Inspect the object to confirm its type and available parts.")),
+                        target: target,
+                        extra: new JObject { ["objectName"] = obj.Name, ["objectType"] = typeName });
                 }
 
                 KBObject instanceObj = ResolveWWPInstance(obj);
-                if (instanceObj == null) return Models.McpResponse.Error("WorkWithPlus instance not found", target, null, "No WorkWithPlus instance was resolved for the requested object.");
+                if (instanceObj == null) return Models.McpResponse.Err(
+                    code: "WWPInstanceNotFound",
+                    message: "WorkWithPlus instance not found.",
+                    hint: "No WorkWithPlus instance was resolved for the requested object.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["type"] = "WorkWithPlus" },
+                        why: "List all WorkWithPlus instances to find the one associated with this object.")),
+                    target: target);
 
                 var part = FindPatternPart(instanceObj, "PatternInstance");
-                if (part == null) return Models.McpResponse.Error("PatternInstance part not found", target, "PatternInstance", "The WorkWithPlus instance does not expose a PatternInstance part.", instanceObj.Name, instanceObj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(instanceObj)));
+                if (part == null) return Models.McpResponse.Err(
+                    code: "PatternInstancePartNotFound",
+                    message: "PatternInstance part not found.",
+                    hint: "The WorkWithPlus instance does not expose a PatternInstance part.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = instanceObj.Name },
+                        why: "Returns availableParts so you can identify the correct part name.")),
+                    target: target,
+                    extra: new JObject
+                    {
+                        ["objectName"] = instanceObj.Name,
+                        ["objectType"] = instanceObj.TypeDescriptor?.Name,
+                        ["availableParts"] = new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(instanceObj))
+                    });
 
                 string xml = ExtractEditablePatternXml(part, instanceObj);
-                if (string.IsNullOrEmpty(xml)) return Models.McpResponse.Error("PatternInstance XML not available", target, "PatternInstance", "The PatternInstance content could not be extracted from the resolved WorkWithPlus instance.", instanceObj.Name, instanceObj.TypeDescriptor?.Name);
+                if (string.IsNullOrEmpty(xml)) return Models.McpResponse.Err(
+                    code: "PatternInstanceXmlUnavailable",
+                    message: "PatternInstance XML not available.",
+                    hint: "The PatternInstance content could not be extracted from the resolved WorkWithPlus instance.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = instanceObj.Name, ["part"] = "PatternInstance" },
+                        why: "Attempt a direct part read to surface the raw content or a more specific error.")),
+                    target: target,
+                    extra: new JObject { ["objectName"] = instanceObj.Name, ["objectType"] = instanceObj.TypeDescriptor?.Name });
 
                 var result = ParseWWPXml(xml);
                 result["resolvedObject"] = instanceObj.Name;
                 result["resolvedType"] = instanceObj.TypeDescriptor?.Name;
                 result["rawSnippet"] = xml.Length > 5000 ? xml.Substring(0, 5000) : xml;
-                return result.ToString();
+                return Models.McpResponse.Ok(target: target, code: "PatternMetadataRead", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "PatternMetadataFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log; the WorkWithPlus object or PatternInstance XML may be corrupt.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the index which may fix object resolution failures.")),
+                    target: target);
             }
         }
 

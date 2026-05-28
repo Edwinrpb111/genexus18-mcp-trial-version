@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -44,34 +45,33 @@ namespace GxMcp.Worker.Services
             var map = _topics.Value;
             if (listOnly || string.IsNullOrWhiteSpace(topic))
             {
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["topics"] = new JArray(map.Keys.OrderBy(k => k, StringComparer.Ordinal)
-                        .Select(k => (JToken)k)),
-                    ["hint"] = "Call genexus_playbook topic=<one of the above> to read the full markdown."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "PlaybookTopicsListed",
+                    result: new JObject
+                    {
+                        ["topics"] = new JArray(map.Keys.OrderBy(k => k, StringComparer.Ordinal)
+                            .Select(k => (JToken)k)),
+                        ["hint"] = "Call genexus_playbook topic=<one of the above> to read the full markdown."
+                    });
             }
 
             if (!map.TryGetValue(topic, out var body))
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "PlaybookTopicNotFound",
-                    ["message"] = "Unknown playbook topic: " + topic,
-                    ["availableTopics"] = new JArray(map.Keys.OrderBy(k => k, StringComparer.Ordinal)
-                        .Select(k => (JToken)k))
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "PlaybookTopicNotFound",
+                    message: "Unknown playbook topic: " + topic,
+                    hint: "Call genexus_playbook listOnly=true to see available topics.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_playbook", new JObject { ["listOnly"] = true }, "List available playbook topics.") });
             }
 
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["topic"] = topic,
-                ["content"] = body,
-                ["bytes"] = body.Length
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "PlaybookFound",
+                result: new JObject
+                {
+                    ["topic"] = topic,
+                    ["content"] = body,
+                    ["bytes"] = body.Length
+                });
         }
     }
 }

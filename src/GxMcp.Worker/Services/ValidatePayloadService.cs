@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Xml.Linq;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -27,7 +28,6 @@ namespace GxMcp.Worker.Services
 
                 var result = new JObject
                 {
-                    ["status"] = "Valid",
                     ["target"] = target,
                     ["part"] = partName,
                 };
@@ -45,7 +45,7 @@ namespace GxMcp.Worker.Services
                     foreach (var s in suspects)
                         arr.Add(new JObject { ["element"] = s.Element, ["attribute"] = s.Attribute, ["reason"] = s.Reason });
                     result["preflightWarnings"] = arr;
-                    result["status"] = "Warnings";
+                    result["hasWarnings"] = true;
                 }
 
                 try
@@ -75,7 +75,7 @@ namespace GxMcp.Worker.Services
                 }
                 catch { /* current-state read is best-effort */ }
 
-                return result.ToString();
+                return McpResponse.Ok(code: "PayloadValid", result: result);
             }
             catch (Exception ex)
             {
@@ -83,6 +83,6 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private static string Error(string msg) => new JObject { ["status"] = "Error", ["message"] = msg }.ToString();
+        private static string Error(string msg) => McpResponse.Err(code: "PayloadValidationFailed", message: msg);
     }
 }

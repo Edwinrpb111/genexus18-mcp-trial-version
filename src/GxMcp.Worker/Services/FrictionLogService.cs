@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -65,12 +66,9 @@ namespace GxMcp.Worker.Services
                 string line = entry.ToString(Newtonsoft.Json.Formatting.None);
                 File.AppendAllText(filePath, line + Environment.NewLine, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["path"] = filePath,
-                    ["entry"] = entry
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "FrictionLogAppended",
+                    result: new JObject { ["path"] = filePath, ["entry"] = entry });
             }
             catch (Exception ex)
             {
@@ -87,13 +85,9 @@ namespace GxMcp.Worker.Services
                 string filePath = Path.Combine(kbPath, ".gx", "friction.jsonl");
                 if (!File.Exists(filePath))
                 {
-                    return new JObject
-                    {
-                        ["status"] = "Success",
-                        ["path"] = filePath,
-                        ["entries"] = new JArray(),
-                        ["total"] = 0
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Ok(
+                        code: "FrictionLogTailed",
+                        result: new JObject { ["path"] = filePath, ["entries"] = new JArray(), ["total"] = 0 });
                 }
 
                 var lines = File.ReadAllLines(filePath);
@@ -113,13 +107,9 @@ namespace GxMcp.Worker.Services
                         arr.Add(new JObject { ["raw"] = line, ["parseError"] = true });
                     }
                 }
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["path"] = filePath,
-                    ["entries"] = arr,
-                    ["total"] = lines.Length
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "FrictionLogTailed",
+                    result: new JObject { ["path"] = filePath, ["entries"] = arr, ["total"] = lines.Length });
             }
             catch (Exception ex)
             {
@@ -151,11 +141,6 @@ namespace GxMcp.Worker.Services
         }
 
         private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            McpResponse.Err(code: code, message: message);
     }
 }

@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -29,7 +30,7 @@ namespace GxMcp.Worker.Services
         public string Run(string targetObject, JArray browsersArr, JArray captureArr)
         {
             if (string.IsNullOrWhiteSpace(targetObject))
-                return new JObject { ["status"] = "Error", ["message"] = "target is required." }.ToString(Formatting.None);
+                return McpResponse.Err(code: "MissingTarget", message: "target is required.", hint: "Pass target=<WebPanel or object name>.");
 
             var browsers = new List<string>();
             if (browsersArr != null) foreach (var b in browsersArr) { var s = b?.ToString(); if (!string.IsNullOrEmpty(s)) browsers.Add(s.ToLowerInvariant()); }
@@ -41,13 +42,22 @@ namespace GxMcp.Worker.Services
             {
                 var urlJson = _runObject?.Resolve(targetObject, null, null);
                 if (string.IsNullOrEmpty(urlJson))
-                    return new JObject { ["status"] = "Error", ["message"] = "RunObjectService unavailable." }.ToString(Formatting.None);
+                    return McpResponse.Err(
+                        code: "RunObjectServiceUnavailable",
+                        message: "RunObjectService is unavailable.",
+                        hint: "Ensure the Worker is fully started and a KB is open.");
                 var jo = JObject.Parse(urlJson);
-                url = jo["url"]?.ToString();
+                // v2.8.0 — RunObjectService now returns canonical envelope with the URL
+                // under result.url. Fall back to top-level for any other resolver.
+                url = jo["result"]?["url"]?.ToString() ?? jo["url"]?.ToString();
                 if (string.IsNullOrEmpty(url))
-                    return new JObject { ["status"] = "Error", ["message"] = "Could not resolve runtime URL for " + targetObject, ["resolve"] = jo }.ToString(Formatting.None);
+                    return McpResponse.Err(
+                        code: "UrlResolutionFailed",
+                        message: "Could not resolve runtime URL for " + targetObject + ".",
+                        hint: "Check that the object exists and the KB web server is running.",
+                        extra: new JObject { ["resolve"] = jo });
             }
-            catch (Exception ex) { return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString(Formatting.None); }
+            catch (Exception ex) { return McpResponse.Err(code: "CrossBrowserError", message: ex.Message, hint: "Check that RunObjectService is wired and the KB is open."); }
 
             var tasks = new List<Task<JObject>>();
             foreach (var b in browsers) tasks.Add(Task.Run(() => RunOne(b, url)));
@@ -64,13 +74,15 @@ namespace GxMcp.Worker.Services
                 results.Add(r);
             }
 
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["url"] = url,
-                ["results"] = results,
-                ["anyFailed"] = anyFailed
-            }.ToString(Formatting.None);
+            return McpResponse.Ok(
+                target: targetObject,
+                code: "CrossBrowserCompleted",
+                result: new JObject
+                {
+                    ["url"] = url,
+                    ["results"] = results,
+                    ["anyFailed"] = anyFailed
+                });
         }
 
         private JObject RunOne(string browser, string url)

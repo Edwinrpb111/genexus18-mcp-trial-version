@@ -35,8 +35,8 @@ namespace GxMcp.Worker.Tests
             Assert.Equal("B:prior-B", writeCalls[0]);
             Assert.Equal("A:prior-A", writeCalls[1]);
             Assert.Equal(2, results.Count);
-            Assert.Equal("Restored", results[0]["status"]?.ToString());
-            Assert.Equal("Restored", results[1]["status"]?.ToString());
+            Assert.Equal("Restored", results[0]["itemStatus"]?.ToString());
+            Assert.Equal("Restored", results[1]["itemStatus"]?.ToString());
         }
 
         [Fact]
@@ -62,11 +62,11 @@ namespace GxMcp.Worker.Tests
             Assert.Equal(3, results.Count);
             // Reverse order: index 0 → C, 1 → B, 2 → A
             Assert.Equal("C", results[0]["target"]?.ToString());
-            Assert.Equal("Restored", results[0]["status"]?.ToString());
+            Assert.Equal("Restored", results[0]["itemStatus"]?.ToString());
             Assert.Equal("B", results[1]["target"]?.ToString());
-            Assert.Equal("Error", results[1]["status"]?.ToString());
+            Assert.Equal("Error", results[1]["itemStatus"]?.ToString());
             Assert.Equal("A", results[2]["target"]?.ToString());
-            Assert.Equal("Restored", results[2]["status"]?.ToString());
+            Assert.Equal("Restored", results[2]["itemStatus"]?.ToString());
         }
 
         [Fact]
@@ -83,7 +83,7 @@ namespace GxMcp.Worker.Tests
                 (name, part, content, type) => "{\"status\":\"Success\"}");
 
             Assert.Single(results);
-            Assert.Equal("Error", results[0]["status"]?.ToString());
+            Assert.Equal("Error", results[0]["itemStatus"]?.ToString());
             Assert.Contains("Snapshot bytes unreadable", results[0]["message"]?.ToString() ?? "");
         }
 
@@ -101,7 +101,7 @@ namespace GxMcp.Worker.Tests
                 (name, part, content, type) => { throw new System.Exception("boom"); });
 
             Assert.Single(results);
-            Assert.Equal("Error", results[0]["status"]?.ToString());
+            Assert.Equal("Error", results[0]["itemStatus"]?.ToString());
             Assert.Contains("boom", results[0]["message"]?.ToString() ?? "");
         }
 
@@ -112,7 +112,7 @@ namespace GxMcp.Worker.Tests
             var ws = BuildIsolatedWriteService();
             string raw = ws.BulkWrite(new JObject { ["targets"] = new JArray() });
             var jo = JObject.Parse(raw);
-            Assert.Equal("Error", jo["status"]?.ToString());
+            Assert.Equal("error", jo["status"]?.ToString());
         }
 
         [Fact]
@@ -133,7 +133,10 @@ namespace GxMcp.Worker.Tests
             };
             string raw = ws.BulkWrite(args);
             var jo = JObject.Parse(raw);
-            Assert.Equal("RolledBack", jo["status"]?.ToString());
+            Assert.Equal("error", jo["status"]?.ToString());
+            Assert.True(jo["error"]?["code"]?.ToString()?.Contains("Rolled") == true
+                        || jo["error"]?["code"]?.ToString()?.Contains("Bulk") == true,
+                        "Expected error.code containing 'Rolled' or 'Bulk'. Got: " + jo.ToString());
             Assert.Equal("Foo", jo["failedAt"]?.ToString());
             Assert.NotNull(jo["rollbackResults"]);
         }

@@ -22,8 +22,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new ReversePatternService(objectService: null, uiService: null);
             var j = JObject.Parse(svc.Infer(null));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Contains("at least 2 object names", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Contains("at least 2 object names", (string)j["error"]["message"]);
         }
 
         [Fact]
@@ -31,8 +31,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new ReversePatternService(objectService: null, uiService: null);
             var j = JObject.Parse(svc.Infer(new JArray("OnlyOne")));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Contains("at least 2 object names", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Contains("at least 2 object names", (string)j["error"]["message"]);
         }
 
         [Fact]
@@ -43,8 +43,8 @@ namespace GxMcp.Worker.Tests
             var svc = new ReversePatternService(obj, uiService: null);
 
             var j = JObject.Parse(svc.Infer(new JArray("DoesNotExist1", "DoesNotExist2")));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Equal("InsufficientResolved", (string)j["code"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("InsufficientResolved", (string)j["error"]["code"]);
             Assert.Equal(0, (int)j["resolved"]);
             var unresolved = (JArray)j["unresolved"];
             Assert.Equal(2, unresolved.Count);

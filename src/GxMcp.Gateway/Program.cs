@@ -447,6 +447,9 @@ namespace GxMcp.Gateway
                     RecentlyChanged = recentlyChanged ?? _lastKnownIndexState?.RecentlyChanged
                 };
             }
+            // Keep AutoTypeInjector's name→type map warm whenever we get fresh index data.
+            if (recentlyChanged != null)
+                AutoTypeInjector.RefreshFromRecentlyChanged(recentlyChanged);
         }
 
         private static JObject BuildIndexBlock()
@@ -512,12 +515,13 @@ namespace GxMcp.Gateway
 
                 // The worker may wrap the JSON-RPC result as either a JObject or a string payload.
                 JObject state = result;
-                if (result["status"] == null && result["data"] is JValue dv && dv.Type == JTokenType.String)
+                if (result["indexStatus"] == null && result["status"] == null && result["data"] is JValue dv && dv.Type == JTokenType.String)
                 {
                     try { state = JObject.Parse(dv.ToString()); } catch { return false; }
                 }
 
-                string status = state["status"]?.ToString() ?? "Cold";
+                // v2.8.0: canonical envelope puts indexStatus (not status) inside result.
+                string status = state["indexStatus"]?.ToString() ?? state["status"]?.ToString() ?? "Cold";
                 int totalObjects = state["totalObjects"]?.ToObject<int?>() ?? 0;
                 DateTime? lastIndexedAt = null;
                 var liTok = state["lastIndexedAt"];
@@ -581,7 +585,11 @@ namespace GxMcp.Gateway
                 {
                     try { info = JObject.Parse(dv.ToString()); } catch { return false; }
                 }
-                if (!string.Equals(info["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                // v2.8.0: success is signalled by env["status"] == "ok"; legacy envelope
+                // carried status:"Success" inside result. Accept either form.
+                bool dbInfoOk = string.Equals(env["status"]?.ToString(), "ok", StringComparison.Ordinal)
+                             || string.Equals(info["status"]?.ToString(), "ok", StringComparison.OrdinalIgnoreCase);
+                if (!dbInfoOk)
                 {
                     return false;
                 }
@@ -788,8 +796,155 @@ namespace GxMcp.Gateway
                 // on the first turn and skips ~3-8k tokens of discovery. Each entry
                 // is a 1-line route, not full docs — for full recipes the agent can
                 // fetch genexus_recipe(name=...).
-                ["playbooks"] = BuildPlaybooksBlock()
+                ["playbooks"] = BuildPlaybooksBlock(),
+                // v2.8.0 — first-class skill catalog so a weakly-capable LLM
+                // sees the authoritative reference material on the FIRST call,
+                // without having to know about MCP resources/list. Each entry
+                // is one resources/read away.
+                ["skills"] = BuildSkillsCatalogBlock(),
+                // v2.8.0 — concrete next-action hints so a weakly-capable LLM
+                // doesn't have to guess "what do I call now?" after whoami.
+                // Heuristics inspect KB / index / worker / update state and emit
+                // {tool, args, why} triples matching the canonical envelope's
+                // nextSteps shape. Empty when state is healthy + nothing pending.
+                ["suggestedNext"] = BuildSuggestedNextBlock(kbPath, kbExists, kbValid)
             };
+        }
+
+        // v2.8.0 — skill catalog block. Mirrors SkillCatalog.All so the
+        // gateway doesn't duplicate the source-of-truth content; it only
+        // surfaces titles + URIs + a one-line "when to read".
+        internal static JArray BuildSkillsCatalogBlock()
+        {
+            var arr = new JArray();
+            foreach (var skill in SkillCatalog.All)
+            {
+                arr.Add(new JObject
+                {
+                    ["uri"] = "genexus://kb/skills/" + skill.Key,
+                    ["title"] = skill.Title,
+                    ["summary"] = skill.Description,
+                    ["whenToRead"] = SkillWhenToRead(skill.Key),
+                    ["readVia"] = new JObject
+                    {
+                        ["tool"] = "resources/read",
+                        ["args"] = new JObject { ["uri"] = "genexus://kb/skills/" + skill.Key }
+                    }
+                });
+            }
+            return arr;
+        }
+
+        private static string SkillWhenToRead(string key)
+        {
+            switch (key)
+            {
+                case "navigation":
+                    return "BEFORE setting any panel property whose name involves Call, Protocol, IsMain, Main, Master, or before invoking Call/Return/ReplaceMainPanel — read this first. CallProtocol does NOT apply to Web Panel / SD Panel and 'Modal' is not a valid value.";
+                case "gam-integrated-security":
+                    return "BEFORE writing any code that depends on GAM authentication / authorization, or before touching Integrated Security Level / Login flow — verify the real property name and accepted values here.";
+                case "sd-panel-mobile":
+                    return "BEFORE marking a Smart Device object as Main, claiming an 'IsMain' property exists, or setting Native Mobile application-level properties — confirm the real name (it's 'Main program') and which object types support it.";
+                case "webpanel-events":
+                    return "BEFORE writing Web Panel event code (Start / Refresh / Load) — confirm the firing order and what attribute access each event has. Refresh runs BEFORE Load (per record), not after.";
+                default:
+                    return "Read before invoking related properties or methods you aren't fully certain about.";
+            }
+        }
+
+        // v2.8.0 — first-turn navigation aid. Returns a JArray of
+        // {tool, args, why} suggestions based on observable state. The array
+        // is intentionally short (max 3 entries) and ordered by urgency so
+        // an LLM that only reads the first item still picks the right call.
+        internal static JArray BuildSuggestedNextBlock(string? kbPath, bool kbExists, bool kbValid)
+        {
+            var arr = new JArray();
+            try
+            {
+                // Worker boot / health overrides everything — if it's not up,
+                // every other tool call will return crashed/exited.
+                if (!IsActiveWorkerHealthy())
+                {
+                    arr.Add(new JObject
+                    {
+                        ["tool"] = "genexus_whoami",
+                        ["args"] = new JObject(),
+                        ["why"] = "Worker is booting or respawning. Re-call whoami in 5–10s; the workerHealth block flips to ready once the SDK finishes loading."
+                    });
+                    return arr;
+                }
+
+                // No KB opened yet — that's the canonical first step.
+                if (string.IsNullOrEmpty(kbPath) || !kbExists || !kbValid)
+                {
+                    arr.Add(new JObject
+                    {
+                        ["tool"] = "genexus_kb",
+                        ["args"] = new JObject { ["action"] = "open", ["path"] = kbPath ?? "<absolute-path-to-.gx-or-folder>" },
+                        ["why"] = "No valid KB is selected. Open one before any read/edit tool can resolve objects."
+                    });
+                    return arr;
+                }
+
+                // Index state drives discovery tools. Cold / 0 objects means
+                // search / list / impact will all return empty until indexed.
+                IndexStateSnapshot snap;
+                lock (_lastKnownIndexStateLock) { snap = _lastKnownIndexState; }
+                bool indexEmpty = snap.TotalObjects == 0;
+                bool indexCold = string.Equals(snap.Status, "Cold", StringComparison.OrdinalIgnoreCase)
+                                 || string.Equals(snap.Status, "Unknown", StringComparison.OrdinalIgnoreCase);
+                if (indexCold || indexEmpty)
+                {
+                    arr.Add(new JObject
+                    {
+                        ["tool"] = "genexus_lifecycle",
+                        ["args"] = new JObject { ["action"] = "index", ["force"] = true },
+                        ["why"] = "Index is " + (indexEmpty ? "empty" : "cold") + ". Run a full index so list_objects / query / impact return real data."
+                    });
+                }
+
+                // Update available — surface as a soft hint, not blocking.
+                try
+                {
+                    var update = UpdateNotifier.GetCachedStatusSync();
+                    if (update != null && update["updateAvailable"]?.ToObject<bool>() == true)
+                    {
+                        string latest = update["latestVersion"]?.ToString() ?? "<latest>";
+                        arr.Add(new JObject
+                        {
+                            ["tool"] = "genexus_orient",
+                            ["args"] = new JObject { ["topic"] = "update" },
+                            ["why"] = $"GeneXus MCP v{latest} is available. Ask the user before installing — npx genexus-mcp@latest init."
+                        });
+                    }
+                }
+                catch { /* update check best-effort */ }
+
+                // Default exploration nudge when everything is healthy — gives
+                // a dumb LLM a deterministic 'what now' instead of guessing.
+                if (arr.Count == 0)
+                {
+                    arr.Add(new JObject
+                    {
+                        ["tool"] = "genexus_list_objects",
+                        ["args"] = new JObject { ["limit"] = 25 },
+                        ["why"] = "KB is open and indexed. Listing objects is the cheapest way to anchor the next decision."
+                    });
+                }
+
+                // v2.8.0 — always nudge the LLM toward authoritative skills
+                // before it invents a property or method that doesn't exist
+                // (CallProtocol=Modal, IsMain property, etc.). Cheap reminder;
+                // the resource bodies are fact-checked against docs.genexus.com.
+                arr.Add(new JObject
+                {
+                    ["tool"] = "resources/read",
+                    ["args"] = new JObject { ["uri"] = "genexus://kb/skills/navigation" },
+                    ["why"] = "Before claiming a navigation property/method exists (CallProtocol values, IsMain, ReplaceMainPanel, CallOptions.Target), read this skill — it lists what the SDK actually exposes and the common LLM pitfalls."
+                });
+            }
+            catch { /* never let suggestion logic break whoami */ }
+            return arr;
         }
 
         // Friction 2026-05-22: which worker exe is actually running was opaque —
@@ -1617,6 +1772,20 @@ namespace GxMcp.Gateway
 
             await worker.SendCommandAsync(workerRequest.ToString(Formatting.None));
 
+            if (timeoutMs <= 0)
+            {
+                var workerResponse = JObject.Parse(await pending.CompletionSource.Task.ConfigureAwait(false));
+                if (workerResponse["result"] is JObject workerResultObjNoTimeout && workerResultObjNoTimeout["correlationId"] == null)
+                {
+                    workerResultObjNoTimeout["correlationId"] = correlationId;
+                }
+                if (workerResponse["error"] is JObject workerErrorObjNoTimeout && workerErrorObjNoTimeout["correlationId"] == null)
+                {
+                    workerErrorObjNoTimeout["correlationId"] = correlationId;
+                }
+                return onSuccess(workerResponse);
+            }
+
             // MCP-spec keepalive for long synchronous tool calls: while waiting on the
             // worker, emit `notifications/progress` every HeartbeatIntervalSeconds when the
             // client supplied a progressToken, so it doesn't fire its own request timeout
@@ -1694,6 +1863,123 @@ namespace GxMcp.Gateway
             }
 
             return 60000;
+        }
+
+        internal static bool IsAsyncMutationTool(string? toolName)
+        {
+            if (string.IsNullOrWhiteSpace(toolName)) return false;
+            return string.Equals(toolName, "genexus_edit", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(toolName, "genexus_variable", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(toolName, "genexus_add_variable", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(toolName, "genexus_delete_variable", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(toolName, "genexus_modify_variable", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static JObject BuildAsyncAcceptedPayload(JobEntry job, string acceptedSummary)
+        {
+            if (job == null) throw new ArgumentNullException(nameof(job));
+
+            return new JObject
+            {
+                ["job_id"] = job.Id,
+                ["operationId"] = job.Id,
+                ["status"] = "running",
+                ["estimated_seconds"] = job.EstimatedSeconds,
+                ["pollTarget"] = "op:" + job.Id,
+                ["hint"] = acceptedSummary + " poll genexus_lifecycle(action='status'|'result', target='op:" + job.Id + "') or watch _meta.background_jobs."
+            };
+        }
+
+        internal static JObject BuildAsyncEditAcceptedPayload(JobEntry job)
+            => BuildAsyncAcceptedPayload(job, "Edit accepted;");
+
+        internal static JObject BuildAsyncVariableAcceptedPayload(JobEntry job)
+            => BuildAsyncAcceptedPayload(job, "Variable update accepted;");
+
+        internal static JObject BuildAsyncLifecycleAcceptedPayload(JobEntry job, string? action)
+        {
+            string acceptedSummary = string.Equals(action, "validate", StringComparison.OrdinalIgnoreCase)
+                ? "Validate accepted;"
+                : string.Equals(action, "rebuild", StringComparison.OrdinalIgnoreCase)
+                    ? "Rebuild accepted;"
+                    : "Build accepted;";
+            return BuildAsyncAcceptedPayload(job, acceptedSummary);
+        }
+
+        internal static string BuildAsyncMutationCompletionSummary(string? toolName, bool success)
+        {
+            bool isVariableTool = string.Equals(toolName, "genexus_variable", StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(toolName, "genexus_add_variable", StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(toolName, "genexus_delete_variable", StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(toolName, "genexus_modify_variable", StringComparison.OrdinalIgnoreCase);
+            if (isVariableTool)
+            {
+                return success ? "Variable update succeeded" : "Variable update failed";
+            }
+
+            return success ? "Edit succeeded" : "Edit failed";
+        }
+
+        internal static void NormalizeEditAndBuildPayload(JObject? payload)
+        {
+            if (payload == null) return;
+            if (payload["build"] is not JObject buildBlock) return;
+
+            string? taskId = buildBlock["taskId"]?.ToString() ?? buildBlock["TaskId"]?.ToString();
+            if (string.IsNullOrWhiteSpace(taskId)) return;
+
+            if (buildBlock["pollTarget"] == null)
+            {
+                // edit_and_build currently orchestrates its caller rebuild entirely on
+                // the worker side, so the follow-up handle is the worker build taskId,
+                // not a gateway background-job operationId.
+                buildBlock["pollTarget"] = taskId;
+            }
+
+            if (buildBlock["hint"] == null)
+            {
+                buildBlock["hint"] = "Poll genexus_lifecycle(action='status'|'result', target='" + taskId + "') for the caller rebuild.";
+            }
+        }
+
+        internal static bool IsSuccessfulBackgroundToolCompletion(JObject? workerEnvelope)
+        {
+            if (workerEnvelope == null) return false;
+            if (workerEnvelope["error"] != null) return false;
+
+            string? outerStatus = workerEnvelope["status"]?.ToString();
+            if (string.Equals(outerStatus, "Error", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(outerStatus, "Running", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(outerStatus, "Cancelled", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            JObject? resultObj = workerEnvelope["result"] as JObject;
+            if (resultObj == null && workerEnvelope["result"]?.Type == JTokenType.String)
+            {
+                string? raw = workerEnvelope["result"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(raw) && raw.TrimStart().StartsWith("{", StringComparison.Ordinal))
+                {
+                    try { resultObj = JObject.Parse(raw); }
+                    catch { }
+                }
+            }
+
+            if (resultObj == null) return true;
+            if (resultObj["error"] != null) return false;
+            if (resultObj["isError"]?.ToObject<bool?>() == true) return false;
+
+            string? innerStatus = resultObj["status"]?.ToString();
+            if (string.Equals(innerStatus, "Error", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(innerStatus, "Running", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(innerStatus, "Cancelled", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(innerStatus, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         internal static async Task<JObject?> ProcessMcpRequest(JObject request, string sessionId = "stdio")
@@ -1821,14 +2107,19 @@ namespace GxMcp.Gateway
                         $"Timeout waiting for resource: {request["params"]?["uri"]}",
                         resultObj =>
                         {
-                            if (resultObj["error"] != null || resultObj["status"]?.ToString() == "Error")
+                            if (resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase))
                             {
-                                string errorMsg = resultObj["error"]?.ToString() ?? resultObj["details"]?.ToString() ?? "Unknown error reading resource";
-                                
+                                // v2.8.0: error details live under error.{message,hint} in the canonical envelope.
+                                var errBlock = resultObj["error"] as JObject;
+                                string errorMsg = errBlock?["message"]?.ToString()
+                                    ?? errBlock?["hint"]?.ToString()
+                                    ?? resultObj["error"]?.ToString()
+                                    ?? "Unknown error reading resource";
+
                                 // Enrich with suggestions if available (from HealingService)
-                                string? suggestion = resultObj["suggestion"]?.ToString();
-                                if (!string.IsNullOrEmpty(suggestion)) errorMsg += "\n" + suggestion;
-                                
+                                string? suggestion = resultObj["suggestion"]?.ToString() ?? errBlock?["hint"]?.ToString();
+                                if (!string.IsNullOrEmpty(suggestion) && !errorMsg.Contains(suggestion)) errorMsg += "\n" + suggestion;
+
                                 string? tip = resultObj["actionable_tip"]?.ToString();
                                 if (!string.IsNullOrEmpty(tip)) errorMsg += "\nTip: " + tip;
 
@@ -1840,7 +2131,11 @@ namespace GxMcp.Gateway
                                 };
                             }
 
-                            var content = resultObj["result"]?.ToString() ?? resultObj["source"]?.ToString() ?? "";
+                            // v2.8.0: tool payload is under result.source; fall back to result as string.
+                            var resultPayload = resultObj["result"] as JObject;
+                            var content = resultPayload?["source"]?.ToString()
+                                ?? resultObj["result"]?.ToString()
+                                ?? "";
                             return new JObject
                             {
                                 ["jsonrpc"] = "2.0",
@@ -1893,6 +2188,65 @@ namespace GxMcp.Gateway
                         paramsObj["name"] = rewrittenName;
                         paramsObj["arguments"] = rewrittenArgs;
                     }
+                }
+
+                // Gateway-side schema pre-validation: reject malformed args immediately,
+                // before forwarding to the worker. Saves an STA round-trip and gives LLM
+                // clients faster feedback on typos / missing required fields.
+                if (!string.IsNullOrEmpty(toolName))
+                {
+                    var validationResult = GatewayArgsValidator.Validate(toolName, args);
+                    if (!validationResult.Ok)
+                    {
+                        var firstViolation = validationResult.Violations[0];
+                        string hint = firstViolation.Actual == "missing"
+                            ? $"Required field '{firstViolation.Path}' is missing — expected {firstViolation.Expected}."
+                            : $"Field '{firstViolation.Path}': expected {firstViolation.Expected}, got {firstViolation.Actual}.";
+
+                        var violationsArr = new Newtonsoft.Json.Linq.JArray(
+                            validationResult.Violations.Select(v => new JObject
+                            {
+                                ["path"] = v.Path,
+                                ["expected"] = v.Expected,
+                                ["actual"] = v.Actual
+                            }));
+
+                        var invalidArgsPayload = new JObject
+                        {
+                            ["status"] = "error",
+                            ["error"] = new JObject
+                            {
+                                ["code"] = "InvalidArgs",
+                                ["message"] = $"Arguments for tool '{toolName}' failed schema validation.",
+                                ["hint"] = hint,
+                                ["nextSteps"] = new JArray
+                                {
+                                    new JObject
+                                    {
+                                        ["tool"] = "genexus_orient",
+                                        ["args"] = new JObject(),
+                                        ["why"] = "Lists each tool's input schema."
+                                    }
+                                },
+                                ["violations"] = violationsArr
+                            }
+                        };
+
+                        return BuildToolTextResponse(idToken, invalidArgsPayload, isError: true, toolName: toolName, toolArgs: args);
+                    }
+                }
+
+                // Auto-inject 'type' when the LLM omits it but 'name' resolves to a
+                // unique object in the cached index.  Runs AFTER schema pre-validation so
+                // we never inject into a known-bad call.  Mutates args in-place; the
+                // injectedType local is checked after dispatch to annotate the response.
+                string? _autoInjectedType = null;
+                if (!string.IsNullOrEmpty(toolName) && args != null
+                    && AutoTypeInjector.TryInject(toolName, args, out var _ait))
+                {
+                    _autoInjectedType = _ait;
+                    // Keep paramsObj["arguments"] in sync (same ref, but be explicit)
+                    if (paramsObj != null) paramsObj["arguments"] = args;
                 }
 
                 // Friction 2026-05-22: genexus_worker_reload force=true bypasses
@@ -2978,13 +3332,7 @@ namespace GxMcp.Gateway
                             }
 
                             // Return immediately with job_id
-                            var asyncResponse = new JObject
-                            {
-                                ["job_id"] = job.Id,
-                                ["status"] = "running",
-                                ["estimated_seconds"] = estimatedSeconds,
-                                ["hint"] = "Continue with other tools; build status will appear in _meta.background_jobs on the next response. Or pass wait_until_done:true to block until terminal in one turn."
-                            };
+                            var asyncResponse = BuildAsyncLifecycleAcceptedPayload(job, lcAction);
                             return new JObject
                             {
                                 ["isError"] = false,
@@ -3049,11 +3397,8 @@ namespace GxMcp.Gateway
                     int timeoutMs = GetToolTimeoutMs(tName, tArgs);
 
                     // async=true on edit/variable tools → fire-and-forget; result piggybacks via _meta.background_jobs.
-                    bool editAsync = (tArgs?["async"]?.ToObject<bool?>() ?? false) &&
-                                     (string.Equals(tName, "genexus_edit", StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(tName, "genexus_add_variable", StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(tName, "genexus_delete_variable", StringComparison.OrdinalIgnoreCase)
-                                      || string.Equals(tName, "genexus_modify_variable", StringComparison.OrdinalIgnoreCase));
+                    bool editAsync = (tArgs?["async"]?.ToObject<bool?>() ?? false)
+                                     && IsAsyncMutationTool(tName);
                     if (editAsync)
                     {
                         int estEdit = tArgs?["estimated_seconds"]?.ToObject<int?>() ?? 30;
@@ -3064,33 +3409,36 @@ namespace GxMcp.Gateway
                         if (workerCmd?["params"] is JObject capturedParams)
                             capturedParams["cancelToken"] = editJob.Id;
                         var capturedCmd = workerCmd;
-                        var capturedTimeout = timeoutMs;
                         var capturedName = tName;
                         _ = Task.Run(async () =>
                         {
                             try
                             {
                                 var inner = await SendWorkerCommandAsync(
-                                    capturedCmd, capturedTimeout,
+                                    capturedCmd, 0,
                                     $"Timeout waiting for async edit: {capturedName}",
                                     r => r, (_, __) => new JObject { ["status"] = "Running" });
-                                bool ok = inner?["error"] == null &&
-                                          !string.Equals(inner?["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
-                                JobRegistry.Complete(editJob.Id, ok, ok ? "Edit succeeded" : "Edit failed", inner);
+                                bool ok = IsSuccessfulBackgroundToolCompletion(inner);
+                                JobRegistry.Complete(editJob.Id, ok, BuildAsyncMutationCompletionSummary(capturedName, ok), inner);
                             }
                             catch (Exception ex)
                             {
-                                JobRegistry.Complete(editJob.Id, false, $"Edit exception: {ex.Message}");
+                                string failurePrefix = string.Equals(capturedName, "genexus_variable", StringComparison.OrdinalIgnoreCase)
+                                                       || string.Equals(capturedName, "genexus_add_variable", StringComparison.OrdinalIgnoreCase)
+                                                       || string.Equals(capturedName, "genexus_delete_variable", StringComparison.OrdinalIgnoreCase)
+                                                       || string.Equals(capturedName, "genexus_modify_variable", StringComparison.OrdinalIgnoreCase)
+                                    ? "Variable update exception"
+                                    : "Edit exception";
+                                JobRegistry.Complete(editJob.Id, false, $"{failurePrefix}: {ex.Message}");
                                 Log($"[AsyncEdit] Exception in job={editJob.Id}: {ex.Message}");
                             }
                         });
-                        var asyncEditResponse = new JObject
-                        {
-                            ["job_id"] = editJob.Id,
-                            ["status"] = "running",
-                            ["estimated_seconds"] = estEdit,
-                            ["hint"] = "Edit accepted; poll genexus_lifecycle(action='result', target='op:" + editJob.Id + "') or watch _meta.background_jobs."
-                        };
+                        var asyncEditResponse = string.Equals(tName, "genexus_variable", StringComparison.OrdinalIgnoreCase)
+                                                || string.Equals(tName, "genexus_add_variable", StringComparison.OrdinalIgnoreCase)
+                                                || string.Equals(tName, "genexus_delete_variable", StringComparison.OrdinalIgnoreCase)
+                                                || string.Equals(tName, "genexus_modify_variable", StringComparison.OrdinalIgnoreCase)
+                            ? BuildAsyncVariableAcceptedPayload(editJob)
+                            : BuildAsyncEditAcceptedPayload(editJob);
                         return new JObject
                         {
                             ["isError"] = false,
@@ -3117,6 +3465,12 @@ namespace GxMcp.Gateway
                             } catch (Exception exTrunc) {
                                 Log($"[Gateway] Error during truncation: {exTrunc.Message}");
                                 finalResult = resultObj["result"] ?? resultObj["error"];
+                            }
+
+                            if (string.Equals(tName, "genexus_edit_and_build", StringComparison.OrdinalIgnoreCase)
+                                && finalResult is JObject editAndBuildPayload)
+                            {
+                                NormalizeEditAndBuildPayload(editAndBuildPayload);
                             }
 
                             bool isErr = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
@@ -3453,6 +3807,11 @@ namespace GxMcp.Gateway
                 // Item 61: inject _meta.tokens (used/limit/hint) into every tool response
                 // so the LLM can reason about response size and self-paginate.
                 McpRouter.InjectMetaTokens(toolInnerResult);
+
+                // Auto-inject annotation: when we inferred 'type' for this call, surface
+                // it in the payload under _meta.autoInjected so the LLM can self-correct.
+                if (_autoInjectedType != null)
+                    InjectAutoTypeAnnotation(toolInnerResult, _autoInjectedType);
 
                 // Wrap tool result in JSON-RPC envelope
                 return new JObject
@@ -3840,6 +4199,44 @@ namespace GxMcp.Gateway
             return null;
         }
 
+        /// <summary>
+        /// Add <c>_meta.autoInjected: ["type"]</c> to the content text payload of a
+        /// tool result envelope so the LLM sees that gateway inferred the type.
+        /// Does not overwrite any existing <c>_meta</c> structure — merges only.
+        /// </summary>
+        private static void InjectAutoTypeAnnotation(JObject toolInnerResult, string injectedType)
+        {
+            try
+            {
+                var contentArr = toolInnerResult["content"] as JArray;
+                if (contentArr == null || contentArr.Count == 0) return;
+                var firstContent = contentArr[0] as JObject;
+                if (firstContent == null) return;
+
+                string? rawText = firstContent["text"]?.ToString();
+                if (rawText == null) return;
+
+                JObject payload;
+                try { payload = JObject.Parse(rawText); }
+                catch { return; }  // non-JSON text blob — skip
+
+                // Merge into existing _meta or create new
+                if (payload["_meta"] is not JObject meta)
+                {
+                    meta = new JObject();
+                    payload["_meta"] = meta;
+                }
+                meta["autoInjected"] = new JArray("type");
+                meta["autoInjectedType"] = injectedType;
+
+                firstContent["text"] = payload.ToString(Formatting.None);
+            }
+            catch
+            {
+                // Best-effort — never fail a tool call over annotation
+            }
+        }
+
         private static JObject BuildToolTextResponse(JToken? idToken, JToken payload, bool isError, string? toolName = null, JObject? toolArgs = null)
         {
             JToken axiPayload = NormalizeToolPayloadForAxi(payload, toolName ?? "unknown", toolArgs, isError);
@@ -3918,9 +4315,11 @@ namespace GxMcp.Gateway
             }
 
             if (!isError &&
-                string.Equals(obj["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(obj["status"]?.ToString(), "ok", StringComparison.Ordinal) &&
                 obj["noChange"] == null &&
-                string.Equals(obj["details"]?.ToString(), "No change", StringComparison.OrdinalIgnoreCase))
+                (string.Equals(obj["code"]?.ToString(), "NoChange", StringComparison.Ordinal)
+                 || string.Equals(obj["result"]?["noChangeReason"]?.ToString(), "literal_identical", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(obj["details"]?.ToString(), "No change", StringComparison.OrdinalIgnoreCase)))
             {
                 obj["noChange"] = true;
             }

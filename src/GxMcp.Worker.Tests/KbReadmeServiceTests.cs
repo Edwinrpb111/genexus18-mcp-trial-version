@@ -14,7 +14,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new KbReadmeService(kbService: null, indexCacheService: null);
             var json = JObject.Parse(svc.Generate("bogus", null));
-            Assert.Equal("Error", (string)json["status"]!);
+            Assert.Equal("error", (string)json["status"]!);
         }
 
         [Fact]
@@ -22,9 +22,9 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new KbReadmeService(kbService: null, indexCacheService: null);
             var json = JObject.Parse(svc.Generate("generate", null));
-            Assert.Equal("Success", (string)json["status"]!);
-            Assert.NotNull(json["markdown"]);
-            Assert.Contains("Knowledge Base", (string)json["markdown"]!);
+            Assert.Equal("ok", (string)json["status"]!);
+            Assert.NotNull(json["result"]?["markdown"]);
+            Assert.Contains("Knowledge Base", (string)json["result"]!["markdown"]!);
         }
 
         [Fact]
@@ -35,8 +35,8 @@ namespace GxMcp.Worker.Tests
             {
                 var svc = new KbReadmeService(kbService: null, indexCacheService: null);
                 var json = JObject.Parse(svc.Generate("generate", tmp));
-                Assert.Equal("Success", (string)json["status"]!);
-                Assert.Equal(tmp, (string)json["outputPath"]!);
+                Assert.Equal("ok", (string)json["status"]!);
+                Assert.Equal(tmp, (string)json["result"]!["outputPath"]!);
                 Assert.True(File.Exists(tmp));
                 string md = File.ReadAllText(tmp);
                 Assert.Contains("Knowledge Base", md);

@@ -62,16 +62,27 @@ namespace GxMcp.Worker.Services
                     count++;
                 }
 
-                return new JObject { 
-                    ["status"] = "Success", 
-                    ["count"] = count, 
-                    ["results"] = results,
-                    ["duration"] = sw.ElapsedMilliseconds 
-                }.ToString();
+                return McpResponse.Ok(
+                    target: target,
+                    code: "BatchEditCompleted",
+                    result: new JObject
+                    {
+                        ["count"] = count,
+                        ["results"] = results,
+                        ["duration"] = sw.ElapsedMilliseconds
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"BatchEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "BatchEditFailed",
+                    message: "BatchEdit failed: " + ex.Message,
+                    hint: "Check each result item for per-change errors. Retry individual changes that failed.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = target },
+                        why: "Inspect the target object to confirm its parts are available before retrying.")),
+                    target: target);
             }
         }
 
@@ -80,7 +91,7 @@ namespace GxMcp.Worker.Services
             if (action == "Add")
             {
                 _buffer.Add(new BatchItem { Name = name, Code = code });
-                return "{\"status\":\"Buffered\"}";
+                return McpResponse.Ok(target: name, code: "BatchItemBuffered", result: new JObject { ["bufferedCount"] = _buffer.Count });
             }
             else if (action == "Commit")
             {
@@ -91,9 +102,17 @@ namespace GxMcp.Worker.Services
                     count++;
                 }
                 _buffer.Clear();
-                return "{\"status\":\"Committed\", \"count\":" + count + "}";
+                return McpResponse.Ok(target: name, code: "BatchCommitted", result: new JObject { ["count"] = count });
             }
-            return McpResponse.Error("Unknown batch action", name, action, "Supported batch actions are Add and Commit.");
+            return McpResponse.Err(
+                code: "UnknownBatchAction",
+                message: $"Unknown batch action '{action}'.",
+                hint: "Supported batch actions are Add and Commit.",
+                nextSteps: new JArray(McpResponse.NextStep(
+                    tool: "genexus_batch",
+                    args: new JObject { ["action"] = "Add", ["name"] = name },
+                    why: "Use action=Add to queue an item, then action=Commit to flush all buffered writes.")),
+                target: name);
         }
 
         private class BatchItem { public string Name; public string Code; }
@@ -103,7 +122,11 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (items == null || items.Count == 0)
-                    return "{\"status\":\"Error\",\"message\":\"No items provided\"}";
+                    return McpResponse.Err(
+                        code: "NoItemsProvided",
+                        message: "No items provided.",
+                        hint: "Pass a non-empty items array where each entry has name and changes.");
+                // no-nextStep: caller controls the items array; no specific tool call can resolve an empty input
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var allResults = new JArray();
@@ -120,23 +143,33 @@ namespace GxMcp.Worker.Services
                         var parsed = JObject.Parse(result);
                         parsed["object"] = name;
                         allResults.Add(parsed);
-                        totalChanges += parsed["count"]?.ToObject<int>() ?? 0;
+                        // TODO(v2.8.0): caller in BatchService.MultiEdit reads parsed["count"] from inner BatchEdit result
+                        totalChanges += parsed["result"]?["count"]?.ToObject<int>() ?? parsed["count"]?.ToObject<int>() ?? 0;
                     } catch {
                         allResults.Add(new JObject { ["object"] = name, ["error"] = result });
                     }
                 }
 
-                return new JObject {
-                    ["status"] = "Success",
-                    ["objectCount"] = items.Count,
-                    ["totalChanges"] = totalChanges,
-                    ["results"] = allResults,
-                    ["duration"] = sw.ElapsedMilliseconds
-                }.ToString();
+                return McpResponse.Ok(
+                    code: "MultiEditCompleted",
+                    result: new JObject
+                    {
+                        ["objectCount"] = items.Count,
+                        ["totalChanges"] = totalChanges,
+                        ["results"] = allResults,
+                        ["duration"] = sw.ElapsedMilliseconds
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"MultiEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "MultiEditFailed",
+                    message: "MultiEdit failed: " + ex.Message,
+                    hint: "Check the results array for per-object errors and retry failed objects individually.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_edit",
+                        args: new JObject { ["target"] = "<object-name>", ["part"] = "Source" },
+                        why: "Retry a single-object edit to isolate which object caused the failure.")));
             }
         }
         /// <summary>
@@ -219,7 +252,12 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                if (items == null || items.Count == 0) return "{\"status\":\"Error\",\"message\":\"No items provided\"}";
+                if (items == null || items.Count == 0)
+                    return McpResponse.Err(
+                        code: "NoItemsProvided",
+                        message: "No items provided.",
+                        hint: "Pass a non-empty items array where each entry has name and optionally part.");
+                // no-nextStep: caller controls the items array; no specific tool call can resolve an empty input
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 var results = new JArray();
@@ -241,16 +279,25 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return new JObject {
-                    ["status"] = "Success",
-                    ["count"] = results.Count,
-                    ["results"] = results,
-                    ["duration"] = sw.ElapsedMilliseconds
-                }.ToString();
+                return McpResponse.Ok(
+                    code: "BatchReadCompleted",
+                    result: new JObject
+                    {
+                        ["count"] = results.Count,
+                        ["results"] = results,
+                        ["duration"] = sw.ElapsedMilliseconds
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"BatchRead failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "BatchReadFailed",
+                    message: "BatchRead failed: " + ex.Message,
+                    hint: "Check each result item for per-object errors and retry the failed reads individually.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = "<object-name>", ["part"] = "Source" },
+                        why: "Retry a single-object read to isolate which object caused the failure.")));
             }
         }
     }

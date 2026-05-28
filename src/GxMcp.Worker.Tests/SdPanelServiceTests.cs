@@ -17,8 +17,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = NewService();
             var json = JObject.Parse(svc.Dispatch("teleport", "Foo", new JObject()));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("UnknownAction", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("UnknownAction", (string)json["error"]["code"]);
             Assert.Equal("SDPanel", (string)json["kind"]);
         }
 
@@ -27,8 +27,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = NewService();
             var json = JObject.Parse(svc.Inspect(null));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("MissingTarget", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("MissingTarget", (string)json["error"]["code"]);
             Assert.Equal("SDPanel", (string)json["kind"]);
         }
 
@@ -37,8 +37,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = NewService();
             var json = JObject.Parse(svc.Edit(null, new JObject()));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("MissingTarget", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("MissingTarget", (string)json["error"]["code"]);
         }
 
         [Fact]
@@ -46,8 +46,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = NewService();
             var json = JObject.Parse(svc.Create(null, new JObject()));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("MissingTarget", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("MissingTarget", (string)json["error"]["code"]);
         }
     }
 }

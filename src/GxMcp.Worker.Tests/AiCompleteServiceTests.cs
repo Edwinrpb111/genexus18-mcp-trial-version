@@ -18,10 +18,9 @@ namespace GxMcp.Worker.Tests
 
             var j = svc.Complete("MyObj", "Events", "explain this code", 100);
 
-            Assert.Equal("AiEndpointNotConfigured", (string)j["code"]);
-            Assert.NotNull(j["hint"]);
-            // Must NOT include a "status: Success" — the call short-circuited.
-            Assert.Null(j["status"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("AiEndpointNotConfigured", (string)j["error"]?["code"]);
+            Assert.NotNull(j["error"]?["hint"]);
         }
 
         [Fact]
@@ -35,7 +34,8 @@ namespace GxMcp.Worker.Tests
             var svc = new AiCompleteService(http: null, envLookup: Envless(env));
 
             var j = svc.Complete("MyObj", "Events", "", 100);
-            Assert.Equal("InvalidRequest", (string)j["code"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("InvalidRequest", (string)j["error"]?["code"]);
         }
     }
 }

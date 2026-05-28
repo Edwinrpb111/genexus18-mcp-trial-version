@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -61,13 +62,14 @@ namespace GxMcp.Worker.Services
 
             var arr = new JArray();
             foreach (var kv in stubs) arr.Add(kv.Value);
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["linesRead"] = lineNum,
-                ["stubsGenerated"] = arr,
-                ["skipped"] = skipped
-            }.ToString(Formatting.None);
+            return McpResponse.Ok(
+                code: "AutoTestGenerated",
+                result: new JObject
+                {
+                    ["linesRead"] = lineNum,
+                    ["stubsGenerated"] = arr,
+                    ["skipped"] = skipped
+                });
         }
 
         internal static string BuildGxTestStub(string tool, string target, JObject parms)
@@ -105,6 +107,6 @@ namespace GxMcp.Worker.Services
             return sb.ToString();
         }
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Formatting.None);
+        private static string Err(string m) => McpResponse.Err(code: "AutoTestFailed", message: m);
     }
 }

@@ -121,7 +121,7 @@ namespace GxMcp.Worker.Tests
             var svc = new TypeIntrospectService(null, null);
             var json = svc.Run(new JObject { ["action"] = "bogus" });
             var o = JObject.Parse(json);
-            Assert.Equal("Error", (string)o["status"]);
+            Assert.Equal("error", (string)o["status"]);
         }
 
         [Fact]
@@ -130,8 +130,8 @@ namespace GxMcp.Worker.Tests
             var svc = new TypeIntrospectService(null, null);
             var json = svc.Run(new JObject { ["action"] = "list" });
             var o = JObject.Parse(json);
-            Assert.Equal("Success", (string)o["status"]);
-            Assert.Equal(0, (int)o["count"]);
+            Assert.Equal("ok", (string)o["status"]);
+            Assert.Equal(0, (int)o["result"]["count"]);
         }
     }
 }

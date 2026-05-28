@@ -99,35 +99,30 @@ namespace GxMcp.Worker.Services
         public string Diff(string target, string against)
         {
             if (string.IsNullOrEmpty(target))
-                return Models.McpResponse.Error("MissingTarget", target, null, "target object name is required.");
+                return Models.McpResponse.Err(code: "MissingTarget", message: "target object name is required.", hint: "Pass the name of the KB object to diff.", nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep("genexus_list_objects", null, "List available objects to find the correct name.")), target: target);
 
             string baseline = (against ?? "last-build").Trim().ToLowerInvariant();
             if (baseline != "last-build" && baseline != "git-head")
-                return Models.McpResponse.Error("InvalidAgainst", target, null,
-                    "against must be 'last-build' or 'git-head'.");
+                return Models.McpResponse.Err(code: "InvalidAgainst", message: "against must be 'last-build' or 'git-head'.", hint: "Pass against='last-build' or against='git-head'.", nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep("genexus_diff_generated", new JObject { ["name"] = target, ["against"] = "last-build" }, "Retry with a valid against value.")), target: target);
 
             string kbPath = null;
             try { kbPath = _kbService?.GetKbPath(); } catch { }
             if (string.IsNullOrEmpty(kbPath) || !Directory.Exists(kbPath))
             {
-                return Models.McpResponse.Error("KbPathUnknown", target, null,
-                    "No KB is currently open or KB path does not exist.");
+                return Models.McpResponse.Err(code: "KbPathUnknown", message: "No KB is currently open or KB path does not exist.", hint: "Open a KB first via genexus_kb action=open.", nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep("genexus_kb", new JObject { ["action"] = "open" }, "Open a KB before calling diff.")), target: target);
             }
 
             // Locate current generated files for the object.
             var currentFiles = FindGeneratedFiles(kbPath, target);
             if (currentFiles.Count == 0)
             {
-                var emptyEnvelope = new JObject
+                return Models.McpResponse.Ok(target: target, code: "NoGeneratedFiles", result: new JObject
                 {
-                    ["status"] = "Success",
-                    ["target"] = target,
                     ["against"] = baseline,
                     ["files"] = new JArray(),
                     ["totalChangedLines"] = 0,
                     ["note"] = "No generated files found for the object. Build the KB first."
-                };
-                return emptyEnvelope.ToString(Newtonsoft.Json.Formatting.None);
+                });
             }
 
             JArray files = new JArray();
@@ -137,8 +132,7 @@ namespace GxMcp.Worker.Services
             {
                 if (!_git.IsGitRepo(kbPath))
                 {
-                    return Models.McpResponse.Error("KbNotInGit", target, null,
-                        "KB path is not inside a git working tree.");
+                    return Models.McpResponse.Err(code: "KbNotInGit", message: "KB path is not inside a git working tree.", hint: "Initialize a git repository in the KB directory before using against='git-head'.", nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep("genexus_diff_generated", new JObject { ["name"] = target, ["against"] = "last-build" }, "Use against='last-build' instead of git-head.")), target: target);
                 }
                 foreach (var file in currentFiles)
                 {
@@ -167,15 +161,12 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            var envelope = new JObject
+            return Models.McpResponse.Ok(target: target, code: "DiffOk", result: new JObject
             {
-                ["status"] = "Success",
-                ["target"] = target,
                 ["against"] = baseline,
                 ["files"] = files,
                 ["totalChangedLines"] = totalChangedLines
-            };
-            return envelope.ToString(Newtonsoft.Json.Formatting.None);
+            });
         }
 
         /// <summary>

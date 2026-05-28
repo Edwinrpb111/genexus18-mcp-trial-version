@@ -180,8 +180,11 @@ namespace GxMcp.Worker.Services
             // v2.6.6 FR#12 — re-read persisted bytes AFTER the SDK commits so
             // return_post_state slices reflect on-disk reality, not the
             // in-memory write buffer that the v2.6.4 regression captured.
-            bool writeOk = string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(writeJson["status"]?.ToString(), "Ok", StringComparison.OrdinalIgnoreCase);
+            var writeStatus = writeJson["status"]?.ToString();
+            bool writeOk = string.Equals(writeStatus, "Success", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "Ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "partial", StringComparison.OrdinalIgnoreCase);
             string persistedAfter = writeOk ? ReadPersistedPartSafely(target, partName) : null;
 
             var resp = new JObject
@@ -294,8 +297,11 @@ namespace GxMcp.Worker.Services
             catch { writeJson = new JObject { ["raw"] = writeResult }; }
 
             // v2.6.6 FR#12 — see ApplySemanticOpsCore for the rationale.
-            bool writeOk = string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(writeJson["status"]?.ToString(), "Ok", StringComparison.OrdinalIgnoreCase);
+            var patchWriteStatus = writeJson["status"]?.ToString();
+            bool writeOk = string.Equals(patchWriteStatus, "Success", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(patchWriteStatus, "Ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(patchWriteStatus, "ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(patchWriteStatus, "partial", StringComparison.OrdinalIgnoreCase);
             string persistedAfter = writeOk ? ReadPersistedPartSafely(target, partName) : null;
 
             var resp = new JObject
@@ -575,20 +581,10 @@ namespace GxMcp.Worker.Services
             // produced the real message (e.g. "src0059: Esperando 'EndFor'..."), surface it as the
             // top-level error instead of the uninformative exception text.
             string enrichedError = WritePolicy.PreferDetailedMessage(ex.Message, sdkMessages, issues);
-            var errorRes = new JObject
-            {
-                ["status"] = "Error",
-                ["message"] = enrichedError
-            };
-            if (!string.Equals(enrichedError, (ex.Message ?? string.Empty).Trim(), System.StringComparison.Ordinal))
-            {
-                errorRes["originalError"] = ex.Message;
-            }
 
-            // Friction-report 05-13 #3: when the SDK fires src0216 ("'Foo' propriedade inválida")
-            // and the variable on the dotted accessor was never declared, the real fix is
-            // genexus_add_variable, not changing the field name. Detect this and surface a
-            // structured hint so the agent doesn't chase the wrong rabbit.
+            // Friction-report 05-13 #3: src0216 undeclared-variable hint.
+            string undeclaredHint = null;
+            JArray undeclaredVarsArr = null;
             try
             {
                 string corpus = (enrichedError ?? string.Empty) + "\n" + (sdkMessages ?? string.Empty);
@@ -597,13 +593,12 @@ namespace GxMcp.Worker.Services
                 {
                     var declared = CollectDeclaredVariableNames(obj);
                     var undeclared = WritePolicy.FindUndeclaredVariablesForSrc0216(corpus, decodedCode, declared);
-                    string hint = WritePolicy.BuildUndeclaredVariableHint(undeclared);
-                    if (!string.IsNullOrEmpty(hint))
+                    undeclaredHint = WritePolicy.BuildUndeclaredVariableHint(undeclared);
+                    if (!string.IsNullOrEmpty(undeclaredHint))
                     {
-                        errorRes["hint"] = hint;
                         var arr = new JArray();
                         foreach (var v in undeclared) arr.Add("&" + v);
-                        errorRes["undeclaredVariables"] = arr;
+                        undeclaredVarsArr = arr;
                     }
                 }
             }
@@ -612,40 +607,35 @@ namespace GxMcp.Worker.Services
                 Logger.Debug("[CreateTransactionErrorResponse] undeclared-var hint failed: " + hintEx.Message);
             }
 
-            if (!string.IsNullOrWhiteSpace(target))
-            {
-                errorRes["target"] = target;
-            }
-
-            if (!string.IsNullOrWhiteSpace(partName))
-            {
-                errorRes["part"] = partName;
-            }
-
-            if (!string.IsNullOrWhiteSpace(stage))
-            {
-                errorRes["stage"] = stage;
-            }
-
-            if (!string.IsNullOrWhiteSpace(retryStrategy))
-            {
-                errorRes["retryStrategy"] = retryStrategy;
-            }
-
             string detailText = WritePolicy.BuildFailureDetails(sdkMessages, issues);
-            if (!string.IsNullOrWhiteSpace(detailText))
-            {
-                errorRes["details"] = detailText;
-            }
+            string hint = undeclaredHint ?? (string.IsNullOrWhiteSpace(detailText) ? null : detailText);
 
-            if (!string.IsNullOrWhiteSpace(sdkMessages))
-            {
-                errorRes["sdkMessages"] = sdkMessages;
-            }
+            var nextSteps = new JArray(
+                McpResponse.NextStep(
+                    tool: "genexus_build",
+                    args: target != null ? new JObject { ["target"] = target } : null,
+                    why: "Building surfaces full SDK diagnostics including the exact line/column of the error."));
 
-            errorRes["stackTrace"] = ex.StackTrace;
-            errorRes["issues"] = issues;
-            return errorRes;
+            var extra = new JObject();
+            if (!string.IsNullOrWhiteSpace(partName)) extra["part"] = partName;
+            if (!string.IsNullOrWhiteSpace(stage)) extra["stage"] = stage;
+            if (!string.IsNullOrWhiteSpace(retryStrategy)) extra["retryStrategy"] = retryStrategy;
+            if (!string.IsNullOrWhiteSpace(detailText)) extra["details"] = detailText;
+            if (!string.IsNullOrWhiteSpace(sdkMessages)) extra["sdkMessages"] = sdkMessages;
+            if (undeclaredVarsArr != null) extra["undeclaredVariables"] = undeclaredVarsArr;
+            extra["stackTrace"] = ex.StackTrace;
+            if (issues != null) extra["issues"] = issues;
+            if (!string.Equals(enrichedError, (ex.Message ?? string.Empty).Trim(), System.StringComparison.Ordinal))
+                extra["originalError"] = ex.Message;
+
+            string errJson = McpResponse.Err(
+                code: "TransactionFailed",
+                message: enrichedError,
+                hint: hint,
+                nextSteps: nextSteps,
+                target: target,
+                extra: extra);
+            return JObject.Parse(errJson);
         }
 
         // Loose equality on the Structure DSL: compare on the set of `Name : Type` tokens,
@@ -762,34 +752,38 @@ namespace GxMcp.Worker.Services
         // IWriteServiceFacade adapter — translates JObject args into the canonical WriteObject call.
         public string WriteObject(string target, JObject args)
         {
-            string mode = args?["mode"]?.ToString();
-            string action = string.Equals(mode, "patch", StringComparison.OrdinalIgnoreCase) ? "WritePatch" : "WriteObject";
-            JObject payload = args?["content"] as JObject;
-            if (payload == null && args?["content"] != null)
-            {
-                payload = new JObject { ["text"] = args["content"].ToString() };
-            }
-            if (payload == null) payload = new JObject();
+            var facadeArgs = NormalizeFacadeArgs(args);
 
-            // Per-target serialization happens inside the string overload so every
-            // entry point (this facade, PatchService's writes, BulkWrite item loop)
-            // shares the same lock and Stale-detection signal.
-            //
-            // Friction 2026-05-26 — accept validate=="only" as a synonym for
-            // dryRun=true so PatternInstance / visual writes inherit the same
-            // contract that mode=patch and mode=ops already honour.
-            string facadeValidate = args?["validate"]?.ToString();
-            bool facadeDryRun = (args?["dryRun"]?.ToObject<bool?>() ?? false)
-                || string.Equals(facadeValidate, "only", StringComparison.OrdinalIgnoreCase);
-            string raw = WriteObject(
-                target,
-                action,
-                payload?.ToString(),
-                args?["type"]?.ToString(),
-                true,
-                false,
-                true,
-                facadeDryRun);
+            string raw;
+            if (string.Equals(facadeArgs.Mode, "patch", StringComparison.OrdinalIgnoreCase))
+            {
+                var patchService = new PatchService(_objectService, this, _patternAnalysisService);
+                raw = patchService.ApplyPatch(
+                    target,
+                    facadeArgs.PartName,
+                    facadeArgs.Operation,
+                    facadeArgs.Content,
+                    facadeArgs.Context,
+                    facadeArgs.ExpectedCount,
+                    facadeArgs.TypeFilter,
+                    facadeArgs.DryRun,
+                    facadeArgs.VerifyRollback,
+                    facadeArgs.ReturnPostState,
+                    facadeArgs.Verbose,
+                    facadeArgs.ReplaceAll);
+            }
+            else
+            {
+                raw = WriteObject(
+                    target,
+                    facadeArgs.PartName,
+                    facadeArgs.Content,
+                    facadeArgs.TypeFilter,
+                    true,
+                    false,
+                    true,
+                    facadeArgs.DryRun);
+            }
 
             // Friction 2026-05-22: KBs default to WIN1252 (codepage 1252) on
             // Windows. When the caller writes content containing chars outside
@@ -799,7 +793,7 @@ namespace GxMcp.Worker.Services
             // building.
             try
             {
-                var unrepresentable = CollectNonWin1252Glyphs(args);
+                    var unrepresentable = CollectNonWin1252Glyphs(args);
                 if (unrepresentable.Count > 0)
                 {
                     var parsed = JObject.Parse(raw);
@@ -839,6 +833,60 @@ namespace GxMcp.Worker.Services
                 Logger.Debug("[CHARSET-WARN] skipped: " + ex.Message);
             }
             return raw;
+        }
+
+        internal static FacadeWriteArgs NormalizeFacadeArgs(JObject args)
+        {
+            args = args ?? new JObject();
+
+            string facadeValidate = args["validate"]?.ToString();
+            bool facadeDryRun = (args["dryRun"]?.ToObject<bool?>() ?? false)
+                || string.Equals(facadeValidate, "only", StringComparison.OrdinalIgnoreCase);
+
+            string mode = args["mode"]?.ToString();
+            string partName = args["part"]?.ToString() ?? "Source";
+            string typeFilter = args["type"]?.ToString();
+            string operation = args["operation"]?.ToString() ?? "Replace";
+            string context = args["context"]?.ToString();
+            string content = args["content"]?.ToString() ?? string.Empty;
+
+            if (args["content"] is JObject patchShape && string.Equals(mode, "patch", StringComparison.OrdinalIgnoreCase))
+            {
+                context = patchShape["find"]?.ToString() ?? context;
+                content = patchShape["replace"]?.ToString() ?? string.Empty;
+            }
+
+            return new FacadeWriteArgs
+            {
+                Mode = mode,
+                PartName = partName,
+                TypeFilter = typeFilter,
+                DryRun = facadeDryRun,
+                Operation = operation,
+                Context = context,
+                Content = content,
+                ExpectedCount = args["expectedCount"]?.ToObject<int?>() ?? 1,
+                VerifyRollback = args["verifyRollback"]?.ToObject<bool?>() ?? false,
+                ReturnPostState = args["return_post_state"]?.ToObject<bool?>() ?? true,
+                Verbose = args["verbose"]?.ToObject<bool?>() ?? false,
+                ReplaceAll = args["replaceAll"]?.ToObject<bool?>() ?? false
+            };
+        }
+
+        internal sealed class FacadeWriteArgs
+        {
+            public string Mode { get; set; }
+            public string PartName { get; set; }
+            public string TypeFilter { get; set; }
+            public bool DryRun { get; set; }
+            public string Operation { get; set; }
+            public string Context { get; set; }
+            public string Content { get; set; }
+            public int ExpectedCount { get; set; }
+            public bool VerifyRollback { get; set; }
+            public bool ReturnPostState { get; set; }
+            public bool Verbose { get; set; }
+            public bool ReplaceAll { get; set; }
         }
 
         // Returns a deduped list of glyphs in the args payload that cannot
@@ -1071,15 +1119,16 @@ namespace GxMcp.Worker.Services
                                 ["parentPath"] = c.ParentPath ?? c.Path ?? string.Empty
                             });
                         }
-                        return new JObject
-                        {
-                            ["status"] = "Error",
-                            ["message"] = "Ambiguous object name",
-                            ["target"] = target,
-                            ["suggestion"] = "Disambiguate by passing 'type' or by using a fully-qualified parentPath.",
-                            ["alternatives"] = alternatives,
-                            ["hint"] = "Retry with one of the alternatives' (name, type) pairs."
-                        }.ToString();
+                        return McpResponse.Err(
+                            code: "AmbiguousObjectName",
+                            message: "Ambiguous object name",
+                            hint: "Disambiguate by passing 'type' or by using a fully-qualified parentPath. Retry with one of the alternatives' (name, type) pairs.",
+                            nextSteps: new JArray(McpResponse.NextStep(
+                                tool: "genexus_list_objects",
+                                args: new JObject { ["name"] = target },
+                                why: "Lists all objects matching the name with their type so you can pass the correct type parameter.")),
+                            target: target,
+                            extra: new JObject { ["alternatives"] = alternatives });
                     }
                 }
 
@@ -1108,12 +1157,14 @@ namespace GxMcp.Worker.Services
 
                 if (dryRun)
                 {
-                    return Models.McpResponse.Success("Write", target, new JObject
-                    {
-                        ["status"] = "DryRun",
-                        ["part"] = partName,
-                        ["details"] = "Dry-run for non-pattern/visual parts: input received; not validated against SDK. Save skipped."
-                    });
+                    return Models.McpResponse.Ok(
+                        target: target,
+                        code: "WriteDryRun",
+                        result: new JObject
+                        {
+                            ["part"] = partName,
+                            ["details"] = "Dry-run for non-pattern/visual parts: input received; not validated against SDK. Save skipped."
+                        });
                 }
 
                 // ... (rest of the log)
@@ -1197,10 +1248,21 @@ namespace GxMcp.Worker.Services
                             {
                                 okPayload["persistedVerified"] = true;
                             }
-                            return Models.McpResponse.Success("Write", target, okPayload);
+                            return Models.McpResponse.Ok(
+                                target: target,
+                                code: "WriteApplied",
+                                result: okPayload);
                         } catch (Exception ex) {
                             Logger.Error("[DEBUG-SAVE] Error parsing Structure DSL: " + ex.Message);
-                            return Models.McpResponse.Error($"Invalid Structure Syntax: {ex.Message}", target);
+                            return Models.McpResponse.Err(
+                                code: "StructureSyntaxInvalid",
+                                message: $"Invalid Structure Syntax: {ex.Message}",
+                                hint: "Check the DSL for typos in attribute names or type identifiers. Re-read the object to see its current Structure before editing.",
+                                nextSteps: new JArray(McpResponse.NextStep(
+                                    tool: "genexus_read",
+                                    args: new JObject { ["name"] = target, ["part"] = "Structure" },
+                                    why: "Returns the current Structure DSL so you can diff against your attempted change.")),
+                                target: target);
                         }
                     }
                 }
@@ -1222,7 +1284,10 @@ namespace GxMcp.Worker.Services
                     WritePolicy.IsUnchangedSourceWrite(existingSourcePart.Source, decodedCode))
                 {
                     Logger.Info("[DEBUG-SAVE] Content is identical. Skipping validation and Save.");
-                    return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "No change" });
+                    return Models.McpResponse.Ok(
+                        target: target,
+                        code: "WriteNoChange",
+                        result: new JObject { ["details"] = "No change" });
                 }
 
                 // Nirvana v19.4: Auto-Healing (Pre-save validation)
@@ -1344,20 +1409,20 @@ namespace GxMcp.Worker.Services
                                 saveMethod.Invoke(obj, null);
                                 ScheduleFlush();
                                 _objectService.MarkReadCacheDirty(obj, partName);
-                                return Models.McpResponse.Success("Write", target, new JObject
-                                {
-                                    ["fastPath"] = "save_without_transaction"
-                                });
+                                return Models.McpResponse.Ok(
+                                    target: target,
+                                    code: "WriteApplied",
+                                    result: new JObject { ["fastPath"] = "save_without_transaction" });
                             }
 
                             Logger.Info("[DEBUG-SAVE] Fast persistence path fallback: obj.EnsureSave(false) without explicit transaction.");
                             obj.EnsureSave(false);
                             ScheduleFlush();
                             _objectService.MarkReadCacheDirty(obj, partName);
-                            return Models.McpResponse.Success("Write", target, new JObject
-                            {
-                                ["fastPath"] = "ensure_save_without_transaction"
-                            });
+                            return Models.McpResponse.Ok(
+                                target: target,
+                                code: "WriteApplied",
+                                result: new JObject { ["fastPath"] = "ensure_save_without_transaction" });
                         }
                         catch (Exception fastEx)
                         {
@@ -1542,7 +1607,10 @@ namespace GxMcp.Worker.Services
                                         }
                                     }
                                 };
-                                return Models.McpResponse.Success("Write", target, warnPayload);
+                                return Models.McpResponse.Ok(
+                                    target: target,
+                                    code: "WriteApplied",
+                                    result: warnPayload);
                             }
                         }
                     }
@@ -1551,7 +1619,7 @@ namespace GxMcp.Worker.Services
                         Logger.Debug("[SPC0150] preflight scan skipped: " + spcEx.Message);
                     }
 
-                    return Models.McpResponse.Success("Write", target);
+                    return Models.McpResponse.Ok(target: target, code: "WriteApplied");
                 }
                 catch (Exception saveEx)
                 {
@@ -1582,20 +1650,28 @@ namespace GxMcp.Worker.Services
             string baseMessage = ex?.Message ?? string.Empty;
             string enriched = WritePolicy.PreferDetailedMessage(baseMessage, sdkMsgs, issues);
             string display = string.IsNullOrEmpty(prefix) ? enriched : prefix + ": " + enriched;
-            var payload = new JObject
-            {
-                ["status"] = "Error",
-                ["message"] = display
-            };
+
+            var extra = new JObject();
+            if (!string.IsNullOrWhiteSpace(partName)) extra["part"] = partName;
+            if (!string.IsNullOrWhiteSpace(sdkMsgs)) extra["sdkMessages"] = sdkMsgs;
+            if (issues != null && issues.Count > 0) extra["issues"] = issues;
             if (!string.Equals(enriched, baseMessage.Trim(), System.StringComparison.Ordinal))
-            {
-                payload["originalError"] = baseMessage;
-            }
-            if (!string.IsNullOrWhiteSpace(target)) payload["target"] = target;
-            if (!string.IsNullOrWhiteSpace(partName)) payload["part"] = partName;
-            if (!string.IsNullOrWhiteSpace(sdkMsgs)) payload["sdkMessages"] = sdkMsgs;
-            if (issues != null && issues.Count > 0) payload["issues"] = issues;
-            return payload;
+                extra["originalError"] = baseMessage;
+
+            var nextSteps = new JArray(
+                McpResponse.NextStep(
+                    tool: "genexus_build",
+                    args: target != null ? new JObject { ["target"] = target } : null,
+                    why: "Building surfaces full SDK diagnostics for the failing object."));
+
+            string errJson = McpResponse.Err(
+                code: "SdkSaveFailed",
+                message: display,
+                hint: "Check sdkMessages and issues for the root SDK error; fix and retry.",
+                nextSteps: nextSteps,
+                target: target,
+                extra: extra);
+            return JObject.Parse(errJson);
         }
 
         private string CreateWriteError(
@@ -1607,65 +1683,68 @@ namespace GxMcp.Worker.Services
             GxMcp.Worker.Helpers.XmlEquivalenceDiff structuredDiff = null,
             string code = null)
         {
-            var response = new JObject
-            {
-                ["status"] = "Error",
-                ["message"] = error
-            };
-
-            // Friction 2026-05-26 — stable machine-readable code so agents can
-            // dispatch on the failure class (e.g. PatternInvalidXml vs
-            // PatternVerificationMismatch) without parsing the human message.
-            if (!string.IsNullOrWhiteSpace(code))
-            {
-                response["code"] = code;
-            }
-
+            // Build verifyDiff for extra block when a structured diff is available.
+            JObject verifyDiffObj = null;
             if (structuredDiff != null)
             {
-                var d = new JObject();
-                if (!string.IsNullOrEmpty(structuredDiff.ElementName)) d["element"] = structuredDiff.ElementName;
-                if (!string.IsNullOrEmpty(structuredDiff.Path)) d["path"] = structuredDiff.Path;
+                verifyDiffObj = new JObject();
+                if (!string.IsNullOrEmpty(structuredDiff.ElementName)) verifyDiffObj["element"] = structuredDiff.ElementName;
+                if (!string.IsNullOrEmpty(structuredDiff.Path)) verifyDiffObj["path"] = structuredDiff.Path;
                 if (structuredDiff.RejectedAttributes != null && structuredDiff.RejectedAttributes.Length > 0)
-                    d["rejectedAttributes"] = new JArray(structuredDiff.RejectedAttributes);
+                    verifyDiffObj["rejectedAttributes"] = new JArray(structuredDiff.RejectedAttributes);
                 if (structuredDiff.AddedAttributes != null && structuredDiff.AddedAttributes.Length > 0)
-                    d["addedAttributes"] = new JArray(structuredDiff.AddedAttributes);
-                if (structuredDiff.LeftAttributes != null) d["persistedAttributes"] = new JArray(structuredDiff.LeftAttributes);
-                if (structuredDiff.RightAttributes != null) d["requestedAttributes"] = new JArray(structuredDiff.RightAttributes);
-                response["verifyDiff"] = d;
+                    verifyDiffObj["addedAttributes"] = new JArray(structuredDiff.AddedAttributes);
+                if (structuredDiff.LeftAttributes != null) verifyDiffObj["persistedAttributes"] = new JArray(structuredDiff.LeftAttributes);
+                if (structuredDiff.RightAttributes != null) verifyDiffObj["requestedAttributes"] = new JArray(structuredDiff.RightAttributes);
             }
 
-            if (!string.IsNullOrWhiteSpace(target))
-            {
-                response["target"] = target;
-            }
+            // Build hint from suggestion and nextSteps from availableParts.
+            string hint = BuildSuggestion(error, partName);
 
-            if (!string.IsNullOrWhiteSpace(partName))
-            {
-                response["part"] = partName;
-            }
-
-            if (!string.IsNullOrWhiteSpace(details))
-            {
-                response["details"] = details;
-            }
-
+            JArray nextSteps = null;
+            JArray availablePartsArr = null;
             if (obj != null)
             {
-                response["objectName"] = obj.Name;
-                response["objectType"] = obj.TypeDescriptor?.Name;
-
-                var availableParts = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
-                if (availableParts.Length > 0)
+                var apArr = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+                if (apArr.Length > 0)
                 {
-                    response["availableParts"] = new JArray(availableParts);
+                    availablePartsArr = new JArray(apArr);
+                    if (hint == null)
+                        hint = "This object exposes parts: " + string.Join(", ", apArr) + ". Pass one of these as 'part'.";
+                    nextSteps = new JArray(
+                        McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = obj.Name },
+                            why: "Returns availableParts so the next write picks a valid part name."));
                 }
             }
+            if (nextSteps == null)
+            {
+                nextSteps = new JArray(
+                    McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: target != null ? new JObject { ["name"] = target } : null,
+                        why: "Inspect the object to determine the correct part or type."));
+            }
 
-            var suggestion = BuildSuggestion(error, partName);
-            if (!string.IsNullOrEmpty(suggestion)) response["suggestion"] = suggestion;
+            var extra = new JObject();
+            if (!string.IsNullOrWhiteSpace(partName)) extra["part"] = partName;
+            if (!string.IsNullOrWhiteSpace(details)) extra["details"] = details;
+            if (obj != null)
+            {
+                extra["objectName"] = obj.Name;
+                extra["objectType"] = obj.TypeDescriptor?.Name;
+            }
+            if (availablePartsArr != null) extra["availableParts"] = availablePartsArr;
+            if (verifyDiffObj != null) extra["verifyDiff"] = verifyDiffObj;
 
-            return response.ToString();
+            return McpResponse.Err(
+                code: code ?? "WriteFailed",
+                message: error,
+                hint: hint,
+                nextSteps: nextSteps,
+                target: target,
+                extra: extra);
         }
 
         private static string BuildSuggestion(string error, string partName)
@@ -1719,7 +1798,7 @@ namespace GxMcp.Worker.Services
                     rollbackResults.Add(new JObject
                     {
                         ["target"] = item.Name,
-                        ["status"] = "Error",
+                        ["itemStatus"] = "Error",
                         ["message"] = "Snapshot bytes unreadable; rollback skipped."
                     });
                     continue;
@@ -1734,7 +1813,7 @@ namespace GxMcp.Worker.Services
                     rollbackResults.Add(new JObject
                     {
                         ["target"] = item.Name,
-                        ["status"] = "Error",
+                        ["itemStatus"] = "Error",
                         ["message"] = "Rollback write threw: " + rex.Message
                     });
                     continue;
@@ -1744,7 +1823,7 @@ namespace GxMcp.Worker.Services
                 rollbackResults.Add(new JObject
                 {
                     ["target"] = item.Name,
-                    ["status"] = string.Equals(rstatus, "Error", StringComparison.OrdinalIgnoreCase) ? "Error" : "Restored",
+                    ["itemStatus"] = string.Equals(rstatus, "Error", StringComparison.OrdinalIgnoreCase) ? "Error" : "Restored",
                     ["detail"] = rparsed
                 });
             }
@@ -1756,7 +1835,14 @@ namespace GxMcp.Worker.Services
         {
             var items = args?["targets"] as JArray;
             if (items == null || items.Count == 0)
-                return new JObject { ["status"] = "Error", ["message"] = "targets[] required" }.ToString();
+                return McpResponse.Err(
+                    code: "MissingParameter",
+                    message: "targets[] required",
+                    hint: "Supply an array of {name, part?, content} items under 'targets'.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_edit",
+                        args: new JObject { ["name"] = "<target>", ["part"] = "Source", ["content"] = "<code>" },
+                        why: "Use genexus_edit for single-object writes; genexus_bulk_edit for multi-object batches.")));
 
             bool stopOnError = args?["stopOnError"]?.ToObject<bool?>() ?? true;
             bool dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
@@ -1777,7 +1863,9 @@ namespace GxMcp.Worker.Services
             {
                 if (failure > 0 && stopOnError && !transactional)
                 {
-                    results.Add(new JObject { ["status"] = "Skipped", ["target"] = it?["name"]?.ToString() });
+                    results.Add(JObject.Parse(McpResponse.Ok(
+                        target: it?["name"]?.ToString(),
+                        code: "WriteSkipped")));
                     skipped++;
                     continue;
                 }
@@ -1788,7 +1876,11 @@ namespace GxMcp.Worker.Services
                 var itemDryRun = it?["dryRun"]?.ToObject<bool?>() ?? dryRun;
                 if (string.IsNullOrEmpty(name) || content == null)
                 {
-                    results.Add(new JObject { ["status"] = "Error", ["message"] = "missing name or content", ["target"] = name });
+                    results.Add(JObject.Parse(McpResponse.Err(
+                        code: "MissingParameter",
+                        message: "missing name or content",
+                        hint: "Each item in targets[] must have 'name' and 'content'.",
+                        target: name)));
                     failure++;
                     if (transactional) { failedAt = name; break; }
                     continue;
@@ -1807,7 +1899,9 @@ namespace GxMcp.Worker.Services
                 results.Add(parsed);
 
                 var status = (parsed as JObject)?["status"]?.ToString();
-                if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+                bool isError = string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(status, "error", StringComparison.OrdinalIgnoreCase);
+                if (isError)
                 {
                     failure++;
                     if (transactional)
@@ -1848,16 +1942,20 @@ namespace GxMcp.Worker.Services
                 foreach (var r in rollbackResults)
                 {
                     var s = r["status"]?.ToString();
-                    if (string.Equals(s, "Error", StringComparison.OrdinalIgnoreCase)) rollbackErrors++;
+                    if (string.Equals(s, "Error", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(s, "error", StringComparison.OrdinalIgnoreCase)) rollbackErrors++;
                 }
                 bool rollbackSucceeded = rollbackErrors == 0;
-                string topStatus = rollbackSucceeded
-                    ? "RolledBack"
-                    : (rollbackErrors == rollbackResults.Count ? "RollbackFailed" : "RollbackPartial");
+                string rollbackCode = rollbackSucceeded ? "BulkWriteRolledBack"
+                    : (rollbackErrors == rollbackResults.Count ? "BulkRollbackFailed" : "BulkRollbackPartial");
 
-                var rollbackEnvelope = new JObject
+                // Return as error when rollback succeeded (batch failed), partial when rollback itself partially failed.
+                string rollbackHint = rollbackSucceeded
+                    ? "Transactional batch failed at '" + failedAt + "'; all prior writes were rolled back successfully."
+                    : "KB may be in a half-restored state. Inspect rollbackResults items and consider genexus_undo on affected targets.";
+
+                var rollbackResultObj = new JObject
                 {
-                    ["status"] = topStatus,
                     ["rollbackSucceeded"] = rollbackSucceeded,
                     ["failedAt"] = failedAt,
                     ["successfulBeforeFailure"] = new JArray(rollbackPlan.Select(r => (JToken)r.Name).ToArray()),
@@ -1870,25 +1968,54 @@ namespace GxMcp.Worker.Services
                     ["results"] = results,
                     ["rollbackResults"] = rollbackResults
                 };
-                if (!rollbackSucceeded)
+                GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(rollbackResultObj, SummarizeBulkSdkPath(results));
+
+                if (rollbackSucceeded)
                 {
-                    rollbackEnvelope["hint"] = "KB may be in a half-restored state. Inspect rollbackResults[].status='Error' entries and consider genexus_undo on the affected targets.";
+                    // All rolled back — emit as error.
+                    return McpResponse.Err(
+                        code: rollbackCode,
+                        message: "Transactional bulk write failed at '" + failedAt + "'; all prior writes rolled back.",
+                        hint: rollbackHint,
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = failedAt },
+                            why: "Inspect the failing object to diagnose why the write was rejected.")),
+                        target: failedAt,
+                        extra: rollbackResultObj);
                 }
-                GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(rollbackEnvelope, SummarizeBulkSdkPath(results));
-                return rollbackEnvelope.ToString();
+                else
+                {
+                    // Rollback itself partially failed — partial.
+                    string partialStr = McpResponse.Partial(
+                        target: failedAt,
+                        code: rollbackCode,
+                        result: rollbackResultObj,
+                        warnings: new JArray(new JObject { ["code"] = "RollbackPartialFailure", ["message"] = rollbackHint }));
+                    return partialStr;
+                }
             }
 
-            var bulkEnvelope = new JObject
+            string bulkCode = failure == 0 ? "BulkWriteCompleted" : "BulkWritePartial";
+            var bulkResult = new JObject
             {
-                ["status"] = failure == 0 ? "Success" : "PartialFailure",
                 ["counts"] = new JObject { ["success"] = success, ["failure"] = failure, ["skipped"] = skipped },
                 ["results"] = results,
             };
             // Bulk inherits whatever each item's sdkPath was: when all match, tag the bulk
             // with that value; when they differ, tag "hybrid" so observability captures the mix.
             string bulkSdkPath = SummarizeBulkSdkPath(results);
-            GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(bulkEnvelope, bulkSdkPath);
-            return bulkEnvelope.ToString();
+            GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(bulkResult, bulkSdkPath);
+
+            if (failure == 0)
+                return McpResponse.Ok(code: bulkCode, result: bulkResult);
+            else
+                return McpResponse.Partial(target: null, code: bulkCode, result: bulkResult,
+                    warnings: new JArray(new JObject
+                    {
+                        ["code"] = "PartialWriteFailure",
+                        ["message"] = $"{failure} of {results.Count} write(s) failed. Inspect results[] for details."
+                    }));
         }
 
         private static string SummarizeBulkSdkPath(JArray results)
@@ -1911,7 +2038,15 @@ namespace GxMcp.Worker.Services
             out global::Artech.Genexus.Common.Variable existing)
         {
             obj = null; varPart = null; existing = null;
-            if (string.IsNullOrEmpty(varName)) return "{\"status\":\"Error\",\"message\": \"Variable name is required.\"}";
+            if (string.IsNullOrEmpty(varName)) return McpResponse.Err(
+                code: "MissingParameter",
+                message: "Variable name is required.",
+                hint: "Pass the variable name without the leading '&'.",
+                nextSteps: new JArray(McpResponse.NextStep(
+                    tool: "genexus_read",
+                    args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                    why: "Lists current variables on the object.")),
+                target: target);
             varName = varName.TrimStart('&');
 
             obj = _objectService.FindObject(target);
@@ -1939,10 +2074,10 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                if (varNames == null) return "{\"status\":\"NoChange\"}";
+                if (varNames == null) return McpResponse.Ok(target: target, code: "WriteNoChange");
                 string firstName = null;
                 foreach (var n in varNames) { firstName = n; break; }
-                if (firstName == null) return "{\"status\":\"NoChange\"}";
+                if (firstName == null) return McpResponse.Ok(target: target, code: "WriteNoChange");
 
                 string scratch = firstName;
                 var err = ResolveVariableTarget(target, ref scratch, out var obj, out var varPart, out _);
@@ -1961,7 +2096,7 @@ namespace GxMcp.Worker.Services
                         continue;
                     }
                     var hit = varPart.Variables.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase));
-                    if (hit == null) { outcomes.Add(new JObject { ["name"] = name, ["status"] = "NoChange" }); missing++; continue; }
+                    if (hit == null) { outcomes.Add(new JObject { ["name"] = name, ["itemStatus"] = "NotFound" }); missing++; continue; }
                     varPart.Variables.Remove(hit);
                     outcomes.Add(new JObject { ["name"] = name, ["status"] = "Removed" });
                     removed++;
@@ -1973,21 +2108,44 @@ namespace GxMcp.Worker.Services
                     ScheduleFlush();
                 }
 
-                return new JObject
-                {
-                    ["status"] = removed > 0 ? "Success" : "NoChange",
-                    ["counts"] = new JObject { ["removed"] = removed, ["refused"] = refused, ["missing"] = missing },
-                    ["outcomes"] = outcomes,
-                }.ToString();
+                return McpResponse.Ok(
+                    target: target,
+                    code: removed > 0 ? "AttributeRemoved" : "WriteNoChange",
+                    result: new JObject
+                    {
+                        ["counts"] = new JObject { ["removed"] = removed, ["refused"] = refused, ["missing"] = missing },
+                        ["outcomes"] = outcomes,
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "DeleteVariableFailed",
+                    message: ex.Message,
+                    hint: "Check that the variable names are correct and not framework-managed.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                        why: "Lists the current variables so you can verify names before retrying.")),
+                    target: target);
             }
         }
 
-        public string DeleteVariable(string target, string varName)
+        public string DeleteVariable(string target, string varName, bool dryRun = false)
         {
+            if (dryRun)
+                return McpResponse.Ok(
+                    target: target,
+                    code: "DryRun",
+                    result: new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["preview"] = new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["action"] = "delete",
+                            ["target"] = target,
+                            ["varName"] = varName
+                        }
+                    });
             var raw = DeleteVariableInternal(target, varName);
             MarkDirtyIfSuccess(raw, target);
             return WrapWithPersistedState(raw, target, "Variables", GxMcp.Worker.Helpers.WriteResultMeta.TypedWriter);
@@ -1995,7 +2153,7 @@ namespace GxMcp.Worker.Services
 
         // v2.6.9 — parse the typed-writer raw response for a Success/NoChange
         // status and mark the target dirty. NoChange does NOT mark dirty (no
-        // edit actually persisted), Success/PartialSuccess do.
+        // edit actually persisted), Success/PartialSuccess/ok do.
         private static void MarkDirtyIfSuccess(string raw, string target)
         {
             if (string.IsNullOrWhiteSpace(raw) || string.IsNullOrWhiteSpace(target)) return;
@@ -2004,7 +2162,9 @@ namespace GxMcp.Worker.Services
                 var jo = Newtonsoft.Json.Linq.JObject.Parse(raw);
                 string status = jo?["status"]?.ToString();
                 if (string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(status, "PartialSuccess", StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(status, "PartialSuccess", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(status, "partial", StringComparison.OrdinalIgnoreCase))
                 {
                     NotePerTargetWrite(target);
                 }
@@ -2020,16 +2180,22 @@ namespace GxMcp.Worker.Services
                 if (err != null) return err;
 
                 if (existing == null)
-                    return "{\"status\": \"NoChange\", \"details\": \"Variable not present; nothing to delete.\"}";
+                    return McpResponse.Ok(
+                        target: target,
+                        code: "WriteNoChange",
+                        result: new JObject { ["details"] = "Variable not present; nothing to delete." });
 
                 if (GxMcp.Worker.Helpers.FrameworkManagedVariables.IsManaged(varName))
                 {
-                    return new JObject
-                    {
-                        ["status"] = "Refused",
-                        ["error"] = "Framework-managed variable",
-                        ["details"] = "Variable '&" + varName + "' is managed by " + GxMcp.Worker.Helpers.FrameworkManagedVariables.GetManagedBy(varName) + " and will be re-injected on save."
-                    }.ToString();
+                    return McpResponse.Err(
+                        code: "FrameworkManagedVariable",
+                        message: "Framework-managed variable",
+                        hint: "Variable '&" + varName + "' is managed by " + GxMcp.Worker.Helpers.FrameworkManagedVariables.GetManagedBy(varName) + " and will be re-injected on save. Do not delete it.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                            why: "Lists the current variables so you can verify which ones are user-defined.")),
+                        target: target);
                 }
 
                 // Snapshot the var's internal id BEFORE Remove() — some SDK
@@ -2057,7 +2223,7 @@ namespace GxMcp.Worker.Services
                     varPart.Variables.Remove(existing);
                     obj.EnsureSave();
                     ScheduleFlush();
-                    return "{\"status\": \"Success\"}";
+                    return McpResponse.Ok(target: target, code: "AttributeRemoved");
                 }
                 catch (Exception saveEx)
                 {
@@ -2068,7 +2234,15 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "DeleteVariableFailed",
+                    message: ex.Message,
+                    hint: "Check that the variable is not bound to controls or used by generated code.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                        why: "Lists current variables to verify state before retrying.")),
+                    target: target);
             }
         }
 
@@ -2113,14 +2287,16 @@ namespace GxMcp.Worker.Services
             }
             catch { /* best-effort — bindings list is advisory */ }
 
-            return new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = "BoundToControls",
-                ["message"] = $"Variable '&{varName}' is bound to one or more controls; remove the bindings before deleting/modifying.",
-                ["details"] = resolved,
-                ["bindings"] = bindings,
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Err(
+                code: "BoundToControls",
+                message: $"Variable '&{varName}' is bound to one or more controls; remove the bindings before deleting/modifying.",
+                hint: "Remove or rebind the controls listed in 'bindings' from the WebForm layout before deleting/modifying this variable.",
+                nextSteps: new JArray(McpResponse.NextStep(
+                    tool: "genexus_read",
+                    args: new JObject { ["name"] = resolved ?? varName, ["part"] = "WebForm" },
+                    why: "Read the WebForm layout to locate and remove the controls bound to this variable.")),
+                target: null,
+                extra: new JObject { ["details"] = resolved, ["bindings"] = bindings });
         }
 
         private static string FlattenExceptionMessages(Exception ex)
@@ -2134,8 +2310,22 @@ namespace GxMcp.Worker.Services
             return sb.ToString();
         }
 
-        public string AddVariable(string target, string varName, string typeName = null)
+        public string AddVariable(string target, string varName, string typeName = null, bool dryRun = false)
         {
+            if (dryRun)
+                return McpResponse.Ok(
+                    target: target,
+                    code: "DryRun",
+                    result: new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["preview"] = new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["action"] = "add",
+                            ["target"] = target,
+                            ["varName"] = varName,
+                            ["typeName"] = typeName
+                        }
+                    });
             var raw = AddVariableInternal(target, varName, typeName);
             MarkDirtyIfSuccess(raw, target);
             return WrapWithPersistedState(raw, target, "Variables", GxMcp.Worker.Helpers.WriteResultMeta.TypedWriter);
@@ -2159,14 +2349,16 @@ namespace GxMcp.Worker.Services
                         var accepted = new JArray();
                         if (resolution.AcceptedList != null)
                             foreach (var a in resolution.AcceptedList) accepted.Add(a);
-                        return new JObject
-                        {
-                            ["status"] = "Error",
-                            ["code"] = "UnknownType",
-                            ["message"] = $"Unknown typeName '{typeName}'. Did you mean '{resolution.Suggestion}'?",
-                            ["suggestion"] = resolution.Suggestion,
-                            ["accepted"] = accepted
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Err(
+                            code: "UnknownType",
+                            message: $"Unknown typeName '{typeName}'. Did you mean '{resolution.Suggestion}'?",
+                            hint: $"Use one of the accepted type names. Nearest match: '{resolution.Suggestion}'.",
+                            nextSteps: new JArray(McpResponse.NextStep(
+                                tool: "genexus_add_variable",
+                                args: new JObject { ["target"] = target, ["varName"] = varName, ["typeName"] = resolution.Suggestion },
+                                why: "Retries the add with the nearest recognized type name.")),
+                            target: target,
+                            extra: new JObject { ["suggestion"] = resolution.Suggestion, ["accepted"] = accepted });
                     }
                     if (resolution.CanonicalType == "DomainReference" && !string.IsNullOrEmpty(resolution.DomainName))
                     {
@@ -2187,7 +2379,10 @@ namespace GxMcp.Worker.Services
                 if (err != null) return err;
 
                 if (existing != null)
-                    return "{\"status\": \"Variable already exists\"}";
+                    return McpResponse.Ok(
+                        target: target,
+                        code: "WriteNoChange",
+                        result: new JObject { ["details"] = "Variable already exists; no change applied." });
 
                 if (!string.IsNullOrEmpty(typeName))
                 {
@@ -2228,13 +2423,16 @@ namespace GxMcp.Worker.Services
                             // potential SDT/BC/Domain reference but SDK couldn't find it in the KB.
                             // Surface a clear UnknownType so the agent knows to check the spelling.
                             // Skip when input had explicit "&" prefix (legacy domain ref behavior).
-                            return new JObject
-                            {
-                                ["status"] = "Error",
-                                ["code"] = "UnknownType",
-                                ["message"] = $"Type '{typeName}' not found in KB. Expected primitive (Character/Numeric/etc), SDT name (e.g. SdtFoo), BC, or Domain.",
-                                ["typeName"] = typeName
-                            }.ToString(Newtonsoft.Json.Formatting.None);
+                            return McpResponse.Err(
+                                code: "UnknownType",
+                                message: $"Type '{typeName}' not found in KB. Expected primitive (Character/Numeric/etc), SDT name (e.g. SdtFoo), BC, or Domain.",
+                                hint: "Verify the SDT/Domain name via genexus_list_objects or use a primitive type like Character(40).",
+                                nextSteps: new JArray(McpResponse.NextStep(
+                                    tool: "genexus_list_objects",
+                                    args: new JObject { ["name"] = typeName },
+                                    why: "Finds SDTs and Domains whose name matches, confirming the correct spelling.")),
+                                target: target,
+                                extra: new JObject { ["typeName"] = typeName });
                         }
                     }
                     varPart.Variables.Add(newVar);
@@ -2248,11 +2446,19 @@ namespace GxMcp.Worker.Services
                 obj.EnsureSave();
                 ScheduleFlush();
 
-                return "{\"status\": \"Success\"}";
+                return McpResponse.Ok(target: target, code: "VariableAdded");
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "AddVariableFailed",
+                    message: ex.Message,
+                    hint: "Verify the variable name and type are valid. Check that the object exists and has a Variables part.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                        why: "Lists current variables to confirm state.")),
+                    target: target);
             }
         }
 
@@ -2261,8 +2467,23 @@ namespace GxMcp.Worker.Services
         // description when possible). Implemented as delete+add over the same
         // VariablesPart, with a snapshot of the pre-change variable set so we
         // can roll back if obj.Save() throws.
-        public string ModifyVariable(string target, string varName, string newTypeName, string basedOn = null)
+        public string ModifyVariable(string target, string varName, string newTypeName, string basedOn = null, bool dryRun = false)
         {
+            if (dryRun)
+                return McpResponse.Ok(
+                    target: target,
+                    code: "DryRun",
+                    result: new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["preview"] = new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["action"] = "modify",
+                            ["target"] = target,
+                            ["varName"] = varName,
+                            ["newTypeName"] = newTypeName,
+                            ["basedOn"] = basedOn
+                        }
+                    });
             var raw = ModifyVariableInternal(target, varName, newTypeName, basedOn);
             MarkDirtyIfSuccess(raw, target);
             return WrapWithPersistedState(raw, target, "Variables", GxMcp.Worker.Helpers.WriteResultMeta.TypedWriter);
@@ -2278,14 +2499,20 @@ namespace GxMcp.Worker.Services
             int? resolvedDecimals = null;
             if (string.IsNullOrEmpty(newTypeName))
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "UnknownType",
-                    ["message"] = "newTypeName is required for genexus_modify_variable.",
-                    ["suggestion"] = "Character(40)",
-                    ["accepted"] = new JArray { "Character(N)", "Numeric(N.D)", "Date", "DateTime", "Boolean", "VarChar(N)", "<DomainName>" }
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "UnknownType",
+                    message: "newTypeName is required for genexus_modify_variable.",
+                    hint: "Pass a valid type such as Character(40), Numeric(8.0), Date, DateTime, Boolean, VarChar(N), or a Domain name.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_modify_variable",
+                        args: new JObject { ["target"] = target, ["varName"] = varName, ["newTypeName"] = "Character(40)" },
+                        why: "Example retry with Character(40).")),
+                    target: target,
+                    extra: new JObject
+                    {
+                        ["suggestion"] = "Character(40)",
+                        ["accepted"] = new JArray { "Character(N)", "Numeric(N.D)", "Date", "DateTime", "Boolean", "VarChar(N)", "<DomainName>" }
+                    });
             }
 
             resolution = GxMcp.Worker.Helpers.VariableTypeResolver.Resolve(newTypeName);
@@ -2294,14 +2521,16 @@ namespace GxMcp.Worker.Services
                 var accepted = new JArray();
                 if (resolution.AcceptedList != null)
                     foreach (var a in resolution.AcceptedList) accepted.Add(a);
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "UnknownType",
-                    ["message"] = $"Unknown typeName '{newTypeName}'. Did you mean '{resolution.Suggestion}'?",
-                    ["suggestion"] = resolution.Suggestion,
-                    ["accepted"] = accepted
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "UnknownType",
+                    message: $"Unknown typeName '{newTypeName}'. Did you mean '{resolution.Suggestion}'?",
+                    hint: $"Use one of the accepted type names. Nearest match: '{resolution.Suggestion}'.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_modify_variable",
+                        args: new JObject { ["target"] = target, ["varName"] = varName, ["newTypeName"] = resolution.Suggestion },
+                        why: "Retries the modify with the nearest recognized type name.")),
+                    target: target,
+                    extra: new JObject { ["suggestion"] = resolution.Suggestion, ["accepted"] = accepted });
             }
 
             if (resolution.CanonicalType == "DomainReference" && !string.IsNullOrEmpty(resolution.DomainName))
@@ -2336,22 +2565,28 @@ namespace GxMcp.Worker.Services
 
                 if (existing == null)
                 {
-                    return new JObject
-                    {
-                        ["status"] = "Error",
-                        ["code"] = "VariableNotFound",
-                        ["message"] = $"Variable '&{varName}' not found on '{target}'."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Err(
+                        code: "VariableNotFound",
+                        message: $"Variable '&{varName}' not found on '{target}'.",
+                        hint: "Read the Variables part to see which variables exist on this object.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                            why: "Lists all declared variables on the object.")),
+                        target: target);
                 }
 
                 if (GxMcp.Worker.Helpers.FrameworkManagedVariables.IsManaged(varName))
                 {
-                    return new JObject
-                    {
-                        ["status"] = "Refused",
-                        ["error"] = "Framework-managed variable",
-                        ["details"] = "Variable '&" + varName + "' is managed by " + GxMcp.Worker.Helpers.FrameworkManagedVariables.GetManagedBy(varName) + " and will be re-injected on save."
-                    }.ToString();
+                    return McpResponse.Err(
+                        code: "FrameworkManagedVariable",
+                        message: "Framework-managed variable",
+                        hint: "Variable '&" + varName + "' is managed by " + GxMcp.Worker.Helpers.FrameworkManagedVariables.GetManagedBy(varName) + " and will be re-injected on save. Do not modify it.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                            why: "Lists current variables so you can identify user-defined ones.")),
+                        target: target);
                 }
 
                 // Snapshot for rollback: capture every variable's identity + shape so we
@@ -2421,12 +2656,14 @@ namespace GxMcp.Worker.Services
                     obj.EnsureSave();
                     ScheduleFlush();
 
-                    return new JObject
-                    {
-                        ["status"] = "Success",
-                        ["details"] = $"Variable '&{varName}' retyped to '{resolution.CanonicalType}" +
-                                      (resolvedLength.HasValue ? "(" + resolvedLength.Value + (resolvedDecimals.HasValue && resolvedDecimals.Value > 0 ? "." + resolvedDecimals.Value : "") + ")" : "") + "'."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Ok(
+                        target: target,
+                        code: "VariableRenamed",
+                        result: new JObject
+                        {
+                            ["details"] = $"Variable '&{varName}' retyped to '{resolution.CanonicalType}" +
+                                          (resolvedLength.HasValue ? "(" + resolvedLength.Value + (resolvedDecimals.HasValue && resolvedDecimals.Value > 0 ? "." + resolvedDecimals.Value : "") + ")" : "") + "'."
+                        });
                 }
                 catch (Exception ex)
                 {
@@ -2455,12 +2692,28 @@ namespace GxMcp.Worker.Services
                     // when the message doesn't match the heuristic.
                     var boundResp = TryBuildBoundToControlsError(ex, obj, varName, existingVarId);
                     if (boundResp != null) return boundResp;
-                    return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                    return McpResponse.Err(
+                        code: "ModifyVariableFailed",
+                        message: ex.Message,
+                        hint: "The modify+save failed; the original variable was restored. Check if the variable is bound to controls.",
+                        nextSteps: new JArray(McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                            why: "Verifies which variables exist after the rollback.")),
+                        target: target);
                 }
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "ModifyVariableFailed",
+                    message: ex.Message,
+                    hint: "Verify the variable name and type are valid.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = "Variables" },
+                        why: "Lists current variables to confirm state.")),
+                    target: target);
             }
         }
 
@@ -2636,20 +2889,18 @@ namespace GxMcp.Worker.Services
                 {
                     var noChangeResp = new JObject
                     {
-                        ["status"] = "NoChange",
                         ["part"] = partName,
                         ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
                     };
                     var noChangeHtmlWarnings = BuildHtmlFormatWarnings(prospectiveGotchas);
                     AttachWarnings(noChangeResp, MergeWarnings(patternShadowWarnings, noChangeHtmlWarnings));
                     if (prospectiveGotchas != null) noChangeResp["layoutGotchas"] = prospectiveGotchas;
-                    return Models.McpResponse.Success("Write", target, noChangeResp);
+                    return Models.McpResponse.Ok(target: target, code: "WriteNoChange", result: noChangeResp);
                 }
                 if (dryRun)
                 {
                     var dryResp = new JObject
                     {
-                        ["status"] = "DryRun",
                         ["part"] = partName,
                         ["details"] = "Dry-run: input parsed and would update visual XML. Save skipped."
                     };
@@ -2665,7 +2916,7 @@ namespace GxMcp.Worker.Services
                         dryResp["warning"] = "Dry-run detected " + suspects.Count + " attribute(s) likely to be sanitised by the SDK on save. See preflightWarnings.";
                     }
                     if (prospectiveGotchas != null) dryResp["layoutGotchas"] = prospectiveGotchas;
-                    return Models.McpResponse.Success("Write", target, dryResp);
+                    return Models.McpResponse.Ok(target: target, code: "WriteDryRun", result: dryResp);
                 }
             }
             catch (Exception ex)
@@ -2673,12 +2924,14 @@ namespace GxMcp.Worker.Services
                 Logger.Debug("[DEBUG-SAVE] Visual no-change precheck skipped: " + ex.Message);
                 if (dryRun)
                 {
-                    return Models.McpResponse.Success("Write", target, new JObject
-                    {
-                        ["status"] = "DryRun",
-                        ["part"] = partName,
-                        ["details"] = "Dry-run: input parsed; current visual read failed (" + ex.Message + "). Save skipped."
-                    });
+                    return Models.McpResponse.Ok(
+                        target: target,
+                        code: "WriteDryRun",
+                        result: new JObject
+                        {
+                            ["part"] = partName,
+                            ["details"] = "Dry-run: input parsed; current visual read failed (" + ex.Message + "). Save skipped."
+                        });
                 }
             }
 
@@ -2784,7 +3037,7 @@ namespace GxMcp.Worker.Services
                     var allWarnings = MergeWarnings(patternShadowWarnings, htmlFormatWarnings);
                     AttachWarnings(okResp, allWarnings);
                     if (prospectiveGotchas != null) okResp["layoutGotchas"] = prospectiveGotchas;
-                    return Models.McpResponse.Success("Write", target, okResp);
+                    return Models.McpResponse.Ok(target: target, code: "WriteApplied", result: okResp);
                 }
                 catch (Exception ex)
                 {
@@ -2849,25 +3102,72 @@ namespace GxMcp.Worker.Services
                         }
                     }
 
-                    var visualErr = CreateWriteError("Visual write failed", target, partName, chain, obj);
-                    if (!string.IsNullOrEmpty(hint) || !string.IsNullOrEmpty(code))
+                    // Friction 2026-05-28 — when we have a typed code, replace the
+                    // bare "Visual write failed" message with one that names the
+                    // specific failure. LLMs that don't parse `code` (most of
+                    // them) still see the actionable text in the human message.
+                    string visualMessage = "Visual write failed";
+                    if (string.Equals(code, "FormTypeTransitionUnsupported", StringComparison.Ordinal))
                     {
-                        try
-                        {
-                            var jo = Newtonsoft.Json.Linq.JObject.Parse(visualErr);
-                            if (!string.IsNullOrEmpty(hint)) jo["hint"] = hint;
-                            if (!string.IsNullOrEmpty(code)) jo["code"] = code;
-                            return jo.ToString();
-                        }
-                        catch { /* fall through to plain envelope */ }
+                        visualMessage = $"Form type transition not supported via this write path "
+                            + $"({currentFormType ?? "?"} → {incomingFormType ?? "?"}). "
+                            + "Use mode='full' with a complete target-type body.";
                     }
-                    return visualErr;
+                    // Build nextSteps and extra from obj availability.
+                    JArray visualNextSteps = new JArray(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = partName ?? "WebForm" },
+                        why: "Re-read the current visual XML before retrying the write."));
+                    var visualExtra = new JObject { ["part"] = partName };
+                    if (!string.IsNullOrEmpty(chain)) visualExtra["details"] = chain;
+                    if (!string.IsNullOrEmpty(currentFormType)) visualExtra["fromFormType"] = currentFormType;
+                    if (!string.IsNullOrEmpty(incomingFormType)) visualExtra["toFormType"] = incomingFormType;
+                    if (obj != null)
+                    {
+                        visualExtra["objectName"] = obj.Name;
+                        visualExtra["objectType"] = obj.TypeDescriptor?.Name;
+                        var apArr = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+                        if (apArr.Length > 0) visualExtra["availableParts"] = new JArray(apArr);
+                    }
+                    return McpResponse.Err(
+                        code: code ?? "VisualWriteFailed",
+                        message: visualMessage,
+                        hint: hint,
+                        nextSteps: visualNextSteps,
+                        target: target,
+                        extra: visualExtra);
                 }
             }
         }
 
         // Walks ex.InnerException so the deepest message — usually the real SDK
         // diagnostic — ends up in the response. Outer wrappers are still surfaced
+        // Friction 2026-05-28 — surface the PatternChildOrderReconciler
+        // report on both DryRun and verify-failed envelopes so the caller
+        // sees which parents the reconciler had to fix (or skip) without
+        // needing live worker logs. validate=only callers rely on this to
+        // catch malformed childrenOrderedList before paying for a write.
+        private static void AttachReconcileReport(
+            JObject envelope,
+            GxMcp.Worker.Helpers.PatternChildOrderReconciler.Report report)
+        {
+            if (envelope == null || report == null || !report.HasContent) return;
+            var jo = new JObject
+            {
+                ["parentsUpdated"] = report.ParentsUpdated
+            };
+            if (report.Changes != null && report.Changes.Count > 0)
+            {
+                jo["changes"] = new JArray(report.Changes);
+            }
+            if (report.Skips != null && report.Skips.Count > 0)
+            {
+                jo["skips"] = new JArray(report.Skips);
+                jo["skipsHint"] = "Reconciler refused to rebuild childrenOrderedList for these parents — the XML is missing identifiers (controlName/Name/attribute) or has an unknown child kind. Fix those entries before retrying.";
+            }
+            envelope["childOrderReconcile"] = jo;
+        }
+
         // but only when they add information beyond the inner message.
         internal static string TryExtractFormType(string xml)
         {
@@ -2948,21 +3248,24 @@ namespace GxMcp.Worker.Services
                 string currentXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out _, out _);
                 if (XmlEquivalence.AreEquivalent(currentXml, normalizedInput, out _))
                 {
-                    return Models.McpResponse.Success("Write", target, new JObject
-                    {
-                        ["status"] = "NoChange",
-                        ["part"] = partName,
-                        ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
-                    });
+                    return Models.McpResponse.Ok(
+                        target: target,
+                        code: "WriteNoChange",
+                        result: new JObject
+                        {
+                            ["part"] = partName,
+                            ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
+                        });
                 }
                 if (dryRun)
                 {
-                    return Models.McpResponse.Success("Write", target, new JObject
+                    var dryResp = new JObject
                     {
-                        ["status"] = "DryRun",
                         ["part"] = partName,
                         ["details"] = "Dry-run: input parsed and would update pattern XML. Save skipped."
-                    });
+                    };
+                    AttachReconcileReport(dryResp, reconcileReport);
+                    return Models.McpResponse.Ok(target: target, code: "WriteDryRun", result: dryResp);
                 }
             }
             catch (Exception ex)
@@ -2970,12 +3273,13 @@ namespace GxMcp.Worker.Services
                 Logger.Debug("[DEBUG-SAVE] Pattern no-change precheck skipped: " + ex.Message);
                 if (dryRun)
                 {
-                    return Models.McpResponse.Success("Write", target, new JObject
+                    var dryResp = new JObject
                     {
-                        ["status"] = "DryRun",
                         ["part"] = partName,
                         ["details"] = "Dry-run: input parsed; current pattern read failed (" + ex.Message + "). Save skipped."
-                    });
+                    };
+                    AttachReconcileReport(dryResp, reconcileReport);
+                    return Models.McpResponse.Ok(target: target, code: "WriteDryRun", result: dryResp);
                 }
             }
 
@@ -3128,17 +3432,52 @@ namespace GxMcp.Worker.Services
                             patternStructured,
                             code: "PatternVerificationMismatch");
                         // Inject snippets + the captured SDK save exception into
-                        // the envelope. sdkSaveError is where the actual SDK
-                        // validator complaint lives when the part-level Save()
-                        // threw before the outer obj.Save(prefs) succeeded — the
-                        // verifier sees a divergence but the agent needs the
-                        // SDK message to know *why* the bytes were rewritten.
+                        // the error sub-object so the canonical envelope shape is maintained.
+                        // sdkSaveError is where the actual SDK validator complaint lives when
+                        // the part-level Save() threw before the outer obj.Save(prefs) succeeded.
                         try
                         {
                             var verifyJobj = JObject.Parse(verifyErr);
-                            if (persistedSnippet != null) verifyJobj["persistedSnippet"] = persistedSnippet;
-                            if (requestedSnippet != null) verifyJobj["requestedSnippet"] = requestedSnippet;
-                            if (sdkSaveError != null) verifyJobj["sdkSaveError"] = sdkSaveError;
+                            var errObj = verifyJobj["error"] as JObject;
+                            if (errObj != null)
+                            {
+                                if (persistedSnippet != null) errObj["persistedSnippet"] = persistedSnippet;
+                                if (requestedSnippet != null) errObj["requestedSnippet"] = requestedSnippet;
+                                if (sdkSaveError != null) errObj["sdkSaveError"] = sdkSaveError;
+                                // Move verifyDiff from top-level into error sub-object per v2.8.0 spec.
+                                if (verifyJobj["verifyDiff"] != null && errObj["verifyDiff"] == null)
+                                {
+                                    errObj["verifyDiff"] = verifyJobj["verifyDiff"];
+                                    verifyJobj.Remove("verifyDiff");
+                                }
+                                // Move childOrderReconcile into error when verification failed.
+                                if (verifyJobj["childOrderReconcile"] != null && errObj["childOrderReconcile"] == null)
+                                {
+                                    errObj["childOrderReconcile"] = verifyJobj["childOrderReconcile"];
+                                    verifyJobj.Remove("childOrderReconcile");
+                                }
+                                // Attach reconcile report under error.childOrderReconcile.
+                                if (reconcileReport != null && reconcileReport.HasContent && errObj["childOrderReconcile"] == null)
+                                {
+                                    var rcObj = new JObject { ["parentsUpdated"] = reconcileReport.ParentsUpdated };
+                                    if (reconcileReport.Changes != null && reconcileReport.Changes.Count > 0)
+                                        rcObj["changes"] = new JArray(reconcileReport.Changes);
+                                    if (reconcileReport.Skips != null && reconcileReport.Skips.Count > 0)
+                                    {
+                                        rcObj["skips"] = new JArray(reconcileReport.Skips);
+                                        rcObj["skipsHint"] = "Reconciler refused to rebuild childrenOrderedList for these parents.";
+                                    }
+                                    errObj["childOrderReconcile"] = rcObj;
+                                }
+                            }
+                            else
+                            {
+                                // Fallback: attach at top level if error obj is missing.
+                                if (persistedSnippet != null) verifyJobj["persistedSnippet"] = persistedSnippet;
+                                if (requestedSnippet != null) verifyJobj["requestedSnippet"] = requestedSnippet;
+                                if (sdkSaveError != null) verifyJobj["sdkSaveError"] = sdkSaveError;
+                                AttachReconcileReport(verifyJobj, reconcileReport);
+                            }
                             return verifyJobj.ToString();
                         }
                         catch
@@ -3201,7 +3540,7 @@ namespace GxMcp.Worker.Services
                                 {
                                     success["projection"] = new JObject
                                     {
-                                        ["status"] = "Projected",
+                                        ["projectionStatus"] = "Projected",
                                         ["parent"] = parentForProjection.Name,
                                         ["parentType"] = parentForProjection.TypeDescriptor?.Name,
                                         ["note"] = "PatternInstance edit was auto-projected onto the parent's WebForm via IPatternBuildProcess.UpdateParentObject."
@@ -3225,7 +3564,7 @@ namespace GxMcp.Worker.Services
                                 {
                                     success["projection"] = new JObject
                                     {
-                                        ["status"] = "Skipped",
+                                        ["projectionStatus"] = "Skipped",
                                         ["parent"] = parentForProjection.Name,
                                         ["note"] = "Projection helper declined — see worker log for details. Edit was persisted; WebForm may need a manual apply_pattern to refresh."
                                     };
@@ -3263,7 +3602,7 @@ namespace GxMcp.Worker.Services
                         success["childrenOrderedListReconciliation"] = ordering;
                     }
 
-                    return Models.McpResponse.Success("Write", target, success);
+                    return Models.McpResponse.Ok(target: target, code: "WriteApplied", result: success);
                 }
                 catch (Exception ex)
                 {

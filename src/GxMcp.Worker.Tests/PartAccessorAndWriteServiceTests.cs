@@ -180,13 +180,13 @@ namespace GxMcp.Worker.Tests
             catch (System.TypeLoadException) { return; }
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("UnknownType", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("UnknownType", obj["error"]?["code"]?.ToString());
             Assert.False(string.IsNullOrEmpty(obj["suggestion"]?.ToString()));
             Assert.NotNull(obj["accepted"]);
             Assert.True(obj["accepted"] is JArray arr && arr.Count > 0);
             // Message mentions the offending input and the suggestion.
-            Assert.Contains("Bogus", obj["message"]?.ToString() ?? "");
+            Assert.Contains("Bogus", obj["error"]?["message"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -210,8 +210,8 @@ namespace GxMcp.Worker.Tests
             // But our gate only runs `if (!string.IsNullOrEmpty(typeName))` — whitespace
             // is technically non-empty, so it enters the resolver and trips the gate.
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("UnknownType", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("UnknownType", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]

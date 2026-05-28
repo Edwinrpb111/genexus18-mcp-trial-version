@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -97,12 +98,11 @@ namespace GxMcp.Worker.Services
                 Logger.Error("TypeIntrospectService.RunList: " + ex.Message);
             }
 
-            return new JObject
+            return McpResponse.Ok(code: "TypeIntrospected", result: new JObject
             {
-                ["status"] = "Success",
                 ["count"] = count,
                 ["items"] = items
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            });
         }
 
         private string RunDescribe(string name)
@@ -111,23 +111,22 @@ namespace GxMcp.Worker.Services
             var info = ReadDomainInfo(name);
             if (info == null) return ErrorJson($"Type '{name}' not found or not a Domain.");
 
-            var r = new JObject
+            var payload = new JObject
             {
-                ["status"] = "Success",
                 ["name"] = info.Name,
                 ["kind"] = info.Kind
             };
-            if (info.BaseType != null) r["baseType"] = info.BaseType;
-            if (info.Length.HasValue) r["length"] = info.Length.Value;
-            if (info.Decimals.HasValue) r["decimals"] = info.Decimals.Value;
-            if (info.Signed.HasValue) r["signed"] = info.Signed.Value;
+            if (info.BaseType != null) payload["baseType"] = info.BaseType;
+            if (info.Length.HasValue) payload["length"] = info.Length.Value;
+            if (info.Decimals.HasValue) payload["decimals"] = info.Decimals.Value;
+            if (info.Signed.HasValue) payload["signed"] = info.Signed.Value;
 
             if (string.Equals(info.BaseType, "Numeric", StringComparison.OrdinalIgnoreCase) && info.Length.HasValue)
             {
                 ComputeNumericRange(info.Length.Value, info.Decimals ?? 0, info.Signed ?? true,
                     out decimal min, out decimal max);
-                r["rangeMin"] = min;
-                r["rangeMax"] = max;
+                payload["rangeMin"] = min;
+                payload["rangeMax"] = max;
             }
 
             if (info.AllowedValues != null && info.AllowedValues.Count > 0)
@@ -142,10 +141,10 @@ namespace GxMcp.Worker.Services
                         ["description"] = v.Description
                     });
                 }
-                r["allowedValues"] = av;
+                payload["allowedValues"] = av;
             }
 
-            return r.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(code: "TypeIntrospected", result: payload);
         }
 
         private string RunValidateValue(string typeName, string value)
@@ -154,8 +153,7 @@ namespace GxMcp.Worker.Services
             var info = ReadDomainInfo(typeName);
             if (info == null) return ErrorJson($"Type '{typeName}' not found or not a Domain.");
             var r = ValidateValue(info, value);
-            r["status"] = "Success";
-            return r.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(code: "TypeIntrospected", result: r);
         }
 
         // ---- Pure helpers (unit-testable) ----
@@ -325,11 +323,7 @@ namespace GxMcp.Worker.Services
 
         private static string ErrorJson(string message)
         {
-            return new JObject
-            {
-                ["status"] = "Error",
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Err(code: "TypeIntrospectFailed", message: message);
         }
 
         private static string EdbToCanonical(string edb)

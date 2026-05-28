@@ -56,12 +56,24 @@ namespace GxMcp.Worker.Services
                             return DiscardLatestEditSnapshot(target, partName);
                         return RestoreSnapshot(target);
                     default:
-                        return Models.McpResponse.Error("Unknown history action", target, action, "Supported actions are list, get_source, save and restore.");
+                        return Models.McpResponse.Err(
+                        code: "UnknownHistoryAction",
+                        message: "Unknown history action '" + action + "'.",
+                        hint: "Supported actions are list, get_source, save and restore.",
+                        nextSteps: new JArray(Models.McpResponse.NextStep(
+                            tool: "genexus_history",
+                            args: new JObject { ["target"] = target, ["action"] = "list" },
+                            why: "Lists available revisions/snapshots for this object.")),
+                        target: target);
                 }
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "HistoryExecuteFailed",
+                    message: ex.Message,
+                    hint: "Check the history action and target.",
+                    target: target);
             }
         }
 
@@ -74,10 +86,23 @@ namespace GxMcp.Worker.Services
         private string DryRunRestore(string target, string partName, string snapshotToken, bool discard)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
             string guid;
             try { guid = obj.Guid.ToString(); }
-            catch (Exception ex) { return Models.McpResponse.Error("DryRun failed", target, partName, ex.Message); }
+            catch (Exception ex) { return Models.McpResponse.Err(code: "DryRunFailed", message: ex.Message, target: target); }
 
             string kbPath = null;
             try { kbPath = _objectService.GetKbService().GetKbPath(); } catch { }
@@ -96,20 +121,29 @@ namespace GxMcp.Worker.Services
             }
             if (string.IsNullOrEmpty(path))
             {
-                return new JObject
-                {
-                    ["status"] = "NoSnapshot",
-                    ["target"] = target,
-                    ["part"] = part,
-                    ["dryRun"] = true,
-                    ["hint"] = "No snapshot to dry-run against. Edit this object first to capture a baseline."
-                }.ToString();
+                return Models.McpResponse.Ok(
+                    target: target,
+                    code: "NoSnapshot",
+                    result: new JObject
+                    {
+                        ["part"] = part,
+                        ["dryRun"] = true,
+                        ["hint"] = "No snapshot to dry-run against. Edit this object first to capture a baseline."
+                    });
             }
 
             string snapshotContent = EditSnapshotStore.ReadSnapshot(path);
             if (snapshotContent == null)
             {
-                return Models.McpResponse.Error("Snapshot read failed", target, part, "File exists but could not be decoded: " + path);
+                return Models.McpResponse.Err(
+                    code: "SnapshotReadFailed",
+                    message: "File exists but could not be decoded: " + path,
+                    hint: "The snapshot file may be corrupt. List snapshots and use a different token.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_history",
+                        args: new JObject { ["target"] = target, ["action"] = "list", ["part"] = part },
+                        why: "Lists available snapshots to find a valid token.")),
+                    target: target);
             }
 
             string currentContent = string.Empty;
@@ -125,27 +159,41 @@ namespace GxMcp.Worker.Services
             catch { /* leave currentContent empty */ }
 
             string diff = GxMcp.Worker.Helpers.DiffBuilder.UnifiedDiff(currentContent, snapshotContent, 3);
-            return new JObject
-            {
-                ["status"] = "DryRun",
-                ["target"] = target,
-                ["part"] = part,
-                ["dryRun"] = true,
-                ["discard"] = discard,
-                ["restoreSource"] = System.IO.Path.GetFileName(path),
-                ["restoreSourcePath"] = path,
-                ["diff"] = diff,
-                ["hint"] = "Re-run without dryRun to write these bytes through WriteService."
-            }.ToString();
+            return Models.McpResponse.Ok(
+                target: target,
+                code: "DryRun",
+                result: new JObject
+                {
+                    ["part"] = part,
+                    ["dryRun"] = true,
+                    ["discard"] = discard,
+                    ["restoreSource"] = System.IO.Path.GetFileName(path),
+                    ["restoreSourcePath"] = path,
+                    ["diff"] = diff,
+                    ["hint"] = "Re-run without dryRun to write these bytes through WriteService."
+                });
         }
 
         private string ListEditSnapshots(string target, string partName)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
             string guid;
             try { guid = obj.Guid.ToString(); }
-            catch (Exception ex) { return Models.McpResponse.Error("Snapshot list failed", target, partName, ex.Message); }
+            catch (Exception ex) { return Models.McpResponse.Err(code: "SnapshotListFailed", message: ex.Message, target: target); }
 
             string kbPath = null;
             try { kbPath = _objectService.GetKbService().GetKbPath(); } catch { }
@@ -161,14 +209,15 @@ namespace GxMcp.Worker.Services
                     ["fileName"] = System.IO.Path.GetFileName(f)
                 });
             }
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["target"] = target,
-                ["part"] = part,
-                ["count"] = files.Count,
-                ["snapshots"] = arr
-            }.ToString();
+            return Models.McpResponse.Ok(
+                target: target,
+                code: "SnapshotList",
+                result: new JObject
+                {
+                    ["part"] = part,
+                    ["count"] = files.Count,
+                    ["snapshots"] = arr
+                });
         }
 
         /// <summary>
@@ -183,10 +232,23 @@ namespace GxMcp.Worker.Services
         private string DiscardLatestEditSnapshot(string target, string partName)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
             string guid;
             try { guid = obj.Guid.ToString(); }
-            catch (Exception ex) { return Models.McpResponse.Error("Discard failed", target, partName, ex.Message); }
+            catch (Exception ex) { return Models.McpResponse.Err(code: "DiscardFailed", message: ex.Message, target: target); }
 
             string kbPath = null;
             try { kbPath = _objectService.GetKbService().GetKbPath(); } catch { }
@@ -214,20 +276,29 @@ namespace GxMcp.Worker.Services
             var files = EditSnapshotStore.List(root, objectGuid, part);
             if (files.Count == 0)
             {
-                return new JObject
-                {
-                    ["status"] = "NoSnapshot",
-                    ["target"] = target,
-                    ["part"] = part,
-                    ["hint"] = "Edit this object first to capture a baseline; discard restores the pre-edit state."
-                }.ToString();
+                return Models.McpResponse.Ok(
+                    target: target,
+                    code: "NoSnapshot",
+                    result: new JObject
+                    {
+                        ["part"] = part,
+                        ["hint"] = "Edit this object first to capture a baseline; discard restores the pre-edit state."
+                    });
             }
 
             string path = files[0]; // newest
             string content = EditSnapshotStore.ReadSnapshot(path);
             if (content == null)
             {
-                return Models.McpResponse.Error("Snapshot read failed", target, part, "File exists but could not be decoded: " + path);
+                return Models.McpResponse.Err(
+                    code: "SnapshotReadFailed",
+                    message: "File exists but could not be decoded: " + path,
+                    hint: "The snapshot file may be corrupt. List snapshots and use a different token.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_history",
+                        args: new JObject { ["target"] = target, ["action"] = "list", ["part"] = part },
+                        why: "Lists available snapshots to find a valid token.")),
+                    target: target);
             }
 
             string snapshotToken;
@@ -251,10 +322,23 @@ namespace GxMcp.Worker.Services
         private string RestoreEditSnapshot(string target, string partName, string snapshotToken)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
             string guid;
             try { guid = obj.Guid.ToString(); }
-            catch (Exception ex) { return Models.McpResponse.Error("Snapshot restore failed", target, partName, ex.Message); }
+            catch (Exception ex) { return Models.McpResponse.Err(code: "SnapshotRestoreFailed", message: ex.Message, target: target); }
 
             string kbPath = null;
             try { kbPath = _objectService.GetKbService().GetKbPath(); } catch { }
@@ -263,17 +347,25 @@ namespace GxMcp.Worker.Services
             string path = EditSnapshotStore.ResolveByTimestamp(root, guid, part, snapshotToken);
             if (string.IsNullOrEmpty(path))
             {
-                return Models.McpResponse.Error(
-                    "Snapshot not found",
-                    target,
-                    part,
-                    "No snapshot matched token '" + snapshotToken + "'. Use action=list with part=" + part + " to enumerate available snapshots.");
+                return Models.McpResponse.Err(
+                    code: "SnapshotNotFound",
+                    message: "No snapshot matched token '" + snapshotToken + "'.",
+                    hint: "Use action=list with part=" + part + " to enumerate available snapshots.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_history",
+                        args: new JObject { ["target"] = target, ["action"] = "list", ["part"] = part },
+                        why: "Returns the list of snapshot tokens for this object and part.")),
+                    target: target);
             }
 
             string content = EditSnapshotStore.ReadSnapshot(path);
             if (content == null)
             {
-                return Models.McpResponse.Error("Snapshot read failed", target, part, "File exists but could not be decoded: " + path);
+                return Models.McpResponse.Err(
+                    code: "SnapshotReadFailed",
+                    message: "File exists but could not be decoded: " + path,
+                    hint: "The snapshot file may be corrupt. List snapshots and use a different token.",
+                    target: target);
             }
 
             string writeResult = _writeService.WriteObject(target, part, content);
@@ -295,12 +387,15 @@ namespace GxMcp.Worker.Services
             var obj = _objectService.FindObject(target);
             if (obj == null)
             {
-                return Models.McpResponse.Error(
-                    "Object not found",
-                    target,
-                    "Source",
-                    "The requested object is not available in the active Knowledge Base."
-                );
+                return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "The requested object is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject(),
+                        why: "Lists available objects in the KB.")),
+                    target: target);
             }
 
             try
@@ -317,19 +412,35 @@ namespace GxMcp.Worker.Services
                     if (sourcePart != null)
                     {
                         string content = sourcePart.Source ?? "";
-                        var result = new JObject();
-                        result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
-                        result["isBase64"] = true;
-                        result["versionId"] = versionId;
-                        return result.ToString();
+                        return Models.McpResponse.Ok(
+                            target: target,
+                            code: "VersionSourceRead",
+                            result: new JObject
+                            {
+                                ["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content)),
+                                ["isBase64"] = true,
+                                ["versionId"] = versionId
+                            });
                     }
                 }
-                return "{\"status\":\"Error\",\"message\": \"Version " + versionId + " not found or has no source code.\"}";
+                return Models.McpResponse.Err(
+                    code: "VersionNotFound",
+                    message: "Version " + versionId + " not found or has no source code.",
+                    hint: "Use action=list to see available version IDs for this object.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_history",
+                        args: new JObject { ["target"] = target, ["action"] = "list" },
+                        why: "Returns available revisions with their version IDs.")),
+                    target: target);
             }
             catch (Exception ex)
             {
                 Logger.Error("Failed to read version source: " + ex.Message);
-                return "{\"status\":\"Error\",\"message\": \"SDK Version access failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "VersionSourceFailed",
+                    message: "SDK Version access failed: " + ex.Message,
+                    hint: "The SDK history API may not be available for this KB.",
+                    target: target);
             }
         }
 
@@ -338,12 +449,15 @@ namespace GxMcp.Worker.Services
             var obj = _objectService.FindObject(target);
             if (obj == null)
             {
-                return Models.McpResponse.Error(
-                    "Object not found",
-                    target,
-                    null,
-                    "The requested object is not available in the active Knowledge Base."
-                );
+                return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "The requested object is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject(),
+                        why: "Lists available objects in the KB.")),
+                    target: target);
             }
 
             var history = new JArray();
@@ -364,20 +478,40 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("Failed to read revisions: " + ex.Message);
-                return "{\"status\":\"Error\",\"message\": \"SDK History access failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "HistoryAccessFailed",
+                    message: "SDK History access failed: " + ex.Message,
+                    hint: "The SDK history API may not be available for this KB.",
+                    target: target);
             }
 
-            return new JObject { ["history"] = history }.ToString();
+            return Models.McpResponse.Ok(
+                target: target,
+                code: "RevisionList",
+                result: new JObject { ["history"] = history });
         }
 
         private string SaveSnapshot(string target)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
 
             string histDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".history");
             if (!Directory.Exists(histDir)) Directory.CreateDirectory(histDir);
-            
+
             string sourceJson = _objectService.ReadObjectSource(target, "Source", client: "mcp");
             if (sourceJson.Contains("\"error\"")) return sourceJson;
 
@@ -390,13 +524,34 @@ namespace GxMcp.Worker.Services
             string filePath = Path.Combine(histDir, string.Format("{0}_{1}.txt", safeName, ts));
             File.WriteAllText(filePath, code, Encoding.UTF8);
 
-            return "{\"status\": \"Snapshot saved\", \"file\": \"" + CommandDispatcher.EscapeJsonString(Path.GetFileName(filePath)) + "\", \"timestamp\": \"" + ts + "\", \"canonicalName\": \"" + safeName + "\"}";
+            return Models.McpResponse.Ok(
+                target: target,
+                code: "SnapshotSaved",
+                result: new JObject
+                {
+                    ["file"] = Path.GetFileName(filePath),
+                    ["timestamp"] = ts,
+                    ["canonicalName"] = safeName
+                });
         }
 
         private string RestoreSnapshot(string target)
         {
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Verify the object name and ensure the KB is open.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["name_contains"] = target },
+                        why: "Lists objects whose names match, in case of a typo."),
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                target: target);
 
             string histDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".history");
             if (!Directory.Exists(histDir)) Directory.CreateDirectory(histDir);
@@ -408,7 +563,15 @@ namespace GxMcp.Worker.Services
                 .ToArray();
 
             if (files.Length == 0)
-                return "{\"status\":\"Error\",\"message\": \"No snapshots found for " + CommandDispatcher.EscapeJsonString(safeName) + " (Target: " + target + ")\"}";
+                return Models.McpResponse.Err(
+                    code: "SnapshotNotFound",
+                    message: "No snapshots found for '" + safeName + "'.",
+                    hint: "Use action=save first to capture a snapshot before restoring.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_history",
+                        args: new JObject { ["target"] = target, ["action"] = "save" },
+                        why: "Saves the current state as a snapshot that can be restored later.")),
+                    target: target);
 
             string lastFile = files.First();
             string code = File.ReadAllText(lastFile, Encoding.UTF8);

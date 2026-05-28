@@ -26,6 +26,30 @@
       "uri": "genexus://kb/llm-playbook"
     },
     {
+      "description": "How to enable GAM, the **Integrated Security Level** property, where it applies, and how Authorization vs Authentication differ.",
+      "mimeType": "text/markdown",
+      "name": "GAM (GeneXus Access Manager) — Integrated Security",
+      "uri": "genexus://kb/skills/gam-integrated-security"
+    },
+    {
+      "description": "How to navigate between Web Panels / SD Panels. Includes the Call method, CallOptions.Target enum, and the **CallProtocol** property pitfall.",
+      "mimeType": "text/markdown",
+      "name": "GeneXus navigation methods (Call, CallOptions, ReplaceMainPanel)",
+      "uri": "genexus://kb/skills/navigation"
+    },
+    {
+      "description": "What makes a Smart Device panel the application entry point, what the **Main program property** does, what objects can be Main.",
+      "mimeType": "text/markdown",
+      "name": "Smart Device (SD) panel basics — Main property + navigation",
+      "uri": "genexus://kb/skills/sd-panel-mobile"
+    },
+    {
+      "description": "Verified event order in a Web Panel: Start, Refresh, Load. What's accessible in each.",
+      "mimeType": "text/markdown",
+      "name": "Web Panel events — Start / Refresh / Load order",
+      "uri": "genexus://kb/skills/webpanel-events"
+    },
+    {
       "description": "Browsable index of all objects in the KB.",
       "name": "GeneXus Objects Index",
       "uri": "genexus://objects"

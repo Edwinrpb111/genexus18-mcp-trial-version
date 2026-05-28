@@ -28,9 +28,9 @@ namespace GxMcp.Worker.Tests
                     var raw = svc.CreatePr("a title", "body", "main", tempCwd);
                     var j = JObject.Parse(raw);
 
-                    Assert.Equal("Error", (string)j["status"]);
-                    Assert.Equal("GhCliNotInstalled", (string)j["code"]);
-                    Assert.NotNull(j["hint"]);
+                    Assert.Equal("error", (string)j["status"]);
+                    Assert.Equal("GhCliNotInstalled", (string)j["error"]?["code"]);
+                    Assert.NotNull(j["error"]?["hint"]);
                 }
                 finally
                 {
@@ -50,8 +50,8 @@ namespace GxMcp.Worker.Tests
             var svc = new GithubService(kbService: null);
             var raw = svc.CreatePr("", "body", null, null);
             var j = JObject.Parse(raw);
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Contains("title is required", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Contains("title is required", (string)j["error"]?["message"]);
         }
 
         [Fact]
@@ -68,8 +68,8 @@ namespace GxMcp.Worker.Tests
                 // Running `gh pr create` outside a git repo must fail with non-zero exit.
                 var raw = svc.CreatePr("title", "body", null, tempCwd);
                 var j = JObject.Parse(raw);
-                Assert.Equal("Error", (string)j["status"]);
-                Assert.Equal("GhExitNonZero", (string)j["code"]);
+                Assert.Equal("error", (string)j["status"]);
+                Assert.Equal("GhExitNonZero", (string)j["error"]?["code"]);
                 Assert.NotNull(j["exitCode"]);
                 Assert.NotEqual(0, (int)j["exitCode"]);
                 Assert.NotNull(j["stderr"]);

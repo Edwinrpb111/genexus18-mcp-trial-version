@@ -33,7 +33,7 @@ namespace GxMcp.Worker.Services
                 if (busyMsg != null) return busyMsg;
 
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return McpResponse.Error("Object not found for validation", target, partName, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return McpResponse.Err(code: "ObjectNotFound", message: "Object not found for validation.", hint: "The requested object is not available in the active Knowledge Base. Check the target name and KB state.", nextSteps: new JArray(McpResponse.NextStep("genexus_list_objects", null, "Lists available objects so you can verify the target name.")), target: target);
 
                 // 1. FAST PRE-FLIGHT CHECK (Regex based)
                 var structuralErrors = CodeParser.Validate(code);
@@ -51,19 +51,20 @@ namespace GxMcp.Worker.Services
                         
                         errorList.Add(eObj);
                     }
-                    return new JObject {
-                        ["status"] = "Error",
-                        ["message"] = structuralErrors[0],
-                        ["errors"] = errorList,
-                        ["isPreflight"] = true
-                    }.ToString();
+                    return McpResponse.Err(
+                        code: "SyntaxError",
+                        message: structuralErrors[0],
+                        hint: "Fix the structural errors listed in error.nextSteps and retry.",
+                        nextSteps: new JArray(McpResponse.NextStep("genexus_validate", new JObject { ["target"] = target, ["code"] = "<fixed code>" }, "Re-run validation after fixing the reported syntax errors.")),
+                        target: target,
+                        extra: new JObject { ["errors"] = errorList, ["isPreflight"] = true });
                 }
 
                 // 2. Find the exact part that is being validated.
                 string normalizedPartName = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
                 KBObjectPart part = PartAccessor.GetPart(obj, normalizedPartName);
 
-                if (part == null) return "{\"status\":\"Success\", \"message\":\"Validation not applicable for this part type.\"}";
+                if (part == null) return McpResponse.Ok(target: target, code: "ValidationSkipped", result: new JObject { ["message"] = "Validation not applicable for this part type." });
 
                 // 3. Capture errors using a mock transaction
                 var kb = _kbService.GetKB();
@@ -144,14 +145,16 @@ namespace GxMcp.Worker.Services
                                     }
                                 }
                             }
-                            return new JObject {
-                                ["status"] = "Error",
-                                ["message"] = topError,
-                                ["errors"] = errors
-                            }.ToString();
+                            return McpResponse.Err(
+                                code: "ValidationFailed",
+                                message: topError,
+                                hint: "Fix the errors listed in error.nextSteps and retry validation.",
+                                nextSteps: new JArray(McpResponse.NextStep("genexus_validate", new JObject { ["target"] = target, ["code"] = "<fixed code>" }, "Re-run validation after applying fixes.")),
+                                target: target,
+                                extra: new JObject { ["errors"] = errors });
                         }
 
-                        return "{\"status\":\"Success\", \"message\":\"Syntax check passed\"}";
+                        return McpResponse.Ok(target: target, code: "ValidationCompleted", result: new JObject { ["message"] = "Syntax check passed" });
                     }
                     finally
                     {
@@ -164,12 +167,13 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("[VALIDATION] Critical Error: " + ex.Message);
-                // Ensure we return a structured error that WriteService understands
-                var result = new JObject();
-                result["status"] = "Error";
-                result["error"] = ex.Message;
-                result["errors"] = new JArray(new JObject { ["description"] = ex.Message, ["severity"] = "Error", ["line"] = 1 });
-                return result.ToString();
+                return McpResponse.Err(
+                    code: "ValidationCriticalError",
+                    message: ex.Message,
+                    hint: "A critical error occurred during validation. Check the worker log for details.",
+                    nextSteps: new JArray(McpResponse.NextStep("genexus_logs", null, "Read worker logs to diagnose the underlying exception.")),
+                    target: target,
+                    extra: new JObject { ["errors"] = new JArray(new JObject { ["description"] = ex.Message, ["severity"] = "Error", ["line"] = 1 }) });
             }
         }
 

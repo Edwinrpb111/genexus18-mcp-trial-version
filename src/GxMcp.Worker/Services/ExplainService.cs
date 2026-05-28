@@ -43,7 +43,10 @@ namespace GxMcp.Worker.Services
         public string Explain(string target, string typeFilter, string depth)
         {
             if (string.IsNullOrEmpty(target))
-                return Models.McpResponse.Error("MissingTarget", target, null, "target object name is required.");
+                return Models.McpResponse.Err(
+                    code: "MissingTarget",
+                    message: "target object name is required.",
+                    hint: "Pass the name of the object to explain.");
 
             // v2.6.9 perf: check cache before SDK reads.
             string explainKey = (target ?? "") + "|" + (typeFilter ?? "") + "|" + (depth ?? "shallow").ToLowerInvariant();
@@ -62,8 +65,15 @@ namespace GxMcp.Worker.Services
             {
                 var obj = _objectService?.FindObject(target, typeFilter);
                 if (obj == null)
-                    return Models.McpResponse.Error("ObjectNotFound", target, null,
-                        "The requested object is not available in the active Knowledge Base.");
+                    return Models.McpResponse.Err(
+                        code: "ObjectNotFound",
+                        message: "The requested object is not available in the active Knowledge Base.",
+                        hint: "Check the object name or use genexus_list_objects to find the correct name.",
+                        nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep(
+                            tool: "genexus_list_objects",
+                            args: new Newtonsoft.Json.Linq.JObject(),
+                            why: "Lists all objects in the KB so you can find the correct name.")),
+                        target: target);
 
                 bool deep = string.Equals(depth, "deep", StringComparison.OrdinalIgnoreCase);
 
@@ -100,9 +110,8 @@ namespace GxMcp.Worker.Services
                 DateTime lastModified = DateTime.MinValue;
                 try { lastModified = obj.LastUpdate; } catch { }
 
-                var result = new JObject
+                var payload = new JObject
                 {
-                    ["status"] = "Success",
                     ["name"] = objectName,
                     ["type"] = objectType,
                     ["purpose"] = purpose,
@@ -119,7 +128,7 @@ namespace GxMcp.Worker.Services
                         ? (JToken)JValue.CreateNull()
                         : lastModified.ToUniversalTime().ToString("o")
                 };
-                string json = result.ToString(Newtonsoft.Json.Formatting.None);
+                string json = Models.McpResponse.Ok(target: objectName, code: "ExplainOk", result: payload);
                 _explainCache[explainKey] = new ExplainCacheEntry
                 {
                     Json = json,
@@ -129,7 +138,11 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("ExplainFailed", target, null, ex.Message);
+                return Models.McpResponse.Err(
+                    code: "ExplainFailed",
+                    message: ex.Message,
+                    hint: "Check that the KB is open and the object exists.",
+                    target: target);
             }
         }
 

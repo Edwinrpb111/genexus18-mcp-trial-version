@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -27,25 +28,21 @@ namespace GxMcp.Worker.Services
             int total = _steps.Count;
             if (step < 1 || step > total)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "StepOutOfRange",
-                    ["message"] = "step must be between 1 and " + total,
-                    ["totalSteps"] = total
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "StepOutOfRange",
+                    message: "step must be between 1 and " + total,
+                    extra: new JObject { ["totalSteps"] = total });
             }
             var s = _steps[step - 1];
-            return new JObject
+            return McpResponse.Ok(code: "TutorialStep", result: new JObject
             {
-                ["status"] = "Success",
                 ["stepNumber"] = step,
                 ["totalSteps"] = total,
                 ["title"] = s.Title,
                 ["narrative"] = s.Narrative,
                 ["suggestedCall"] = s.SuggestedCall,
                 ["next"] = step < total ? (JToken)(step + 1) : null
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            });
         }
     }
 }

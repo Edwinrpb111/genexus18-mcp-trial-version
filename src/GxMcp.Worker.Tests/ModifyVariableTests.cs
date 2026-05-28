@@ -37,11 +37,11 @@ namespace GxMcp.Worker.Tests
             catch (System.TypeLoadException) { return; }
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("UnknownType", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("UnknownType", obj["error"]?["code"]?.ToString());
             Assert.False(string.IsNullOrEmpty(obj["suggestion"]?.ToString()));
             Assert.NotNull(obj["accepted"]);
-            Assert.Contains("Bogus", obj["message"]?.ToString() ?? "");
+            Assert.Contains("Bogus", obj["error"]?["message"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -57,8 +57,8 @@ namespace GxMcp.Worker.Tests
             catch (System.TypeLoadException) { return; }
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("UnknownType", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("UnknownType", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -76,8 +76,8 @@ namespace GxMcp.Worker.Tests
             catch (System.TypeLoadException) { return; }
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("UnknownType", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("UnknownType", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]

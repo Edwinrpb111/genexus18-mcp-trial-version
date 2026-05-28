@@ -37,12 +37,14 @@ namespace GxMcp.Worker.Tests
             });
 
             var env = JObject.Parse(raw);
-            Assert.Equal("Ok", env["status"]?.ToString());
-            Assert.NotNull(env["edit"]);
-            Assert.NotNull(env["impact"]);
-            Assert.NotNull(env["build"]);
-            Assert.Equal("b1c2d3e4", env["build"]?["taskId"]?.ToString());
-            Assert.Equal(2, ((JArray)env["impact"]!["callers"]!).Count);
+            // v2.8.0: canonical envelope — status is lowercase "ok"; payload under result
+            Assert.Equal("ok", env["status"]?.ToString());
+            Assert.Equal("EditAndBuildCompleted", env["code"]?.ToString());
+            Assert.NotNull(env["result"]?["edit"]);
+            Assert.NotNull(env["result"]?["impact"]);
+            Assert.NotNull(env["result"]?["build"]);
+            Assert.Equal("b1c2d3e4", env["result"]?["build"]?["taskId"]?.ToString());
+            Assert.Equal(2, ((JArray)env["result"]!["impact"]!["callers"]!).Count);
         }
 
         [Fact]
@@ -64,10 +66,11 @@ namespace GxMcp.Worker.Tests
             string raw = orchestrator.Orchestrate(new JObject { ["name"] = "InvoiceProc" });
 
             var env = JObject.Parse(raw);
-            Assert.Equal("Error", env["status"]?.ToString());
-            Assert.NotNull(env["alternatives"]);
-            Assert.Null(env["impact"]);
-            Assert.Null(env["build"]);
+            // v2.8.0: error envelope — status is "error", error sub-object present
+            Assert.Equal("error", env["status"]?.ToString());
+            Assert.Equal("EditPhaseFailed", env["error"]?["code"]?.ToString());
+            Assert.NotNull(env["edit"]);   // edit block surfaced as extra on Err
+            Assert.Null(env["result"]);
             Assert.False(fakeAnalyze.WasCalled);
             Assert.False(fakeBuild.WasCalled);
         }
@@ -87,10 +90,105 @@ namespace GxMcp.Worker.Tests
             string raw = orchestrator.Orchestrate(new JObject { ["name"] = "OrphanProc" });
             var env = JObject.Parse(raw);
 
-            Assert.Equal("Ok", env["status"]?.ToString());
-            Assert.NotNull(env["impact"]);
-            Assert.NotNull(env["build"]);
-            Assert.Equal("Skipped", env["build"]?["status"]?.ToString());
+            // v2.8.0: canonical envelope — payload under result
+            Assert.Equal("ok", env["status"]?.ToString());
+            Assert.NotNull(env["result"]?["impact"]);
+            Assert.NotNull(env["result"]?["build"]);
+            Assert.True(env["result"]?["build"]?["skipped"]?.ToObject<bool>() ?? false);
+            Assert.False(fakeBuild.WasCalled);
+        }
+
+        [Fact]
+        public void Orchestrate_UnwrapsNestedGatewayArgsEnvelope()
+        {
+            var fakeWrite = new FakeWriteService(JObject.Parse(@"{ ""status"": ""Ok"" }"));
+            var fakeAnalyze = new FakeAnalyzeService(JObject.Parse(@"{
+                ""status"": ""Ready"",
+                ""callers"": [""CallerProc""]
+            }"));
+            var fakeBuild = new FakeBuildService(JObject.Parse(@"{
+                ""status"": ""Accepted"",
+                ""taskId"": ""task-123""
+            }"));
+
+            var orchestrator = new EditAndBuildOrchestrator(fakeWrite, fakeAnalyze, fakeBuild);
+
+            string raw = orchestrator.Orchestrate(new JObject
+            {
+                ["target"] = "InvoiceProc",
+                ["part"] = "Source",
+                ["args"] = new JObject
+                {
+                    ["name"] = "InvoiceProc",
+                    ["part"] = "Source",
+                    ["mode"] = "full",
+                    ["content"] = "parm(out:&Ok);"
+                }
+            });
+
+            var env = JObject.Parse(raw);
+            // v2.8.0: canonical envelope
+            Assert.Equal("ok", env["status"]?.ToString());
+            Assert.Equal("InvoiceProc", env["target"]?.ToString());
+            Assert.Equal("InvoiceProc", fakeWrite.LastTarget);
+            Assert.Equal("Source", fakeWrite.LastArgs?["part"]?.ToString());
+            Assert.Equal("parm(out:&Ok);", fakeWrite.LastArgs?["content"]?.ToString());
+            Assert.Equal("task-123", env["result"]?["build"]?["taskId"]?.ToString());
+        }
+
+        [Fact]
+        public void Orchestrate_Continues_WhenFullWriteReturnsSuccess()
+        {
+            var fakeWrite = new FakeWriteService(JObject.Parse(@"{ ""status"": ""Success"" }"));
+            var fakeAnalyze = new FakeAnalyzeService(JObject.Parse(@"{
+                ""status"": ""Ready"",
+                ""callers"": [""CallerProc""]
+            }"));
+            var fakeBuild = new FakeBuildService(JObject.Parse(@"{
+                ""status"": ""Accepted"",
+                ""taskId"": ""task-234""
+            }"));
+
+            var orchestrator = new EditAndBuildOrchestrator(fakeWrite, fakeAnalyze, fakeBuild);
+
+            string raw = orchestrator.Orchestrate(new JObject
+            {
+                ["name"] = "InvoiceProc",
+                ["part"] = "Source",
+                ["content"] = "parm(out:&Ok);"
+            });
+
+            var env = JObject.Parse(raw);
+            // v2.8.0: canonical envelope
+            Assert.Equal("ok", env["status"]?.ToString());
+            Assert.Equal("task-234", env["result"]?["build"]?["taskId"]?.ToString());
+            Assert.True(fakeAnalyze.WasCalled);
+            Assert.True(fakeBuild.WasCalled);
+        }
+
+        [Fact]
+        public void Orchestrate_SkipsBuild_WhenWriteReportsNoChange()
+        {
+            var fakeWrite = new FakeWriteService(JObject.Parse(@"{ ""status"": ""Success"", ""noChange"": true }"));
+            var fakeAnalyze = new FakeAnalyzeService(null);
+            var fakeBuild = new FakeBuildService(null);
+
+            var orchestrator = new EditAndBuildOrchestrator(fakeWrite, fakeAnalyze, fakeBuild);
+
+            string raw = orchestrator.Orchestrate(new JObject
+            {
+                ["name"] = "InvoiceProc",
+                ["part"] = "Source",
+                ["content"] = "parm(out:&Ok);"
+            });
+
+            var env = JObject.Parse(raw);
+            // v2.8.0: NoChange — ok envelope, build skipped flag under result
+            Assert.Equal("ok", env["status"]?.ToString());
+            Assert.Equal("NoChange", env["code"]?.ToString());
+            Assert.True(env["result"]?["build"]?["skipped"]?.ToObject<bool>() ?? false);
+            Assert.Equal("Edit produced no persisted change.", env["result"]?["build"]?["reason"]?.ToString());
+            Assert.False(fakeAnalyze.WasCalled);
             Assert.False(fakeBuild.WasCalled);
         }
     }
@@ -99,10 +197,14 @@ namespace GxMcp.Worker.Tests
     {
         private readonly JObject _result;
         public bool WasCalled { get; private set; }
+        public string LastTarget { get; private set; }
+        public JObject LastArgs { get; private set; }
         public FakeWriteService(JObject result) { _result = result; }
         public string WriteObject(string target, JObject args)
         {
             WasCalled = true;
+            LastTarget = target;
+            LastArgs = args;
             return _result.ToString();
         }
     }

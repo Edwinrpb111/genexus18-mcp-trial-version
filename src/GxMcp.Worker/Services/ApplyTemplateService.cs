@@ -1,4 +1,5 @@
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -95,6 +96,6 @@ namespace GxMcp.Worker.Services
 
         private static string Esc(string s) => System.Security.SecurityElement.Escape(s ?? "");
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString();
+        private static string Err(string m) => McpResponse.Err(code: "ApplyTemplateFailed", message: m);
     }
 }

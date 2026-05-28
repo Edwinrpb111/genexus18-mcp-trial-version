@@ -192,15 +192,17 @@ namespace GxMcp.Worker.Services
                     // SDK in-memory artefact is discarded (GC-collected) since we don't hold
                     // a reference past this method. Pre-flight checks (type resolution,
                     // duplicate name) already ran above so the LLM sees real validation.
-                    return new JObject
-                    {
-                        ["status"] = "DryRun",
-                        ["dryRun"] = true,
-                        ["type"] = type,
-                        ["name"] = name,
-                        ["seededDescription"] = seededDescription,
-                        ["hint"] = "Re-run without dryRun to call Save()."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Ok(
+                        target: name,
+                        code: "DryRun",
+                        result: new JObject
+                        {
+                            ["dryRun"] = true,
+                            ["type"] = type,
+                            ["name"] = name,
+                            ["seededDescription"] = seededDescription,
+                            ["hint"] = "Re-run without dryRun to call Save()."
+                        });
                 }
 
                 newObj.Save();
@@ -217,9 +219,9 @@ namespace GxMcp.Worker.Services
                 Logger.Info(string.Format("Object created successfully in {0}ms", sw.ElapsedMilliseconds));
                 string idStr = "";
                 try { idStr = newObj.Key?.Id.ToString() ?? ""; } catch { try { idStr = newObj.Guid.ToString(); } catch { } }
-                var response = new JObject
+                // TODO(v2.8.0): caller in ImportObjectFromText reads response["status"]=="Success"
+                var responsePayload = new JObject
                 {
-                    ["status"] = "Success",
                     ["type"] = type,
                     ["name"] = name,
                     ["id"] = idStr
@@ -282,8 +284,8 @@ namespace GxMcp.Worker.Services
                         }
                     };
                 }
-                if (metaObj != null) response["_meta"] = metaObj;
-                return response.ToString(Newtonsoft.Json.Formatting.None);
+                if (metaObj != null) responsePayload["_meta"] = metaObj;
+                return McpResponse.Ok(target: name, code: "ObjectCreated", result: responsePayload);
             }
             catch (Exception ex)
             {
@@ -395,7 +397,6 @@ namespace GxMcp.Worker.Services
                 var tail = matchList.Skip(skip).ToList();
                 var result = new JObject
                 {
-                    ["status"] = "Success",
                     // Item 32: surface the log path so the agent can read adjacent logs
                     // (gateway_debug.log, probe.log, etc.) directly via genexus_asset.
                     ["logPath"] = logPath,
@@ -415,7 +416,7 @@ namespace GxMcp.Worker.Services
                         result["hint"] = "No ERROR/CRITICAL markers found in the log — worker has not crashed (or the log has rotated).";
                     }
                 }
-                return result.ToString();
+                return McpResponse.Ok(code: "LogsRead", result: result);
             }
             catch (Exception ex)
             {
@@ -505,7 +506,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string DeleteObject(string target, string typeFilter, bool confirm)
+        public string DeleteObject(string target, string typeFilter, bool confirm, bool dryRun = false)
         {
             try
             {
@@ -545,7 +546,14 @@ namespace GxMcp.Worker.Services
                         var ackType = CommandDispatcher.EscapeJsonString(cachedType);
                         var deletedAt = CommandDispatcher.EscapeJsonString(kv.Value.ToString("o"));
                         Logger.Info(string.Format("DeleteObject: {0} ({1}) already removed at {2} — confirming via recent-deletion cache.", cachedName, cachedType, deletedAt));
-                        return "{\"status\":\"Success\", \"deleted\":\"" + ackName + "\", \"type\":\"" + ackType + "\", \"confirmedAfterTimeout\":true, \"deletedAtUtc\":\"" + deletedAt + "\", \"note\":\"Object was already deleted in a prior call (likely one whose response timed out at the client). No action taken on this retry.\"}";
+                        return McpResponse.Ok(target: cachedName, code: "ObjectDeleted", result: new JObject
+                        {
+                            ["deleted"] = cachedName,
+                            ["type"] = cachedType,
+                            ["confirmedAfterTimeout"] = true,
+                            ["deletedAtUtc"] = deletedAt,
+                            ["note"] = "Object was already deleted in a prior call (likely one whose response timed out at the client). No action taken on this retry."
+                        });
                     }
                     return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
                 }
@@ -553,6 +561,26 @@ namespace GxMcp.Worker.Services
                 string objName = obj.Name;
                 string objType = obj.TypeDescriptor?.Name ?? "Unknown";
                 Guid objGuid = obj.Guid;
+
+                // dryRun: return what would be deleted without mutating the KB.
+                if (dryRun)
+                {
+                    return McpResponse.Ok(
+                        target: objName,
+                        code: "DryRun",
+                        result: new Newtonsoft.Json.Linq.JObject
+                        {
+                            ["preview"] = new Newtonsoft.Json.Linq.JObject
+                            {
+                                ["wouldDelete"] = new Newtonsoft.Json.Linq.JObject
+                                {
+                                    ["name"] = objName,
+                                    ["type"] = objType,
+                                    ["guid"] = objGuid.ToString()
+                                }
+                            }
+                        });
+                }
 
                 Logger.Info(string.Format("Deleting Object: {0} ({1}, guid={2})", objName, objType, objGuid));
 
@@ -575,7 +603,11 @@ namespace GxMcp.Worker.Services
                 }
                 catch (Exception ex) { Logger.Error("DeleteObject: index RemoveEntry failed for " + objName + ": " + ex.Message); }
 
-                return "{\"status\":\"Success\", \"deleted\":\"" + CommandDispatcher.EscapeJsonString(objName) + "\", \"type\":\"" + CommandDispatcher.EscapeJsonString(objType) + "\"}";
+                return McpResponse.Ok(target: objName, code: "ObjectDeleted", result: new JObject
+                {
+                    ["deleted"] = objName,
+                    ["type"] = objType
+                });
             }
             catch (Exception ex)
             {
@@ -1179,9 +1211,9 @@ namespace GxMcp.Worker.Services
             var parts = new JArray();
             foreach (KBObjectPart p in obj.Parts)
             {
-                parts.Add(new JObject { 
-                    ["name"] = p.TypeDescriptor?.Name ?? p.Type.ToString(), 
-                    ["guid"] = p.Type.ToString() 
+                parts.Add(new JObject {
+                    ["name"] = p.TypeDescriptor?.Name ?? p.Type.ToString(),
+                    ["guid"] = p.Type.ToString()
                 });
             }
 
@@ -1191,13 +1223,25 @@ namespace GxMcp.Worker.Services
             try { parentName = obj.Parent?.Name; } catch { }
             try { moduleName = obj.Module?.Name; } catch { }
 
-            return new JObject { 
-                ["name"] = obj.Name, 
-                ["type"] = obj.TypeDescriptor.Name,
-                ["parent"] = parentName,
-                ["module"] = moduleName,
-                ["parts"] = parts
-            }.ToString();
+            // v2.8.0 — availableParts proactive on success. LLMs no longer
+            // need to hit a PartNotFound error to learn the object's shape;
+            // the part list is already on the first read. Mirrors the same
+            // field name the error envelope carries so a dumb LLM uses one
+            // accessor regardless of outcome.
+            var availableParts = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+
+            return Models.McpResponse.Ok(
+                target: obj.Name,
+                code: "ObjectRead",
+                result: new JObject
+                {
+                    ["name"] = obj.Name,
+                    ["type"] = obj.TypeDescriptor?.Name,
+                    ["parent"] = parentName,
+                    ["module"] = moduleName,
+                    ["parts"] = parts,
+                    ["availableParts"] = new JArray(availableParts)
+                });
         }
 
         public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false, string typeFilter = null)
@@ -1298,7 +1342,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(outputPath))
-                    return Models.McpResponse.Error("Output path is required.", target);
+                    return McpResponse.Err(code: "OutputPathRequired", message: "Output path is required.", hint: "Provide a valid outputPath.", target: target);
 
                 var obj = FindObject(target, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(target, GetLoadedIndexOrNull());
@@ -1309,13 +1353,12 @@ namespace GxMcp.Worker.Services
                 string source = exportResult["source"]?.ToString();
                 if (string.IsNullOrEmpty(source))
                 {
-                    return Models.McpResponse.Error(
-                        "Export failed",
-                        target,
-                        normalizedPart,
-                        exportResult["error"]?.ToString() ?? "The object part did not return text content.",
-                        obj.Name,
-                        obj.TypeDescriptor?.Name);
+                    return McpResponse.Err(
+                        code: "ExportFailed",
+                        message: "Export failed: part did not return text content.",
+                        hint: exportResult["error"]?.ToString() ?? "The object part did not return text content.",
+                        nextSteps: new JArray(McpResponse.NextStep("genexus_inspect", new JObject { ["name"] = target }, "Returns availableParts so you can pick a valid part name.")),
+                        target: target);
                 }
 
                 string fullPath = Path.GetFullPath(outputPath);
@@ -1324,10 +1367,10 @@ namespace GxMcp.Worker.Services
                     Directory.CreateDirectory(directory);
 
                 if (File.Exists(fullPath) && !overwrite)
-                    return Models.McpResponse.Error("Output file already exists. Set overwrite=true to replace it.", fullPath);
+                    return McpResponse.Err(code: "FileAlreadyExists", message: "Output file already exists. Set overwrite=true to replace it.", hint: "Pass overwrite=true to replace the existing file.", target: fullPath);
 
                 File.WriteAllText(fullPath, source, new UTF8Encoding(false));
-                return Models.McpResponse.Success("ExportText", target, new JObject
+                return McpResponse.Ok(target: target, code: "ExportCompleted", result: new JObject
                 {
                     ["part"] = normalizedPart,
                     ["path"] = fullPath,
@@ -1336,7 +1379,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Export failed", target, partName, ex.Message);
+                return McpResponse.Err(code: "ExportFailed", message: "Export failed: " + ex.Message, hint: "Check that the outputPath is writable and the object part exists.", target: target);
             }
         }
 
@@ -1345,14 +1388,14 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (_writeService == null)
-                    return Models.McpResponse.Error("Import failed", target, partName, "Write service is not available.");
+                    return McpResponse.Err(code: "WriteServiceUnavailable", message: "Import failed: Write service is not available.", hint: "Ensure the worker is fully initialized before calling import.", target: target);
 
                 if (string.IsNullOrWhiteSpace(inputPath))
-                    return Models.McpResponse.Error("Input path is required.", target);
+                    return McpResponse.Err(code: "InputPathRequired", message: "Input path is required.", hint: "Provide a valid inputPath.", target: target);
 
                 string fullPath = Path.GetFullPath(inputPath);
                 if (!File.Exists(fullPath))
-                    return Models.McpResponse.Error("Input file not found.", fullPath);
+                    return McpResponse.Err(code: "InputFileNotFound", message: "Input file not found.", hint: "Verify the inputPath points to an existing file.", target: fullPath);
 
                 string normalizedPart = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
                 var obj = FindObject(target, typeFilter);
@@ -1360,16 +1403,18 @@ namespace GxMcp.Worker.Services
                 {
                     if (string.IsNullOrWhiteSpace(typeFilter))
                     {
-                        return Models.McpResponse.Error(
-                            "Import failed",
-                            target,
-                            normalizedPart,
-                            "Object not found. Provide 'type' to create it before importing.");
+                        return McpResponse.Err(
+                            code: "ObjectNotFound",
+                            message: "Object not found. Provide 'type' to create it before importing.",
+                            hint: "Pass typeFilter so the import can auto-create the object if missing.",
+                            nextSteps: new JArray(McpResponse.NextStep("genexus_create_object", new JObject { ["name"] = target }, "Create the object first, then retry the import.")),
+                            target: target);
                     }
 
                     string createResult = CreateObject(typeFilter, target);
                     JObject createJson = JObject.Parse(createResult);
-                    if (!string.Equals(createJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                    // TODO(v2.8.0): caller in ImportObjectFromText reads createJson["status"]=="ok" after migration
+                    if (!string.Equals(createJson["status"]?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
                     {
                         return createResult;
                     }
@@ -1379,7 +1424,9 @@ namespace GxMcp.Worker.Services
                 string writeResult = _writeService.WriteObject(target, normalizedPart, importedText, typeFilter, autoValidate: false);
                 JObject writeJson = JObject.Parse(writeResult);
 
-                if (string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                // TODO(v2.8.0): caller in ImportObjectFromText reads writeJson["status"]=="ok" after WriteService migration
+                if (string.Equals(writeJson["status"]?.ToString(), "ok", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
                 {
                     writeJson["path"] = fullPath;
                     writeJson["part"] = normalizedPart;
@@ -1390,7 +1437,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Import failed", target, partName, ex.Message);
+                return McpResponse.Err(code: "ImportFailed", message: "Import failed: " + ex.Message, hint: "Check that the inputPath is readable and the target object/part is valid.", target: target);
             }
         }
 
@@ -1414,14 +1461,22 @@ namespace GxMcp.Worker.Services
                             ? "No visual part (Layout/WebForm) found." 
                             : $"Rejected part {diagnosticPart.TypeDescriptor?.Name} (Class: {diagnosticPart.GetType().Name}, GUID: {diagnosticPart.Type}) as a valid visual part.";
 
-                        return Models.McpResponse.Error(
-                            "Visual XML not available",
-                            targetName,
-                            partName,
-                            details,
-                            obj.Name,
-                            obj.TypeDescriptor?.Name,
-                            new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
+                        return Models.McpResponse.Err(
+                            code: "VisualXmlUnavailable",
+                            message: "Visual XML not available.",
+                            hint: details,
+                            nextSteps: new JArray(Models.McpResponse.NextStep(
+                                tool: "genexus_read",
+                                args: new JObject { ["name"] = targetName },
+                                why: "Use the availableParts list to pick a part this object actually exposes.")),
+                            target: targetName,
+                            extra: new JObject
+                            {
+                                ["part"] = partName,
+                                ["objectName"] = obj.Name,
+                                ["objectType"] = obj.TypeDescriptor?.Name,
+                                ["availableParts"] = new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj))
+                            });
                     }
 
                     var visualResult = new JObject
@@ -1457,14 +1512,22 @@ namespace GxMcp.Worker.Services
                         catch (Exception fbEx) { Logger.Debug("[PatternRead] raw-serialize fallback failed: " + fbEx.Message); }
 
                         if (string.IsNullOrEmpty(patternXml))
-                            return Models.McpResponse.Error(
-                                "Pattern XML not available",
-                                targetName,
-                                partName,
-                                "The requested WorkWithPlus pattern part could not be resolved through the current SDK path.",
-                                obj.Name,
-                                obj.TypeDescriptor?.Name,
-                                new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
+                            return Models.McpResponse.Err(
+                                code: "PatternXmlUnavailable",
+                                message: "Pattern XML not available.",
+                                hint: "The requested WorkWithPlus pattern part could not be resolved through the current SDK path. Confirm the object has a pattern attached (genexus_inspect target=...).",
+                                nextSteps: new JArray(Models.McpResponse.NextStep(
+                                    tool: "genexus_inspect",
+                                    args: new JObject { ["name"] = targetName },
+                                    why: "Confirms whether a WorkWithPlus pattern is attached and which parts are exposed.")),
+                                target: targetName,
+                                extra: new JObject
+                                {
+                                    ["part"] = partName,
+                                    ["objectName"] = obj.Name,
+                                    ["objectType"] = obj.TypeDescriptor?.Name,
+                                    ["availableParts"] = new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj))
+                                });
                     }
 
                     var patternResult = new JObject

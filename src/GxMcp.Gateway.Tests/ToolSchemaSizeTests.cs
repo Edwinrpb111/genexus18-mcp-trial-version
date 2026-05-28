@@ -120,7 +120,14 @@ namespace GxMcp.Gateway.Tests
             //   GXMCP_LEGACY_TOOL_ALIASES=0 to opt out). Net: ~13.2k → ~8.8k tokens.
             //   Folded duplicates: orient (use whoami), validate_payload (use edit
             //   validate=only), bulk_edit (use edit targets[]).
-            Assert.True(approxTokens < 9500, $"tool_definitions.json is ~{approxTokens} tokens; budget 9500.");
+            //   v2.8.0 (2026-05-28, examples annotations): 9500 → 10500. Added 1-2
+            //   call-shape examples to every tool's inputSchema.examples array (40 tools
+            //   updated; genexus_recipe and genexus_edit_form already had them). Measured
+            //   ~10034 tokens; ~466 tokens headroom.
+            //   v2.8.0 (2026-05-28, MCP-spec annotations): 10500 → 12000. Added
+            //   annotations block (readOnlyHint, destructiveHint, idempotentHint,
+            //   openWorldHint) to all 42 tools. Measured ~11588 tokens; ~412 headroom.
+            Assert.True(approxTokens < 12000, $"tool_definitions.json is ~{approxTokens} tokens; budget 12000.");
         }
     }
 }

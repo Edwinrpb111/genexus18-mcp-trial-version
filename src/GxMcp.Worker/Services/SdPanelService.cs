@@ -1,4 +1,5 @@
 using System;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -48,16 +49,17 @@ namespace GxMcp.Worker.Services
             var obj = _objectService?.FindObject(target, "SDPanel");
             if (obj == null)
                 return Error("NotFound", "SDPanel '" + target + "' not found.");
-            var payload = new JObject
-            {
-                ["status"] = "Success",
-                ["kind"] = "SDPanel",
-                ["name"] = obj.Name,
-                ["type"] = obj.TypeDescriptor?.Name ?? "SDPanel",
-                ["guid"] = obj.Guid.ToString(),
-                ["description"] = obj.Description ?? string.Empty
-            };
-            return payload.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                target: target,
+                code: "SdPanelInspected",
+                result: new JObject
+                {
+                    ["kind"] = "SDPanel",
+                    ["name"] = obj.Name,
+                    ["type"] = obj.TypeDescriptor?.Name ?? "SDPanel",
+                    ["guid"] = obj.Guid.ToString(),
+                    ["description"] = obj.Description ?? string.Empty
+                });
         }
 
         public string Create(string target, JObject args)
@@ -71,7 +73,7 @@ namespace GxMcp.Worker.Services
                 // Tag the underlying envelope as SDPanel for the agent.
                 JObject parsed;
                 try { parsed = JObject.Parse(raw); }
-                catch { parsed = new JObject { ["status"] = "Success", ["raw"] = raw }; }
+                catch { parsed = JObject.Parse(Models.McpResponse.Ok(code: "SdPanelRawFallback", result: new JObject { ["raw"] = raw })); }
                 parsed["kind"] = "SDPanel";
                 return parsed.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -97,7 +99,7 @@ namespace GxMcp.Worker.Services
                 // Tag the response so the agent sees this routed through the SDPanel path.
                 JObject parsed;
                 try { parsed = JObject.Parse(result); }
-                catch { parsed = new JObject { ["status"] = "Success", ["raw"] = result }; }
+                catch { parsed = JObject.Parse(Models.McpResponse.Ok(code: "SdPanelRawFallback", result: new JObject { ["raw"] = result })); }
                 parsed["kind"] = "SDPanel";
                 return parsed.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -108,12 +110,9 @@ namespace GxMcp.Worker.Services
         }
 
         private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["kind"] = "SDPanel",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            Models.McpResponse.Err(
+                code: code,
+                message: message,
+                extra: new JObject { ["kind"] = "SDPanel" });
     }
 }

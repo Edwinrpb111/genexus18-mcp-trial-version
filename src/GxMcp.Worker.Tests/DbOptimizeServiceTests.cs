@@ -194,8 +194,8 @@ namespace GxMcp.Worker.Tests
             r.Sources["PC"] = "For each Aluno\nWhere AluCurso = &c\nendfor";
 
             var jo = JObject.Parse(svc.Analyze(null));
-            Assert.Equal("Success", jo["status"]?.ToString());
-            var txs = (JArray)jo["transactions"]!;
+            Assert.Equal("ok", jo["status"]?.ToString());
+            var txs = (JArray)jo["result"]!["transactions"]!;
             Assert.Single(txs);
             var t = (JObject)txs[0];
             Assert.Equal("Aluno", t["name"]?.ToString());
@@ -222,8 +222,8 @@ namespace GxMcp.Worker.Tests
             };
 
             var jo = JObject.Parse(svc.SuggestIndexes("Aluno"));
-            Assert.Equal("Success", jo["status"]?.ToString());
-            var suggested = (JArray)jo["suggestedIndexes"]!;
+            Assert.Equal("ok", jo["status"]?.ToString());
+            var suggested = (JArray)jo["result"]!["suggestedIndexes"]!;
             Assert.Single(suggested);
             var s = (JObject)suggested[0];
             Assert.Contains("AluCurso", s["columns"]!.Values<string>());
@@ -243,7 +243,7 @@ namespace GxMcp.Worker.Tests
             };
 
             var jo = JObject.Parse(svc.SuggestIndexes("Aluno"));
-            var redundant = (JArray)jo["redundantIndexes"]!;
+            var redundant = (JArray)jo["result"]!["redundantIndexes"]!;
             Assert.Single(redundant);
             Assert.Equal("IX_Short", redundant[0]?["name"]?.ToString());
         }
@@ -253,8 +253,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = BuildService(out var _, out var _, out var _);
             var jo = JObject.Parse(svc.SuggestIndexes(null));
-            Assert.Equal("Error", jo["status"]?.ToString());
-            Assert.Equal("MissingTarget", jo["code"]?.ToString());
+            Assert.Equal("error", jo["status"]?.ToString());
+            Assert.Equal("MissingTarget", jo["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -266,8 +266,8 @@ namespace GxMcp.Worker.Tests
             r.Sources["P1"] = "For each Aluno\nWhere AluCurso = &c\nendfor";
 
             var jo = JObject.Parse(svc.Report("markdown"));
-            Assert.Equal("Success", jo["status"]?.ToString());
-            string md = jo["report"]?.ToString() ?? string.Empty;
+            Assert.Equal("ok", jo["status"]?.ToString());
+            string md = jo["result"]?["report"]?.ToString() ?? string.Empty;
             Assert.Contains("Top unindexed hot paths", md);
             Assert.Contains("Aluno", md);
             Assert.Contains("AluCurso", md);
@@ -278,9 +278,9 @@ namespace GxMcp.Worker.Tests
         {
             var svc = BuildService(out var _, out var _, out var _);
             var jo = JObject.Parse(svc.Report(null));
-            Assert.Equal("Success", jo["status"]?.ToString());
-            Assert.Null(jo["report"]); // markdown not requested
-            Assert.NotNull(jo["top10"]);
+            Assert.Equal("ok", jo["status"]?.ToString());
+            Assert.Null(jo["result"]?["report"]); // markdown not requested
+            Assert.NotNull(jo["result"]?["top10"]);
         }
 
         [Fact]
@@ -294,7 +294,7 @@ namespace GxMcp.Worker.Tests
             r.Sources["PA"] = "For each Aluno\nWhere AluCod = 1\nendfor";
 
             var jo = JObject.Parse(svc.Analyze(null));
-            var txs = (JArray)jo["transactions"]!;
+            var txs = (JArray)jo["result"]!["transactions"]!;
             Assert.Single(txs);
             Assert.Equal("Aluno", txs[0]?["name"]?.ToString());
         }

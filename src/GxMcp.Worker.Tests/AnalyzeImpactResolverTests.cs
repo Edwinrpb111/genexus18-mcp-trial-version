@@ -50,7 +50,7 @@ namespace GxMcp.Worker.Tests
             var obj = JObject.Parse(json);
             Assert.NotEqual("Indexing in progress for this object. Please retry in a few seconds.",
                 obj["status"]?.ToString());
-            Assert.Contains(obj["status"]?.ToString(), new[] { "Ready" });
+            Assert.Contains(obj["status"]?.ToString(), new[] { "ok" });
         }
 
         [Fact]
@@ -72,7 +72,7 @@ namespace GxMcp.Worker.Tests
             catch (System.TypeLoadException) { return; }
 
             var obj = JObject.Parse(json);
-            Assert.Equal("Ready", obj["status"]?.ToString());
+            Assert.Equal("ok", obj["status"]?.ToString());
             Assert.Equal("ProcB", obj["target"]?.ToString());
         }
 
@@ -99,8 +99,8 @@ namespace GxMcp.Worker.Tests
             // Either "Object not found in index" message OR a synthesised empty envelope.
             // The contract: caller never has to retry on a stub.
             Assert.True(
-                obj["message"]?.ToString() == "Object not found in index"
-                || obj["status"]?.ToString() == "Ready",
+                obj["error"]?["message"]?.ToString() == "Object not found in index."
+                || obj["status"]?.ToString() == "ok",
                 "Resolver must return a deterministic answer, not a polling stub.");
         }
     }

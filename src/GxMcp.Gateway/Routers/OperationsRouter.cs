@@ -23,7 +23,8 @@ namespace GxMcp.Gateway.Routers
                         action = "Delete",
                         target = args?["name"]?.ToString(),
                         type = args?["type"]?.ToString(),
-                        confirm = args?["confirm"]?.ToObject<bool?>() ?? false
+                        confirm = args?["confirm"]?.ToObject<bool?>() ?? false,
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 case "genexus_worker_reload":
@@ -58,6 +59,7 @@ namespace GxMcp.Gateway.Routers
                     string? from = args?["from"]?.ToString() ?? args?["oldName"]?.ToString();
                     string? to = args?["to"]?.ToString() ?? args?["newName"]?.ToString();
                     string? type = args?["type"]?.ToString();
+                    bool renameAcrossDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
                     // RenameAttribute path is the index-driven one (writes attribute then
                     // updates every CalledBy edge). For non-Attribute types, RenameObject
                     // currently falls into the same code path (line 64 of RefactorService).
@@ -69,6 +71,7 @@ namespace GxMcp.Gateway.Routers
                         module = "Refactor",
                         action = refactorAction,
                         target = from,
+                        dryRun = renameAcrossDryRun,
                         payload = new JObject
                         {
                             ["oldName"] = from,
@@ -94,7 +97,8 @@ namespace GxMcp.Gateway.Routers
                         target = args?["name"]?.ToString(),
                         varName = args?["varName"]?.ToString(),
                         typeName = args?["typeName"]?.ToString(),
-                        basedOn = args?["basedOn"]?.ToString()
+                        basedOn = args?["basedOn"]?.ToString(),
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
                 }
 
@@ -207,7 +211,8 @@ namespace GxMcp.Gateway.Routers
                         target = args?["name"]?.ToString(),
                         name = args?["name"]?.ToString(),
                         args = args?["args"],
-                        gamSession = args?["gamSession"]
+                        gamSession = args?["gamSession"],
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 // Item 68 — deterministic PM-readable summary.
@@ -315,7 +320,8 @@ namespace GxMcp.Gateway.Routers
                         title = args?["title"]?.ToString(),
                         body = args?["body"]?.ToString(),
                         @base = args?["base"]?.ToString(),
-                        workingDir = args?["workingDir"]?.ToString()
+                        workingDir = args?["workingDir"]?.ToString(),
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 
                 // Item 81 — OpenAI-compatible LLM endpoint forward.
@@ -894,6 +900,7 @@ namespace GxMcp.Gateway.Routers
         {
             string? action = args?["action"]?.ToString();
             if (string.IsNullOrWhiteSpace(action)) return null;
+            bool refactorDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
 
             if (action == "ExtractProcedure")
             {
@@ -902,6 +909,7 @@ namespace GxMcp.Gateway.Routers
                     module = "Refactor",
                     action,
                     target = args?["objectName"]?.ToString(),
+                    dryRun = refactorDryRun,
                     payload = new JObject
                     {
                         ["code"] = args?["code"]?.ToString(),
@@ -917,6 +925,7 @@ namespace GxMcp.Gateway.Routers
                     module = "Refactor",
                     action,
                     target = args?["target"]?.ToString() ?? args?["objectName"]?.ToString(),
+                    dryRun = refactorDryRun,
                     payload = new JObject
                     {
                         ["controlAttribute"] = args?["controlAttribute"]?.ToString(),
@@ -937,6 +946,7 @@ namespace GxMcp.Gateway.Routers
                 module = "Refactor",
                 action,
                 target,
+                dryRun = refactorDryRun,
                 payload = new JObject
                 {
                     ["oldName"] = args?["target"]?.ToString(),

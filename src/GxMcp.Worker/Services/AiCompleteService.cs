@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -44,20 +45,22 @@ namespace GxMcp.Worker.Services
             string key = _envLookup("GXMCP_AI_COMPLETE_KEY");
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(key))
             {
-                return new JObject
-                {
-                    ["code"] = "AiEndpointNotConfigured",
-                    ["hint"] = "Set GXMCP_AI_COMPLETE_URL and GXMCP_AI_COMPLETE_KEY env vars (OpenAI-compatible endpoint)."
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "AiEndpointNotConfigured",
+                    message: "AI completion endpoint is not configured.",
+                    hint: "Set GXMCP_AI_COMPLETE_URL and GXMCP_AI_COMPLETE_KEY env vars (OpenAI-compatible endpoint).",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        "genexus_ai_complete",
+                        new JObject { ["context"] = "<your prompt>" },
+                        "Retry after setting the env vars."))));
             }
 
             if (string.IsNullOrWhiteSpace(context))
             {
-                return new JObject
-                {
-                    ["code"] = "InvalidRequest",
-                    ["hint"] = "context is required (the prompt/code snippet to complete)."
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "InvalidRequest",
+                    message: "context is required.",
+                    hint: "Pass a non-empty context string (the prompt/code snippet to complete)."));
             }
 
             string model = _envLookup("GXMCP_AI_COMPLETE_MODEL");
@@ -83,23 +86,19 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["code"] = "AiEndpointUnreachable",
-                    ["error"] = ex.Message,
-                    ["hint"] = "Endpoint configured but request failed at the transport layer."
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "AiEndpointUnreachable",
+                    message: "Endpoint configured but request failed at the transport layer: " + ex.Message,
+                    hint: "Check GXMCP_AI_COMPLETE_URL reachability and network connectivity."));
             }
 
             if (statusCode < 200 || statusCode >= 300)
             {
-                return new JObject
-                {
-                    ["code"] = "AiEndpointError",
-                    ["statusCode"] = statusCode,
-                    ["body"] = TruncateForEnvelope(respText),
-                    ["hint"] = "Endpoint returned a non-2xx response."
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "AiEndpointError",
+                    message: "AI endpoint returned HTTP " + statusCode + ".",
+                    hint: "Check the API key and endpoint URL. Response body attached in extra.",
+                    extra: new JObject { ["statusCode"] = statusCode, ["body"] = TruncateForEnvelope(respText) }));
             }
 
             // Parse OpenAI-compatible response: choices[0].message.content + usage.{prompt_tokens, completion_tokens}.
@@ -110,25 +109,26 @@ namespace GxMcp.Worker.Services
                 int tokensIn = parsed["usage"]?["prompt_tokens"]?.ToObject<int?>() ?? 0;
                 int tokensOut = parsed["usage"]?["completion_tokens"]?.ToObject<int?>() ?? 0;
                 string respModel = parsed["model"]?.ToString() ?? model;
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["name"] = name ?? string.Empty,
-                    ["part"] = part ?? string.Empty,
-                    ["completion"] = completion,
-                    ["tokensIn"] = tokensIn,
-                    ["tokensOut"] = tokensOut,
-                    ["model"] = respModel
-                };
+                return JObject.Parse(McpResponse.Ok(
+                    target: name,
+                    code: "AiCompletion",
+                    result: new JObject
+                    {
+                        ["name"] = name ?? string.Empty,
+                        ["part"] = part ?? string.Empty,
+                        ["completion"] = completion,
+                        ["tokensIn"] = tokensIn,
+                        ["tokensOut"] = tokensOut,
+                        ["model"] = respModel
+                    }));
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["code"] = "AiResponseUnparseable",
-                    ["error"] = ex.Message,
-                    ["body"] = TruncateForEnvelope(respText)
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "AiResponseUnparseable",
+                    message: "Failed to parse AI endpoint response: " + ex.Message,
+                    hint: "The endpoint may not be OpenAI-compatible. Check GXMCP_AI_COMPLETE_URL.",
+                    extra: new JObject { ["body"] = TruncateForEnvelope(respText) }));
             }
         }
 

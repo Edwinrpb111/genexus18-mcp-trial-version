@@ -53,7 +53,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target, typeFilter);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target);
+                if (obj == null) return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Check the target name and that the KB is open.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_list_objects", null, "Lists available objects to verify the target name.")), target: target);
 
                 string ck = CacheKey(obj, controlName);
                 lock (_propertyCacheLock)
@@ -66,10 +66,11 @@ namespace GxMcp.Worker.Services
                 if (!string.IsNullOrEmpty(controlName))
                 {
                     container = FindControl(obj, controlName);
-                    if (container == null) return Models.McpResponse.Error($"Control '{controlName}' not found in {obj.Name}", target);
+                    if (container == null) return Models.McpResponse.Err(code: "ControlNotFound", message: $"Control '{controlName}' not found in {obj.Name}.", hint: "Use genexus_inspect to list controls available in this object's layout.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_inspect", new JObject { ["name"] = target }, "Returns the layout controls for this object.")), target: target);
                 }
 
-                string json = SerializeProperties(container).ToString();
+                var propsResult = SerializeProperties(container);
+                string json = Models.McpResponse.Ok(target: target, code: "PropertiesRead", result: propsResult);
                 lock (_propertyCacheLock)
                 {
                     _propertyCache[ck] = (DateTime.UtcNow.AddSeconds(PropertyCacheTtlSeconds), json);
@@ -87,15 +88,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target, typeFilter);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target);
+                if (obj == null) return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Check the target name and that the KB is open.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_list_objects", null, "Lists available objects to verify the target name.")), target: target);
 
                 dynamic container = obj;
                 if (!string.IsNullOrEmpty(controlName))
                 {
                     container = FindControl(obj, controlName);
-                    if (container == null) return Models.McpResponse.Error($"Control '{controlName}' not found in {obj.Name}", target);
+                    if (container == null) return Models.McpResponse.Err(code: "ControlNotFound", message: $"Control '{controlName}' not found in {obj.Name}.", hint: "Use genexus_inspect to list controls available in this object's layout.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_inspect", new JObject { ["name"] = target }, "Returns the layout controls for this object.")), target: target);
                 }
-                
+
                 using (var trans = obj.Model.KB.BeginTransaction())
                 {
                     bool committed = false;
@@ -118,7 +119,7 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return "{\"status\": \"Success\"}";
+                return Models.McpResponse.Ok(target: target, code: "PropertyApplied", result: new JObject { ["property"] = propName, ["value"] = value });
             }
             catch (Exception ex)
             {

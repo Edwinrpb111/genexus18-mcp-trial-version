@@ -19,7 +19,7 @@ namespace GxMcp.Worker.Tests
             string raw = svc.Diagnose();
             Assert.False(string.IsNullOrWhiteSpace(raw));
             var json = JObject.Parse(raw);
-            Assert.Equal("Success", (string)json["status"]);
+            Assert.Equal("ok", (string)json["status"]);
         }
 
         [Fact]
@@ -29,24 +29,24 @@ namespace GxMcp.Worker.Tests
             var json = JObject.Parse(svc.Diagnose());
 
             Assert.NotNull(json["status"]);
-            Assert.NotNull(json["checkedAt"]);
-            Assert.NotNull(json["version"]);
-            Assert.NotNull(json["geneXus"]);
-            Assert.NotNull(json["kb"]);
-            Assert.NotNull(json["worker"]);
-            Assert.NotNull(json["cache"]);
-            Assert.NotNull(json["telemetry"]);
-            Assert.NotNull(json["warnings"]);
+            Assert.NotNull(json["result"]?["checkedAt"]);
+            Assert.NotNull(json["result"]?["version"]);
+            Assert.NotNull(json["result"]?["geneXus"]);
+            Assert.NotNull(json["result"]?["kb"]);
+            Assert.NotNull(json["result"]?["worker"]);
+            Assert.NotNull(json["result"]?["cache"]);
+            Assert.NotNull(json["result"]?["telemetry"]);
+            Assert.NotNull(json["result"]?["warnings"]);
             // 'hint' is either null or a string — must be present.
-            Assert.True(json.ContainsKey("hint"));
+            Assert.True(((JObject)json["result"]!).ContainsKey("hint"));
 
             // Worker block must always have a real pid (the running test host).
-            Assert.True((int)json["worker"]["pid"] > 0);
+            Assert.True((int)json["result"]!["worker"]!["pid"] > 0);
 
             // Telemetry shape contract: zero-state but well-formed.
-            Assert.Equal(0L, (long)json["telemetry"]["totalToolCalls"]);
-            Assert.IsType<JArray>(json["telemetry"]["slowestTools"]);
-            Assert.IsType<JArray>(json["telemetry"]["mostCalled"]);
+            Assert.Equal(0L, (long)json["result"]!["telemetry"]!["totalToolCalls"]);
+            Assert.IsType<JArray>(json["result"]!["telemetry"]!["slowestTools"]);
+            Assert.IsType<JArray>(json["result"]!["telemetry"]!["mostCalled"]);
         }
 
         [Fact]
@@ -54,7 +54,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new DoctorService(null, null, null);
             var json = JObject.Parse(svc.Diagnose());
-            var warnings = (JArray)json["warnings"];
+            var warnings = (JArray)json["result"]!["warnings"];
             bool found = false;
             foreach (var w in warnings)
             {
@@ -66,7 +66,7 @@ namespace GxMcp.Worker.Tests
             }
             Assert.True(found, "Expected a 'Call genexus_open_kb first.' warning when KB is unopened. Got: " + warnings.ToString());
             // Hint should mirror first warning when any present.
-            Assert.NotEqual(JTokenType.Null, json["hint"].Type);
+            Assert.NotEqual(JTokenType.Null, json["result"]!["hint"].Type);
         }
 
         [Fact]
@@ -86,7 +86,7 @@ namespace GxMcp.Worker.Tests
             var svc = new DoctorService(null, null, stub);
             var json = JObject.Parse(svc.Diagnose());
 
-            var slowest = (JArray)json["telemetry"]["slowestTools"];
+            var slowest = (JArray)json["result"]!["telemetry"]!["slowestTools"];
             Assert.Equal(3, slowest.Count);
             Assert.Equal("slow",   (string)slowest[0]["name"]);
             Assert.Equal(9000L,    (long)slowest[0]["p95Ms"]);
@@ -94,13 +94,13 @@ namespace GxMcp.Worker.Tests
             Assert.Equal("fast",   (string)slowest[2]["name"]);
 
             // mostCalled sorted by count desc.
-            var most = (JArray)json["telemetry"]["mostCalled"];
+            var most = (JArray)json["result"]!["telemetry"]!["mostCalled"];
             Assert.Equal("fast", (string)most[0]["name"]);
 
             // Totals.
-            Assert.Equal(80L, (long)json["telemetry"]["totalToolCalls"]);
+            Assert.Equal(80L, (long)json["result"]!["telemetry"]!["totalToolCalls"]);
             // error rate = 3 / 80 = 0.0375 → 0.038 after rounding to 3dp.
-            double er = (double)json["telemetry"]["errorRate"];
+            double er = (double)json["result"]!["telemetry"]!["errorRate"];
             Assert.True(er > 0.03 && er < 0.05, "errorRate should be ~0.038, got " + er);
         }
 

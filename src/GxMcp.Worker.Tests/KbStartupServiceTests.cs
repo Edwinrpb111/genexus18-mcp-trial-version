@@ -32,8 +32,8 @@ namespace GxMcp.Worker.Tests
             store.Values["DefaultObject"] = "WPHome";
             var svc = new KbStartupService(kbService: null, objectService: null, store: store);
             var j = JObject.Parse(svc.GetStartup());
-            Assert.Equal("WPMain", (string)j["startupObject"]);
-            Assert.Equal("WPHome", (string)j["defaultObject"]);
+            Assert.Equal("WPMain", (string)j["result"]?["startupObject"]);
+            Assert.Equal("WPHome", (string)j["result"]?["defaultObject"]);
         }
 
         [Fact]
@@ -43,8 +43,8 @@ namespace GxMcp.Worker.Tests
             store.Values["DefaultObject"] = "WPHome";
             var svc = new KbStartupService(kbService: null, objectService: null, store: store);
             var j = JObject.Parse(svc.GetStartup());
-            Assert.Equal(string.Empty, (string)j["startupObject"]);
-            Assert.NotNull(j["hint"]);
+            Assert.Equal(string.Empty, (string)j["result"]?["startupObject"]);
+            Assert.NotNull(j["result"]?["hint"]);
         }
 
         [Fact]
@@ -65,7 +65,7 @@ namespace GxMcp.Worker.Tests
             var store = new FakeStore();
             var svc = new KbStartupService(kbService: null, objectService: null, store: store);
             var j = JObject.Parse(svc.SetStartup("AnythingHere"));
-            Assert.Equal("NotFound", (string)j["code"]);
+            Assert.Equal("NotFound", (string)j["error"]?["code"]);
             Assert.Equal(0, store.WriteCount);
         }
     }

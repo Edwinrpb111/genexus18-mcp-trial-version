@@ -30,7 +30,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, "Layout", "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "Verify the object name and ensure the KB is open.",
+                    nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new Newtonsoft.Json.Linq.JObject { ["type"] = "WebPanel" },
+                        why: "Lists available objects so you can pick a valid target.")),
+                    target: target);
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -53,11 +61,15 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return result.ToString();
+                return Models.McpResponse.Ok(target: target, code: "UIContextRead", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "UIContextFailed",
+                    message: ex.Message,
+                    hint: "Check that the object has a WebForm part and the KB is open.",
+                    target: target);
             }
         }
 

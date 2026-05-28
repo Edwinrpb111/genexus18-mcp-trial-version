@@ -85,12 +85,12 @@ namespace GxMcp.Worker.Tests
             string json = (string)mi.Invoke(svc, new object[] { "Aluno", (Func<string, string, string>)null });
 
             var o = JObject.Parse(json);
-            Assert.Equal("Success", o["status"]?.ToString());
-            Assert.Equal("Aluno", o["target"]?["name"]?.ToString());
-            Assert.Equal(2, o["summary"]?["webCallers"]?.ToObject<int>());
-            Assert.Equal(0, o["summary"]?["sdCallers"]?.ToObject<int>());
-            Assert.Equal("low", o["_meta"]?["confidence"]?.ToString());
-            Assert.Contains("required_field_mismatch", o["_meta"]?["detectorsRun"]?.ToString());
+            Assert.Equal("ok", o["status"]?.ToString());
+            Assert.Equal("Aluno", o["result"]?["target"]?["name"]?.ToString());
+            Assert.Equal(2, o["result"]?["summary"]?["webCallers"]?.ToObject<int>());
+            Assert.Equal(0, o["result"]?["summary"]?["sdCallers"]?.ToObject<int>());
+            Assert.Equal("low", o["result"]?["_meta"]?["confidence"]?.ToString());
+            Assert.Contains("required_field_mismatch", o["result"]?["_meta"]?["detectorsRun"]?.ToString());
         }
 
         [Fact]
@@ -115,10 +115,10 @@ namespace GxMcp.Worker.Tests
             string json = (string)mi.Invoke(svc, new object[] { "Aluno", (Func<string, string, string>)null });
 
             var o = JObject.Parse(json);
-            Assert.Equal(1, o["summary"]?["webCallers"]?.ToObject<int>());
-            Assert.Equal(1, o["summary"]?["sdCallers"]?.ToObject<int>());
-            var web = (JArray)o["platforms"]["Web"]["callers"];
-            var sd = (JArray)o["platforms"]["SmartDevices"]["callers"];
+            Assert.Equal(1, o["result"]?["summary"]?["webCallers"]?.ToObject<int>());
+            Assert.Equal(1, o["result"]?["summary"]?["sdCallers"]?.ToObject<int>());
+            var web = (JArray)o["result"]?["platforms"]?["Web"]?["callers"];
+            var sd = (JArray)o["result"]?["platforms"]?["SmartDevices"]?["callers"];
             Assert.Equal("AluCadWeb", web[0]["name"]?.ToString());
             Assert.Equal("AluCadSD", sd[0]["name"]?.ToString());
         }
@@ -152,7 +152,7 @@ namespace GxMcp.Worker.Tests
             string json = (string)mi.Invoke(svc, new object[] { "Aluno", resolver });
 
             var o = JObject.Parse(json);
-            var div = (JArray)o["crossPlatformDivergence"];
+            var div = (JArray)o["result"]?["crossPlatformDivergence"];
             Assert.NotEmpty(div);
             Assert.Equal("validation_rule_only_on_one_side", div[0]["kind"]?.ToString());
             Assert.Equal("gated", div[0]["Web"]?.ToString());
@@ -197,7 +197,7 @@ namespace GxMcp.Worker.Tests
             string json = (string)mi.Invoke(svc, new object[] { "Aluno", resolver });
 
             var o = JObject.Parse(json);
-            var div = (JArray)o["crossPlatformDivergence"];
+            var div = (JArray)o["result"]?["crossPlatformDivergence"];
             bool found = false;
             foreach (var d in div)
             {
@@ -229,7 +229,7 @@ namespace GxMcp.Worker.Tests
                 null);
             string json = (string)mi.Invoke(svc, new object[] { "Aluno", (Func<string, string, string>)null });
             var o = JObject.Parse(json);
-            string pending = o["_meta"]?["detectorsPending"]?.ToString() ?? "";
+            string pending = o["result"]?["_meta"]?["detectorsPending"]?.ToString() ?? "";
             Assert.Contains("type_coercion_only_on_one_side", pending);
             Assert.Contains("null_handling_divergence", pending);
         }

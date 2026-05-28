@@ -32,8 +32,9 @@ namespace GxMcp.Worker.Tests
 
             var search = new SourceSearchService(index, objectService: null);
             var coldEnv = JObject.Parse(search.SearchAsJson(new SourceSearchCriteria { Pattern = "anything", MaxResults = 5 }));
-            Assert.Equal("IndexCold", coldEnv["status"]?.ToString());
-            Assert.NotNull(coldEnv["retryAfterMs"]);
+            Assert.Equal("ok", coldEnv["status"]?.ToString());
+            Assert.Equal("IndexCold", coldEnv["code"]?.ToString());
+            Assert.NotNull(coldEnv["result"]?["retryAfterMs"]);
 
             // ── 2. Warm-load → state transitions to Ready (post-Task 1.2 fix) ─
             var entries = Enumerable.Range(0, 50).Select(i => new SearchIndex.IndexEntry
@@ -108,7 +109,8 @@ namespace GxMcp.Worker.Tests
                 MaxResults = 1000,
                 TimeoutMs = 30000
             }, cts.Token));
-            Assert.Equal("Cancelled", cancelled["status"]?.ToString());
+            Assert.Equal("ok", cancelled["status"]?.ToString());
+            Assert.Equal("Cancelled", cancelled["code"]?.ToString());
         }
     }
 }

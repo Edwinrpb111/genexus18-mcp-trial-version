@@ -12,9 +12,9 @@ namespace GxMcp.Worker.Tests
             var svc = new SecurityAuditService(kbService: null);
             var json = JObject.Parse(svc.AuditGam());
 
-            Assert.Equal("Success", (string)json["status"]!);
-            Assert.Equal(1, (int)json["findingsCount"]!);
-            var first = (JObject)((JArray)json["findings"]!)[0];
+            Assert.Equal("ok", (string)json["status"]!);
+            Assert.Equal(1, (int)json["result"]!["findingsCount"]!);
+            var first = (JObject)((JArray)json["result"]!["findings"]!)[0];
             Assert.Equal("KbPathUnknown", (string)first["code"]!);
             Assert.Equal("info", (string)first["severity"]!);
         }
@@ -25,7 +25,7 @@ namespace GxMcp.Worker.Tests
             // Indirect: call with no KB (one info finding); verify worstSeverity = info.
             var svc = new SecurityAuditService(kbService: null);
             var json = JObject.Parse(svc.AuditGam());
-            Assert.Equal("info", (string)json["worstSeverity"]!);
+            Assert.Equal("info", (string)json["result"]!["worstSeverity"]!);
         }
 
         // Item 48 extension (friction-report 2026-05-22) — secret-pattern coverage.

@@ -40,14 +40,14 @@ namespace GxMcp.Worker.Tests
             string json = svc.GeneratePlan("RootProc", format: null, toolStatsP95: null, maxNodes: 100);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Success", obj["status"]?.ToString());
-            var nodes = (JArray)obj["nodes"]!;
-            var edges = (JArray)obj["edges"]!;
+            Assert.Equal("ok", obj["status"]?.ToString());
+            var nodes = (JArray)obj["result"]!["nodes"]!;
+            var edges = (JArray)obj["result"]!["edges"]!;
             Assert.Equal(3, nodes.Count);
             Assert.Equal(2, edges.Count);
-            Assert.True(obj["totalEstimatedSeconds"]!.ToObject<int>() > 0);
+            Assert.True(obj["result"]!["totalEstimatedSeconds"]!.ToObject<int>() > 0);
             // Procedure default 4s + Procedure 4s + WebPanel 10s = 18.
-            Assert.Equal(4 + 4 + 10, obj["totalEstimatedSeconds"]!.ToObject<int>());
+            Assert.Equal(4 + 4 + 10, obj["result"]!["totalEstimatedSeconds"]!.ToObject<int>());
         }
 
         [Fact]
@@ -61,7 +61,7 @@ namespace GxMcp.Worker.Tests
             var svc = BuildSvc(BuildIndex(entries));
             string json = svc.GeneratePlan("X", format: "ascii", toolStatsP95: null, maxNodes: 100);
             var obj = JObject.Parse(json);
-            string ascii = obj["ascii"]?.ToString() ?? "";
+            string ascii = obj["result"]?["ascii"]?.ToString() ?? "";
             Assert.Contains("BuildPlan: X", ascii);
             Assert.Contains("X (Procedure", ascii);
             Assert.Contains("Y (Procedure", ascii);
@@ -73,8 +73,8 @@ namespace GxMcp.Worker.Tests
             var svc = BuildSvc(BuildIndex(new SearchIndex.IndexEntry[0]));
             string json = svc.GeneratePlan(target: "", format: null, toolStatsP95: null, maxNodes: 100);
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("MissingTarget", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("MissingTarget", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -89,7 +89,7 @@ namespace GxMcp.Worker.Tests
             var p95 = new JObject { ["Heavy"] = 30000 }; // 30 seconds
             string json = svc.GeneratePlan("Heavy", format: null, toolStatsP95: p95, maxNodes: 100);
             var obj = JObject.Parse(json);
-            Assert.Equal(30, obj["totalEstimatedSeconds"]?.ToObject<int>());
+            Assert.Equal(30, obj["result"]?["totalEstimatedSeconds"]?.ToObject<int>());
         }
     }
 
@@ -118,8 +118,8 @@ namespace GxMcp.Worker.Tests
 
             string json = svc.DependencyHeatmap(kbPath: null, format: null);
             var obj = JObject.Parse(json);
-            Assert.Equal("Success", obj["status"]?.ToString());
-            var objects = (JArray)obj["objects"]!;
+            Assert.Equal("ok", obj["status"]?.ToString());
+            var objects = (JArray)obj["result"]!["objects"]!;
             Assert.True(objects.Count >= 2);
             Assert.Equal("Hot", objects[0]["name"]?.ToString());
             Assert.True(objects[0]["score"]!.ToObject<int>() > objects[1]["score"]!.ToObject<int>());
@@ -139,9 +139,9 @@ namespace GxMcp.Worker.Tests
             var svc = new AnalyzeService(BuildIndex(entries), objSvc: null, graph: null);
             string json = svc.DependencyHeatmap(kbPath: null, format: "ascii");
             var obj = JObject.Parse(json);
-            Assert.NotNull(obj["ascii"]);
-            Assert.Contains("Dependency heatmap", obj["ascii"]!.ToString());
-            Assert.Contains("Foo", obj["ascii"]!.ToString());
+            Assert.NotNull(obj["result"]?["ascii"]);
+            Assert.Contains("Dependency heatmap", obj["result"]!["ascii"]!.ToString());
+            Assert.Contains("Foo", obj["result"]!["ascii"]!.ToString());
         }
 
         [Fact]
@@ -165,7 +165,7 @@ namespace GxMcp.Worker.Tests
                 var svc = new AnalyzeService(BuildIndex(entries), objSvc: null, graph: null);
                 string json = svc.DependencyHeatmap(kbPath: tempKb, format: null);
                 var obj = JObject.Parse(json);
-                var objects = (JArray)obj["objects"]!;
+                var objects = (JArray)obj["result"]!["objects"]!;
                 // "Edited" has 2 edits * 5 = 10 score; "Static" has 1 ref = 1. Edited wins.
                 Assert.Equal("Edited", objects[0]["name"]?.ToString());
                 Assert.Equal(2, objects[0]["factors"]?["editCount"]?.ToObject<int>());

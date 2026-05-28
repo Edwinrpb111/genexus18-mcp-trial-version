@@ -629,6 +629,53 @@ namespace GxMcp.Worker.Services
         public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy, string notifyOnFailure)
             => Build(action, target, includeCallees, buildPlanCap, skipFullDeploy, notifyOnFailure, fastIncremental: false);
 
+        /// <summary>
+        /// dryRun=true: expands the build plan without dispatching a build task.
+        /// Returns code=DryRun with the resolved targets list so the agent can
+        /// preview what would compile.
+        /// </summary>
+        public string BuildDryRun(string action, string target, string includeCallees, int buildPlanCap)
+        {
+            try
+            {
+                var targets = ParseTargets(target);
+                BuildPlan plan = null;
+                if (action != null && action.Equals("Build", StringComparison.OrdinalIgnoreCase) && targets.Count > 0)
+                {
+                    plan = ExpandTargets(targets, includeCallees ?? "transitive", buildPlanCap);
+                    if (plan.Truncated)
+                    {
+                        return McpResponse.Err(
+                            code: "BuildPlanTooLarge",
+                            message: "Build plan exceeded cap in dryRun expansion.",
+                            extra: new JObject
+                            {
+                                ["requestedNodes"] = plan.RequestedNodes,
+                                ["cap"] = plan.NodeCap,
+                                ["includeCallees"] = plan.IncludeCallees
+                            });
+                    }
+                    targets = plan.Expanded;
+                }
+                return McpResponse.Ok(
+                    code: "DryRun",
+                    result: new JObject
+                    {
+                        ["preview"] = new JObject
+                        {
+                            ["action"] = action,
+                            ["wouldBuild"] = new JArray(targets.ToArray()),
+                            ["includeCallees"] = includeCallees ?? "transitive",
+                            ["buildPlanCap"] = buildPlanCap
+                        }
+                    });
+            }
+            catch (Exception ex)
+            {
+                return McpResponse.Err(code: "DryRunFailed", message: ex.Message);
+            }
+        }
+
         // Item 28 — EXPERIMENTAL. When fastIncremental=true, ask the configured
         // IFastIncrementalDecision what we can skip given the current dirty set.
         // Three short-circuit envelopes are surfaced ahead of the normal

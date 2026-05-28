@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -87,7 +88,14 @@ namespace GxMcp.Worker.Services
             }
 
             if (sets.Count < 2)
-                return new JObject { ["status"] = "Error", ["code"] = "InsufficientResolved", ["unresolved"] = unresolved, ["resolved"] = sets.Count }.ToString(Formatting.None);
+                return McpResponse.Err(
+                    code: "InsufficientResolved",
+                    message: "Fewer than 2 objects could be resolved from the source list.",
+                    hint: "Ensure the object names exist in the KB and are accessible.",
+                    nextSteps: new JArray {
+                        McpResponse.NextStep("genexus_list_objects", null, "List available objects to find valid names.")
+                    },
+                    extra: new JObject { ["unresolved"] = unresolved, ["resolved"] = sets.Count });
 
             HashSet<string> commonVars = new HashSet<string>(sets[0].vars, StringComparer.OrdinalIgnoreCase);
             HashSet<string> commonEvents = new HashSet<string>(sets[0].events, StringComparer.OrdinalIgnoreCase);
@@ -117,20 +125,26 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["scanned"] = sets.Count,
-                ["unresolved"] = unresolved,
-                ["commonVariables"] = new JArray(commonVars),
-                ["commonEvents"] = new JArray(commonEvents),
-                ["commonParmSignature"] = parmSignature,
-                ["parmSignatureMatchesAll"] = parmsAllMatch,
-                ["divergencePoints"] = divergence,
-                ["hint"] = (commonVars.Count + commonEvents.Count) >= 3 ? "Strong commonality — candidate for a custom pattern." : "Weak commonality — these objects may not share a real pattern."
-            }.ToString(Formatting.None);
+            return McpResponse.Ok(
+                code: "ReversePatternInferred",
+                result: new JObject
+                {
+                    ["scanned"] = sets.Count,
+                    ["unresolved"] = unresolved,
+                    ["commonVariables"] = new JArray(commonVars),
+                    ["commonEvents"] = new JArray(commonEvents),
+                    ["commonParmSignature"] = parmSignature,
+                    ["parmSignatureMatchesAll"] = parmsAllMatch,
+                    ["divergencePoints"] = divergence,
+                    ["hint"] = (commonVars.Count + commonEvents.Count) >= 3 ? "Strong commonality — candidate for a custom pattern." : "Weak commonality — these objects may not share a real pattern."
+                });
         }
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Formatting.None);
+        private static string Err(string m) => McpResponse.Err(
+            code: "ReversePatternError",
+            message: m,
+            nextSteps: new JArray {
+                McpResponse.NextStep("genexus_reverse_pattern", new JObject { ["action"] = "infer", ["source"] = new JArray { "<name1>", "<name2>" } }, "Provide at least 2 valid object names.")
+            });
     }
 }

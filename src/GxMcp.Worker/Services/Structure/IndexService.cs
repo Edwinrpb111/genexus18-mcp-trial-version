@@ -18,13 +18,30 @@ namespace GxMcp.Worker.Services.Structure
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, "Indexes", "The requested object is not available in the active Knowledge Base.");
-                
+                if (obj == null) return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "The requested object is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_search",
+                        args: new JObject { ["query"] = targetName },
+                        why: "Search for objects matching the name to find the correct identifier.")),
+                    target: targetName);
+
                 Table tbl = null;
                 if (obj is Table t) tbl = t;
                 else if (obj is Transaction trn) tbl = trn.Structure.Root.AssociatedTable;
-                
-                if (tbl == null) return Models.McpResponse.Error("Associated table not found", targetName, "Indexes", "The requested object does not expose a physical table structure for index inspection.", obj.Name, obj.TypeDescriptor?.Name);
+
+                if (tbl == null) return Models.McpResponse.Err(
+                    code: "AssociatedTableNotFound",
+                    message: "Associated table not found.",
+                    hint: "The requested object does not expose a physical table structure for index inspection.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = targetName },
+                        why: "Inspect the object to confirm whether it has an associated table.")),
+                    target: targetName,
+                    extra: new JObject { ["objectName"] = obj.Name, ["objectType"] = obj.TypeDescriptor?.Name });
 
                 var result = new JObject();
                 result["name"] = tbl.Name;
@@ -35,12 +52,12 @@ namespace GxMcp.Worker.Services.Structure
                         dynamic idx = idxObj.Index; if (idx == null) continue;
                         var indexItem = new JObject();
                         indexItem["name"] = idx.Name;
-                        
+
                         string typeStr = idx.IndexType != null ? idx.IndexType.ToString() : "";
                         bool isPrimary = typeStr.Contains("Primary");
                         indexItem["isPrimary"] = isPrimary;
                         indexItem["isUnique"] = typeStr.Contains("Unique") || isPrimary;
-                        
+
                         var attrs = new JArray();
                         if (idx.IndexStructure != null && idx.IndexStructure.Members != null) {
                             foreach (dynamic m in idx.IndexStructure.Members) {
@@ -59,9 +76,17 @@ namespace GxMcp.Worker.Services.Structure
                     }
                 }
                 result["indexes"] = indexes;
-                return result.ToString();
+                return Models.McpResponse.Ok(target: targetName, code: "IndexesRead", result: result);
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "IndexesReadFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log; the table index metadata may not be accessible for this object.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = targetName },
+                        why: "Inspect the object to confirm its structure is accessible before retrying.")),
+                    target: targetName);
             }
         }
     }

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using Artech.Architecture.Common.Objects;
 using Artech.Architecture.Common.Services;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 using SdkServices = Artech.Architecture.Common.Services.Services;
 
@@ -52,12 +53,11 @@ namespace GxMcp.Worker.Services
                 case "history":
                     break;
                 default:
-                    return new JObject
-                    {
-                        ["status"] = "Error",
-                        ["code"] = "BadAction",
-                        ["message"] = "Unknown action '" + action + "'. Expected one of: status, pending, conflicts, history."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Err(
+                        code: "BadAction",
+                        message: "Unknown action '" + action + "'. Expected one of: status, pending, conflicts, history.",
+                        hint: "Pass action=status, action=pending, action=conflicts, or action=history.",
+                        nextSteps: new JArray { McpResponse.NextStep("genexus_gxserver", new JObject { ["action"] = "status" }, "Query connection status.") });
             }
 
             // Primary: SDK-backed answer from the live KB. Returns null when the
@@ -105,23 +105,30 @@ namespace GxMcp.Worker.Services
                 {
                     case "status":
                     {
-                        var jo = new JObject
-                        {
-                            ["status"] = "Success",
-                            ["connected"] = linked,
-                            ["kbAlias"] = kbAlias ?? string.Empty,
-                            ["source"] = "sdk:ITeamDevClientService"
-                        };
                         if (!linked)
                         {
-                            jo["hint"] = "This KB is not linked to a GeneXus Server instance.";
-                            return jo.ToString(Newtonsoft.Json.Formatting.None);
+                            return McpResponse.Ok(
+                                code: "GxServerStatusRetrieved",
+                                result: new JObject
+                                {
+                                    ["connected"] = false,
+                                    ["kbAlias"] = kbAlias ?? string.Empty,
+                                    ["hint"] = "This KB is not linked to a GeneXus Server instance.",
+                                    ["source"] = "sdk:ITeamDevClientService"
+                                });
                         }
-                        jo["serverUrl"] = SafeStr(() => svc.GetServerUrl(kb));
-                        jo["host"] = SafeStr(() => svc.GetGXserverHost(kb));
-                        jo["remoteKbName"] = SafeStr(() => svc.GetRemoteKBName(kb));
-                        jo["remoteVersionName"] = SafeStr(() => svc.RemoteVersionName(model));
-                        return jo.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            code: "GxServerStatusRetrieved",
+                            result: new JObject
+                            {
+                                ["connected"] = true,
+                                ["kbAlias"] = kbAlias ?? string.Empty,
+                                ["serverUrl"] = SafeStr(() => svc.GetServerUrl(kb)),
+                                ["host"] = SafeStr(() => svc.GetGXserverHost(kb)),
+                                ["remoteKbName"] = SafeStr(() => svc.GetRemoteKBName(kb)),
+                                ["remoteVersionName"] = SafeStr(() => svc.RemoteVersionName(model)),
+                                ["source"] = "sdk:ITeamDevClientService"
+                            });
                     }
 
                     case "pending":
@@ -138,14 +145,15 @@ namespace GxMcp.Worker.Services
                                 ["user"] = SafeStr(() => (string)h.Username)
                             });
                         }
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["connected"] = true,
-                            ["count"] = objects.Count,
-                            ["objects"] = objects,
-                            ["source"] = "sdk:ITeamDevClientService"
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            code: "GxServerPendingRetrieved",
+                            result: new JObject
+                            {
+                                ["connected"] = true,
+                                ["count"] = objects.Count,
+                                ["objects"] = objects,
+                                ["source"] = "sdk:ITeamDevClientService"
+                            });
                     }
 
                     case "conflicts":
@@ -163,14 +171,15 @@ namespace GxMcp.Worker.Services
                                 });
                             }
                         }
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["connected"] = true,
-                            ["count"] = conflicts.Count,
-                            ["conflicts"] = conflicts,
-                            ["source"] = "sdk:ITeamDevClientService"
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            code: "GxServerConflictsRetrieved",
+                            result: new JObject
+                            {
+                                ["connected"] = true,
+                                ["count"] = conflicts.Count,
+                                ["conflicts"] = conflicts,
+                                ["source"] = "sdk:ITeamDevClientService"
+                            });
                     }
 
                     default: // history — local change log (most-recent first). Remote
@@ -194,16 +203,17 @@ namespace GxMcp.Worker.Services
                         rows.Sort((a, b) => string.CompareOrdinal((string)b["lastChange"], (string)a["lastChange"]));
                         var history = new JArray();
                         for (int i = 0; i < rows.Count && i < limit; i++) history.Add(rows[i]);
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["connected"] = true,
-                            ["limit"] = limit,
-                            ["history"] = history,
-                            ["scope"] = "localChanges",
-                            ["note"] = "Local (uncommitted) change log. Remote revision history requires server credentials.",
-                            ["source"] = "sdk:ITeamDevClientService"
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            code: "GxServerHistoryRetrieved",
+                            result: new JObject
+                            {
+                                ["connected"] = true,
+                                ["limit"] = limit,
+                                ["history"] = history,
+                                ["scope"] = "localChanges",
+                                ["note"] = "Local (uncommitted) change log. Remote revision history requires server credentials.",
+                                ["source"] = "sdk:ITeamDevClientService"
+                            });
                     }
                 }
             }
@@ -212,13 +222,14 @@ namespace GxMcp.Worker.Services
 
         private static string NotLinked()
         {
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["connected"] = false,
-                ["hint"] = "This KB is not linked to a GeneXus Server instance.",
-                ["source"] = "sdk:ITeamDevClientService"
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GxServerStatusRetrieved",
+                result: new JObject
+                {
+                    ["connected"] = false,
+                    ["hint"] = "This KB is not linked to a GeneXus Server instance.",
+                    ["source"] = "sdk:ITeamDevClientService"
+                });
         }
 
         private static IEnumerable<dynamic> EnumLocalChanges(ITeamDevClientService svc, KBModel model)
@@ -268,20 +279,26 @@ namespace GxMcp.Worker.Services
         internal static string StatusEnvelope(string kbPath, string kbAlias)
         {
             var det = Detect(kbPath);
-            var jo = new JObject
-            {
-                ["status"] = "Success",
-                ["connected"] = det.Connected,
-                ["kbAlias"] = kbAlias ?? string.Empty
-            };
             if (!det.Connected)
             {
-                jo["hint"] = "This KB is not connected to a GeneXus Server instance.";
-                return jo.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "GxServerStatusRetrieved",
+                    result: new JObject
+                    {
+                        ["connected"] = false,
+                        ["kbAlias"] = kbAlias ?? string.Empty,
+                        ["hint"] = "This KB is not connected to a GeneXus Server instance."
+                    });
             }
-            jo["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath;
-            jo["detectedVia"] = det.DetectedPath;
-            return jo.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GxServerStatusRetrieved",
+                result: new JObject
+                {
+                    ["connected"] = true,
+                    ["kbAlias"] = kbAlias ?? string.Empty,
+                    ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath,
+                    ["detectedVia"] = det.DetectedPath
+                });
         }
 
         internal static string PendingEnvelope(string kbPath)
@@ -289,20 +306,22 @@ namespace GxMcp.Worker.Services
             var det = Detect(kbPath);
             if (!det.Connected)
             {
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["connected"] = false,
-                    ["hint"] = "This KB is not connected to a GeneXus Server instance."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "GxServerPendingRetrieved",
+                    result: new JObject
+                    {
+                        ["connected"] = false,
+                        ["hint"] = "This KB is not connected to a GeneXus Server instance."
+                    });
             }
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["connected"] = true,
-                ["objects"] = new JArray(),
-                ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GxServerPendingRetrieved",
+                result: new JObject
+                {
+                    ["connected"] = true,
+                    ["objects"] = new JArray(),
+                    ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
+                });
         }
 
         internal static string ConflictsEnvelope(string kbPath)
@@ -310,20 +329,22 @@ namespace GxMcp.Worker.Services
             var det = Detect(kbPath);
             if (!det.Connected)
             {
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["connected"] = false,
-                    ["hint"] = "This KB is not connected to a GeneXus Server instance."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "GxServerConflictsRetrieved",
+                    result: new JObject
+                    {
+                        ["connected"] = false,
+                        ["hint"] = "This KB is not connected to a GeneXus Server instance."
+                    });
             }
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["connected"] = true,
-                ["conflicts"] = new JArray(),
-                ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GxServerConflictsRetrieved",
+                result: new JObject
+                {
+                    ["connected"] = true,
+                    ["conflicts"] = new JArray(),
+                    ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
+                });
         }
 
         internal static string HistoryEnvelope(string kbPath, int limit)
@@ -331,23 +352,25 @@ namespace GxMcp.Worker.Services
             var det = Detect(kbPath);
             if (!det.Connected)
             {
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["connected"] = false,
-                    ["hint"] = "This KB is not connected to a GeneXus Server instance."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "GxServerHistoryRetrieved",
+                    result: new JObject
+                    {
+                        ["connected"] = false,
+                        ["hint"] = "This KB is not connected to a GeneXus Server instance."
+                    });
             }
             if (limit <= 0) limit = 10;
             if (limit > 200) limit = 200;
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["connected"] = true,
-                ["history"] = new JArray(),
-                ["limit"] = limit,
-                ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GxServerHistoryRetrieved",
+                result: new JObject
+                {
+                    ["connected"] = true,
+                    ["history"] = new JArray(),
+                    ["limit"] = limit,
+                    ["note"] = "metadata parsing pending — connection detected via " + det.DetectedPath
+                });
         }
     }
 }

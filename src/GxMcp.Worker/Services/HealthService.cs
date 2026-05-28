@@ -19,7 +19,9 @@ namespace GxMcp.Worker.Services
 
         public string Ping()
         {
-            return "{\"status\": \"Ready\", \"timestamp\": \"" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\"}";
+            return McpResponse.Ok(
+                code: "Ready",
+                result: new JObject { ["timestamp"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") });
         }
 
         public string GetHealthReport()
@@ -27,11 +29,33 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (!File.Exists(_indexPath))
-                    return McpResponse.Error("Search Index not found", null, null, "Run the KB indexing flow before requesting the health report.");
+                {
+                    return McpResponse.Err(
+                        code: "SearchIndexMissing",
+                        message: "Search Index not found.",
+                        hint: "Run the KB indexing flow before requesting the health report.",
+                        nextSteps: new JArray(
+                            McpResponse.NextStep(
+                                tool: "genexus_lifecycle",
+                                args: new JObject { ["action"] = "index" },
+                                why: "Builds the on-disk SearchIndex this report reads.")),
+                        retryAfterMs: 10000);
+                }
 
                 var index = SearchIndex.FromJson(File.ReadAllText(_indexPath));
                 if (index == null || index.Objects.Count == 0)
-                    return McpResponse.Error("Search Index is empty", null, null, "The health report cannot be generated until the search index contains objects.");
+                {
+                    return McpResponse.Err(
+                        code: "SearchIndexEmpty",
+                        message: "Search Index is empty.",
+                        hint: "The health report needs an indexed KB; rebuild the index after opening a populated KB.",
+                        nextSteps: new JArray(
+                            McpResponse.NextStep(
+                                tool: "genexus_lifecycle",
+                                args: new JObject { ["action"] = "index", ["force"] = true },
+                                why: "Forces a full rebuild of the SearchIndex on the active KB.")),
+                        retryAfterMs: 10000);
+                }
 
                 var report = new JObject();
                 report["timestamp"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -90,11 +114,19 @@ namespace GxMcp.Worker.Services
                 stats["orphanedObjects"] = index.Objects.Values.Count(o => (o.CalledBy == null || o.CalledBy.Count == 0));
                 report["summary"] = stats;
 
-                return report.ToString();
+                return McpResponse.Ok(code: "HealthReport", result: report);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "HealthReportFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log; the SearchIndex JSON may be corrupt. Rebuild via genexus_lifecycle action=index force=true.",
+                    nextSteps: new JArray(
+                        McpResponse.NextStep(
+                            tool: "genexus_lifecycle",
+                            args: new JObject { ["action"] = "index", ["force"] = true },
+                            why: "Rebuilds the index from scratch if the cached file is corrupt.")));
             }
         }
 

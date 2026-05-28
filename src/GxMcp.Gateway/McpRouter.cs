@@ -270,9 +270,13 @@ namespace GxMcp.Gateway
                 case "tools/list":
                     return new { tools = _toolDefinitions };
                 case "resources/list":
-                    return new
                     {
-                        resources = new[]
+                        // v2.8.0 — also surface curated, source-verified GeneXus
+                        // development skills (genexus://kb/skills/<key>) so the
+                        // LLM can read authoritative reference material before
+                        // guessing about properties / methods. Each skill body
+                        // is fact-checked against docs.genexus.com.
+                        var baseResources = new List<object>
                         {
                             new { uri = "genexus://kb/index-status", name = "KB Index Status", description = "Current indexing status for the active Knowledge Base." },
                             new { uri = "genexus://kb/health", name = "Gateway Health Report", description = "Health report for the GeneXus MCP worker and gateway." },
@@ -280,8 +284,19 @@ namespace GxMcp.Gateway
                             new { uri = "genexus://kb/llm-playbook", name = "LLM CLI+MCP Playbook", description = "Protocol-first guide for choosing CLI vs MCP, token-efficient calls, and timeout/lifecycle handling." },
                             new { uri = "genexus://objects", name = "GeneXus Objects Index", description = "Browsable index of all objects in the KB." },
                             new { uri = "genexus://attributes", name = "GeneXus Attributes", description = "Browsable list of all attributes." }
+                        };
+                        foreach (var skill in SkillCatalog.All)
+                        {
+                            baseResources.Add(new
+                            {
+                                uri = "genexus://kb/skills/" + skill.Key,
+                                name = skill.Title,
+                                description = skill.Description,
+                                mimeType = "text/markdown"
+                            });
                         }
-                    };
+                        return new { resources = baseResources };
+                    }
                 case "resources/read":
                     return BuildStaticResourceResponse(request);
                 case "resources/templates/list":
@@ -397,6 +412,14 @@ namespace GxMcp.Gateway
             if (argumentName == "part")
             {
                 values = _objectParts;
+            }
+            // v2.8.0 (S1) — autocomplete object names from the cached index.
+            // 'name' / 'target' / 'targets' all carry object references in
+            // various tools; offer the same shortlist. Falls back to empty
+            // when the index hasn't warmed yet.
+            else if (argumentName == "name" || argumentName == "target" || argumentName == "targets")
+            {
+                values = AutoTypeInjector.CompleteName(currentValue, cap: 25);
             }
             else if (argumentName == "language" || argumentName == "targetLanguage")
             {
@@ -792,6 +815,31 @@ namespace GxMcp.Gateway
                             uri = "genexus://kb/llm-playbook",
                             mimeType = "text/markdown",
                             text = BuildLlmCliMcpPlaybook()
+                        }
+                    }
+                };
+            }
+
+            // v2.8.0 — curated, source-verified GeneXus development skills.
+            // Each entry is hand-authored and fact-checked against
+            // docs.genexus.com so an LLM that consults it before invoking a
+            // property/method has authoritative reference material instead
+            // of hallucinated method names.
+            const string skillPrefix = "genexus://kb/skills/";
+            if (uri.StartsWith(skillPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                string skillKey = uri.Substring(skillPrefix.Length);
+                var skill = SkillCatalog.FindByKey(skillKey);
+                if (skill == null) return null;
+                return new
+                {
+                    contents = new[]
+                    {
+                        new
+                        {
+                            uri,
+                            mimeType = "text/markdown",
+                            text = skill.Body
                         }
                     }
                 };

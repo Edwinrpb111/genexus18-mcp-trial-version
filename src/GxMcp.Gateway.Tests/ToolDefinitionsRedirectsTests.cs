@@ -54,6 +54,38 @@ namespace GxMcp.Gateway.Tests
             Assert.NotNull(t);
             string desc = t!["description"]!.ToString();
             Assert.Contains("PatternInstance", desc);
+            Assert.Contains("operationId", desc);
+        }
+
+        [Fact]
+        public void GenexusEdit_Schema_ExposesAsyncControls()
+        {
+            var t = FindTool("genexus_edit");
+            Assert.NotNull(t);
+            var props = (JObject)t!["inputSchema"]!["properties"]!;
+            Assert.Equal("boolean", props["async"]!["type"]!.ToString());
+            Assert.Equal("integer", props["estimated_seconds"]!["type"]!.ToString());
+        }
+
+        [Fact]
+        public void GenexusVariable_Schema_ExposesAsyncControls()
+        {
+            var t = FindTool("genexus_variable");
+            Assert.NotNull(t);
+            string desc = t!["description"]!.ToString();
+            Assert.Contains("operationId", desc);
+            var props = (JObject)t["inputSchema"]!["properties"]!;
+            Assert.Equal("boolean", props["async"]!["type"]!.ToString());
+            Assert.Equal("integer", props["estimated_seconds"]!["type"]!.ToString());
+        }
+
+        [Fact]
+        public void GenexusEditAndBuild_DescriptionMentionsPollTarget()
+        {
+            var t = FindTool("genexus_edit_and_build");
+            Assert.NotNull(t);
+            string desc = t!["description"]!.ToString();
+            Assert.Contains("pollTarget", desc);
         }
 
         [Fact]

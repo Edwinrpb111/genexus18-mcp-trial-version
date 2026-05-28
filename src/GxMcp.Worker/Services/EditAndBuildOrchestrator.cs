@@ -1,4 +1,5 @@
 using System;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -24,15 +25,15 @@ namespace GxMcp.Worker.Services
 
         public string Orchestrate(JObject args)
         {
+            args = NormalizeToolArgs(args);
+
             string target = args?["name"]?.ToString() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(target))
             {
-                return JsonConvert.SerializeObject(new
-                {
-                    status = "Error",
-                    error = "name is required",
-                    hint = "Pass the target object name as { name: 'MyObject' }. genexus_edit_and_build does NOT auto-detect from content."
-                });
+                return McpResponse.Err(
+                    code: "MissingTarget",
+                    message: "name is required.",
+                    hint: "Pass the target object name as { name: 'MyObject' }. genexus_edit_and_build does NOT auto-detect from content.");
             }
 
             // Friction 2026-05-22: edit_and_build used to reject patch:{find,replace}
@@ -65,12 +66,10 @@ namespace GxMcp.Worker.Services
                 && args["content"].Type == JTokenType.Object
                 && args["mode"]?.ToString() != "patch")
             {
-                return JsonConvert.SerializeObject(new
-                {
-                    status = "Error",
-                    error = "content must be a string for mode=full",
-                    hint = "For source/event/rules edits, pass content as a string. To use {find, replace}, set mode='patch' (or pass patch:{find,replace} as a sibling field — orchestrator auto-normalises)."
-                });
+                return McpResponse.Err(
+                    code: "InvalidContent",
+                    message: "content must be a string for mode=full.",
+                    hint: "For source/event/rules edits, pass content as a string. To use {find, replace}, set mode='patch' (or pass patch:{find,replace} as a sibling field — orchestrator auto-normalises).");
             }
 
             string includeCallees = args?["buildIncludeCallees"]?.ToString() ?? "direct";
@@ -80,10 +79,35 @@ namespace GxMcp.Worker.Services
 
             string editRaw = _write.WriteObject(target, args);
             var edit = JObject.Parse(editRaw);
-            if (!string.Equals(edit["status"]?.ToString(), "Ok", StringComparison.OrdinalIgnoreCase))
+            if (ShouldReturnEditEnvelope(edit))
             {
-                edit["phase"] = "edit";
-                return edit.ToString();
+                // Edit failed or returned DryRun — surface as canonical error with edit sub-block.
+                string editStatusStr = edit?["status"]?.ToString() ?? string.Empty;
+                bool isDryRun = string.Equals(editStatusStr, "DryRun", StringComparison.OrdinalIgnoreCase)
+                             || string.Equals(editStatusStr, "ok", StringComparison.OrdinalIgnoreCase) && string.Equals(edit?["code"]?.ToString(), "DryRun", StringComparison.OrdinalIgnoreCase);
+                if (isDryRun)
+                {
+                    return McpResponse.Ok(target: target, code: "DryRun", result: new JObject
+                    {
+                        ["edit"] = edit
+                    });
+                }
+                // edit["error"] may be a JObject (canonical) or a string (legacy mock/service).
+                string editMsg = (edit?["error"] is JObject editErr)
+                    ? editErr["message"]?.ToString()
+                    : edit?["error"]?.ToString()
+                    ?? edit?["message"]?.ToString()
+                    ?? "Edit phase failed.";
+                return McpResponse.Err(code: "EditPhaseFailed", message: editMsg, target: target, extra: new JObject { ["phase"] = "edit", ["edit"] = edit });
+            }
+
+            if (IsNoChange(edit))
+            {
+                return McpResponse.Ok(target: target, code: "NoChange", result: new JObject
+                {
+                    ["edit"] = edit,
+                    ["build"] = new JObject { ["skipped"] = true, ["reason"] = "Edit produced no persisted change." }
+                });
             }
 
             string impactRaw = _analyze.ImpactAnalysis(target, waitForIndex, waitTimeoutMs);
@@ -93,11 +117,7 @@ namespace GxMcp.Worker.Services
             JObject buildResult;
             if (callers.Count == 0)
             {
-                buildResult = new JObject
-                {
-                    ["status"] = "Skipped",
-                    ["reason"] = "No callers to rebuild."
-                };
+                buildResult = new JObject { ["skipped"] = true, ["reason"] = "No callers to rebuild." };
             }
             else
             {
@@ -106,14 +126,44 @@ namespace GxMcp.Worker.Services
                 buildResult = JObject.Parse(buildRaw);
             }
 
-            return new JObject
+            return McpResponse.Ok(target: target, code: "EditAndBuildCompleted", result: new JObject
             {
-                ["status"] = "Ok",
-                ["target"] = target,
                 ["edit"] = edit,
                 ["impact"] = impact,
                 ["build"] = buildResult
-            }.ToString();
+            });
+        }
+
+        internal static JObject NormalizeToolArgs(JObject args)
+        {
+            if (!(args?["args"] is JObject innerArgs))
+            {
+                return args ?? new JObject();
+            }
+
+            var merged = (JObject)innerArgs.DeepClone();
+            foreach (var prop in args.Properties())
+            {
+                if (prop.Name == "args") continue;
+                if (merged[prop.Name] == null) merged[prop.Name] = prop.Value?.DeepClone();
+            }
+
+            return merged;
+        }
+
+        internal static bool ShouldReturnEditEnvelope(JObject edit)
+        {
+            string status = edit?["status"]?.ToString() ?? string.Empty;
+            if (string.Equals(status, "DryRun", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(status, "Ok", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+
+        internal static bool IsNoChange(JObject edit)
+        {
+            if (edit?["noChange"]?.ToObject<bool?>() == true) return true;
+            return string.Equals(edit?["status"]?.ToString(), "NoChange", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -57,7 +57,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 KBObject obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, specificPart, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Verify the object name with genexus_query.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_query", new JObject { ["name"] = target }, "Search for the object by name.")), target: target);
 
                 var issues = new JArray();
                 var parts = obj.Parts.Cast<KBObjectPart>().ToList();

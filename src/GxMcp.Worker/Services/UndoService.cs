@@ -44,13 +44,12 @@ namespace GxMcp.Worker.Services
 
             if (!Directory.Exists(root))
             {
-                return new JObject
+                return McpResponse.Ok(code: "NoSnapshots", result: new JObject
                 {
-                    ["status"] = "NoSnapshots",
                     ["restored"] = new JArray(),
                     ["failed"] = new JArray(),
                     ["hint"] = "No snapshot directory at " + root + ". Edit an object first to capture a baseline."
-                }.ToString();
+                });
             }
 
             // Enumerate all .bak / .bak.gz files, sort newest first by filename
@@ -75,22 +74,17 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["message"] = "Failed to enumerate snapshots: " + ex.Message
-                }.ToString();
+                return McpResponse.Err(code: "UndoFailed", message: "Failed to enumerate snapshots: " + ex.Message);
             }
 
             if (allFiles.Count == 0)
             {
-                return new JObject
+                return McpResponse.Ok(code: "NoSnapshots", result: new JObject
                 {
-                    ["status"] = "NoSnapshots",
                     ["restored"] = new JArray(),
                     ["failed"] = new JArray(),
                     ["hint"] = "No snapshots found in " + root
-                }.ToString();
+                });
             }
 
             var restored = new JArray();
@@ -210,14 +204,13 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            string status = dryRun ? "DryRun"
-                          : failed.Count == 0 ? "Success"
-                          : restored.Count == 0 ? "Failed"
-                          : "PartialSuccess";
+            string undoCode = dryRun ? "DryRun"
+                            : failed.Count == 0 ? "UndoApplied"
+                            : restored.Count == 0 ? "UndoFailed"
+                            : "UndoPartial";
 
-            var resp = new JObject
+            var resultPayload = new JObject
             {
-                ["status"] = status,
                 ["dryRun"] = dryRun,
                 ["restoredCount"] = restored.Count,
                 ["failedCount"] = failed.Count,
@@ -226,12 +219,15 @@ namespace GxMcp.Worker.Services
             };
             if (capped)
             {
-                resp["capped"] = true;
-                resp["requestedLast"] = requestedLast;
-                resp["effectiveLast"] = 20;
-                resp["hint"] = $"Requested last={requestedLast} clamped to 20 (per-call hard cap). Call again to revert older snapshots.";
+                resultPayload["capped"] = true;
+                resultPayload["requestedLast"] = requestedLast;
+                resultPayload["effectiveLast"] = 20;
+                resultPayload["hint"] = $"Requested last={requestedLast} clamped to 20 (per-call hard cap). Call again to revert older snapshots.";
             }
-            return resp.ToString();
+
+            if (undoCode == "UndoFailed")
+                return McpResponse.Err(code: undoCode, message: "All undo attempts failed.", extra: resultPayload);
+            return McpResponse.Ok(code: undoCode, result: resultPayload);
         }
 
         /// Pulls the ISO-8601 timestamp segment out of a snapshot filename.

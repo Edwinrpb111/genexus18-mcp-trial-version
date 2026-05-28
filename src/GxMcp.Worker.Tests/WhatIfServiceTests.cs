@@ -17,8 +17,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = NewService();
             var json = JObject.Parse(svc.Simulate(null));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("MissingChange", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("MissingChange", (string)json["error"]["code"]);
         }
 
         [Fact]
@@ -27,8 +27,8 @@ namespace GxMcp.Worker.Tests
             var svc = NewService();
             var change = new JObject { ["kind"] = "type_change" };
             var json = JObject.Parse(svc.Simulate(change));
-            Assert.Equal("Error", (string)json["status"]);
-            Assert.Equal("MissingTarget", (string)json["code"]);
+            Assert.Equal("error", (string)json["status"]);
+            Assert.Equal("MissingTarget", (string)json["error"]["code"]);
         }
 
         [Fact]
@@ -46,11 +46,11 @@ namespace GxMcp.Worker.Tests
                 ["newType"] = "Numeric(10.2)"
             };
             var json = JObject.Parse(svc.Simulate(change));
-            Assert.Equal("Success", (string)json["status"]);
-            Assert.Equal(0, (int)json["impactedCount"]);
-            Assert.Empty((JArray)json["breaks"]);
-            Assert.Empty((JArray)json["probably_safe"]);
-            Assert.Empty((JArray)json["unknown"]);
+            Assert.Equal("ok", (string)json["status"]);
+            Assert.Equal(0, (int)json["result"]["impactedCount"]);
+            Assert.Empty((JArray)json["result"]["breaks"]);
+            Assert.Empty((JArray)json["result"]["probably_safe"]);
+            Assert.Empty((JArray)json["result"]["unknown"]);
         }
 
         [Fact]
@@ -65,10 +65,10 @@ namespace GxMcp.Worker.Tests
                 ["newType"] = "Numeric(12)"
             };
             var json = JObject.Parse(svc.Simulate(change));
-            Assert.Equal("Success", (string)json["status"]);
-            Assert.Equal("rename_attribute", (string)json["kind"]);
-            Assert.Equal("OrderId", (string)json["change"]["target"]);
-            Assert.NotNull(json["note"]);
+            Assert.Equal("ok", (string)json["status"]);
+            Assert.Equal("rename_attribute", (string)json["result"]["kind"]);
+            Assert.Equal("OrderId", (string)json["result"]["change"]["target"]);
+            Assert.NotNull(json["result"]["note"]);
         }
     }
 }

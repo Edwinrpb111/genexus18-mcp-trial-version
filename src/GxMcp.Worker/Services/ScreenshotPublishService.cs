@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -59,34 +60,35 @@ namespace GxMcp.Worker.Services
                 long size = 0;
                 try { size = new FileInfo(destPath).Length; } catch { }
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["sourcePath"] = sourcePath,
-                    ["publishedPath"] = destPath,
-                    ["basename"] = destName,
-                    ["sizeBytes"] = size,
-                    ["publishedAtUtc"] = DateTime.UtcNow.ToString("o")
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "ScreenshotPublished",
+                    result: new JObject
+                    {
+                        ["sourcePath"] = sourcePath,
+                        ["publishedPath"] = destPath,
+                        ["basename"] = destName,
+                        ["sizeBytes"] = size,
+                        ["publishedAtUtc"] = DateTime.UtcNow.ToString("o")
+                    });
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "PublishFailed",
-                    ["message"] = ex.Message,
-                    ["sourcePath"] = sourcePath ?? ""
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "PublishFailed",
+                    message: ex.Message,
+                    hint: "Check that the source file exists and the KB path is writable.",
+                    nextSteps: new JArray {
+                        McpResponse.NextStep("genexus_screenshot_publish", new JObject { ["sourcePath"] = sourcePath ?? "" }, "Retry after verifying the source path.")
+                    });
             }
         }
 
         private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            McpResponse.Err(
+                code: code,
+                message: message,
+                nextSteps: new JArray {
+                    McpResponse.NextStep("genexus_screenshot_publish", new JObject { ["sourcePath"] = "<path to PNG>" }, "Retry with a valid source path and an open KB.")
+                });
     }
 }

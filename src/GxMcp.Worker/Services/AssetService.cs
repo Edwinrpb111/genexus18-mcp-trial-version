@@ -26,7 +26,16 @@ namespace GxMcp.Worker.Services
 
                 if (!Directory.Exists(rootPath))
                 {
-                    return Models.McpResponse.Error("Asset root not found", relativeRoot, null, "The requested relativeRoot does not exist inside the active Knowledge Base.");
+                    return Models.McpResponse.Err(
+                        code: "AssetRootNotFound",
+                        message: "Asset root not found.",
+                        hint: "The requested relativeRoot does not exist inside the active Knowledge Base.",
+                        nextSteps: new JArray(
+                            Models.McpResponse.NextStep(
+                                tool: "genexus_asset",
+                                args: new JObject { ["action"] = "find" },
+                                why: "Retry without relativeRoot to search the entire KB root.")),
+                        target: relativeRoot);
                 }
 
                 var results = Directory.EnumerateFiles(rootPath, normalizedPattern, SearchOption.AllDirectories)
@@ -34,19 +43,29 @@ namespace GxMcp.Worker.Services
                     .Select(path => BuildAssetDescriptor(kbRoot, path, includeContent: false))
                     .ToArray();
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["action"] = "Find",
-                    ["pattern"] = normalizedPattern,
-                    ["relativeRoot"] = GetRelativePath(kbRoot, rootPath),
-                    ["count"] = results.Length,
-                    ["results"] = new JArray(results)
-                }.ToString();
+                return Models.McpResponse.Ok(
+                    target: relativeRoot,
+                    code: "AssetSearchOk",
+                    result: new JObject
+                    {
+                        ["pattern"] = normalizedPattern,
+                        ["relativeRoot"] = GetRelativePath(kbRoot, rootPath),
+                        ["count"] = results.Length,
+                        ["results"] = new JArray(results)
+                    });
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Asset search failed", pattern, null, ex.Message);
+                return Models.McpResponse.Err(
+                    code: "AssetSearchFailed",
+                    message: ex.Message,
+                    hint: "Verify the pattern and relativeRoot are valid paths inside the active KB.",
+                    nextSteps: new JArray(
+                        Models.McpResponse.NextStep(
+                            tool: "genexus_asset",
+                            args: new JObject { ["action"] = "find" },
+                            why: "Retry without relativeRoot to confirm the KB root is accessible.")),
+                    target: pattern);
             }
         }
 
@@ -59,18 +78,28 @@ namespace GxMcp.Worker.Services
 
                 if (!File.Exists(fullPath))
                 {
-                    return Models.McpResponse.Error("Asset not found", path, null, "The requested asset path does not exist inside the active Knowledge Base.");
+                    return Models.McpResponse.Err(
+                        code: "AssetNotFound",
+                        message: "Asset not found.",
+                        hint: "The requested asset path does not exist inside the active Knowledge Base.",
+                        nextSteps: new JArray(
+                            Models.McpResponse.NextStep(
+                                tool: "genexus_asset",
+                                args: new JObject { ["action"] = "find", ["pattern"] = "*.*" },
+                                why: "Lists available assets so you can pick the correct path.")),
+                        target: path);
                 }
 
                 long fileSize = new FileInfo(fullPath).Length;
                 int effectiveMaxBytes = Math.Max(1024, Math.Min(maxBytes ?? 131072, 524288));
                 if (includeContent && fileSize > effectiveMaxBytes)
                 {
-                    return Models.McpResponse.Error(
-                        "Asset exceeds read limit",
-                        path,
-                        null,
-                        string.Format("The asset is {0} bytes and exceeds maxBytes={1}. Read metadata only or request a smaller file.", fileSize, effectiveMaxBytes));
+                    return Models.McpResponse.Err(
+                        code: "AssetExceedsReadLimit",
+                        message: string.Format("The asset is {0} bytes and exceeds maxBytes={1}.", fileSize, effectiveMaxBytes),
+                        hint: "Read metadata only (includeContent=false) or request a smaller file.",
+                        // no-nextStep: the caller already knows the path and must decide whether to increase maxBytes or skip content
+                        target: path);
                 }
 
                 var asset = BuildAssetDescriptor(kbRoot, fullPath, includeContent);
@@ -80,11 +109,20 @@ namespace GxMcp.Worker.Services
                     asset["maxBytes"] = effectiveMaxBytes;
                 }
 
-                return asset.ToString();
+                return Models.McpResponse.Ok(target: path, code: "AssetRead", result: asset);
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Asset read failed", path, null, ex.Message);
+                return Models.McpResponse.Err(
+                    code: "AssetReadFailed",
+                    message: ex.Message,
+                    hint: "Verify the path is valid and the file is accessible.",
+                    nextSteps: new JArray(
+                        Models.McpResponse.NextStep(
+                            tool: "genexus_asset",
+                            args: new JObject { ["action"] = "find", ["pattern"] = "*.*" },
+                            why: "Lists available assets to confirm the correct path.")),
+                    target: path);
             }
         }
 
@@ -94,7 +132,12 @@ namespace GxMcp.Worker.Services
             {
                 if (string.IsNullOrWhiteSpace(contentBase64))
                 {
-                    return Models.McpResponse.Error("Asset content is required", path, null, "Provide contentBase64 for write operations.");
+                    return Models.McpResponse.Err(
+                        code: "AssetContentRequired",
+                        message: "Asset content is required.",
+                        hint: "Provide contentBase64 for write operations.",
+                        // no-nextStep: the caller must supply content; no tool can infer it
+                        target: path);
                 }
 
                 string kbRoot = RequireKbRoot();
@@ -116,28 +159,46 @@ namespace GxMcp.Worker.Services
                 string expectedHash = ComputeSha256(content);
                 if (!string.Equals(persistedHash, expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
-                    return Models.McpResponse.Error(
-                        "Asset write verification failed",
-                        path,
-                        null,
-                        "The asset was written but the persisted hash does not match the provided content.");
+                    return Models.McpResponse.Err(
+                        code: "AssetWriteVerificationFailed",
+                        message: "Asset write verification failed.",
+                        hint: "The asset was written but the persisted hash does not match the provided content. Check disk space and file permissions.",
+                        nextSteps: new JArray(
+                            Models.McpResponse.NextStep(
+                                tool: "genexus_asset",
+                                args: new JObject { ["action"] = "read", ["path"] = path },
+                                why: "Read the persisted file to diagnose the hash mismatch.")),
+                        target: path);
                 }
 
-                var result = BuildAssetDescriptor(kbRoot, fullPath, includeContent: false);
-                result["status"] = "Success";
-                result["action"] = "Write";
-                result["previousSha256"] = existingHash;
-                result["sha256"] = persistedHash;
-                result["bytesWritten"] = persistedBytes.Length;
-                return result.ToString();
+                var resultObj = BuildAssetDescriptor(kbRoot, fullPath, includeContent: false);
+                resultObj["previousSha256"] = existingHash;
+                resultObj["sha256"] = persistedHash;
+                resultObj["bytesWritten"] = persistedBytes.Length;
+
+                return Models.McpResponse.Ok(target: path, code: "AssetWritten", result: resultObj);
             }
             catch (FormatException)
             {
-                return Models.McpResponse.Error("Invalid base64 content", path, null, "contentBase64 is not valid Base64.");
+                return Models.McpResponse.Err(
+                    code: "AssetInvalidBase64",
+                    message: "Invalid base64 content.",
+                    hint: "contentBase64 is not valid Base64. Re-encode the file content before sending.",
+                    // no-nextStep: the caller must fix their encoding; no tool can do it on their behalf
+                    target: path);
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Asset write failed", path, null, ex.Message);
+                return Models.McpResponse.Err(
+                    code: "AssetWriteFailed",
+                    message: ex.Message,
+                    hint: "Verify the path is within the KB and the process has write permissions.",
+                    nextSteps: new JArray(
+                        Models.McpResponse.NextStep(
+                            tool: "genexus_asset",
+                            args: new JObject { ["action"] = "find", ["pattern"] = "*.*" },
+                            why: "Confirms the KB root is accessible before retrying the write.")),
+                    target: path);
             }
         }
 
@@ -193,7 +254,6 @@ namespace GxMcp.Worker.Services
             byte[] bytes = File.ReadAllBytes(fullPath);
             var descriptor = new JObject
             {
-                ["status"] = "Success",
                 ["path"] = fullPath,
                 ["relativePath"] = GetRelativePath(kbRoot, fullPath),
                 ["fileName"] = Path.GetFileName(fullPath),

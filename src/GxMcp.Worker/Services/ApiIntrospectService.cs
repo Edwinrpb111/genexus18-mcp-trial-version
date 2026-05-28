@@ -82,12 +82,9 @@ namespace GxMcp.Worker.Services
             foreach (var ep in endpoints)
                 arr.Add(EndpointToJson(ep, includeSchema: false));
 
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["endpoints"] = arr,
-                ["count"] = arr.Count
-            }.ToString(Formatting.None);
+            return McpResponse.Ok(
+                code: "ApiIntrospectCompleted",
+                result: new JObject { ["endpoints"] = arr, ["count"] = arr.Count });
         }
 
         // ---- describe -------------------------------------------------------
@@ -128,8 +125,10 @@ namespace GxMcp.Worker.Services
             j["sdtsReferenced"] = new JArray(sdtRefs);
             j["roles"] = ExtractRoles(rulesSrc);
             j["gamRequired"] = ContainsGamMarker(rulesSrc);
-            j["status"] = "Success";
-            return j.ToString(Formatting.None);
+            return McpResponse.Ok(
+                target: target,
+                code: "ApiIntrospectCompleted",
+                result: j);
         }
 
         // ---- snapshot -------------------------------------------------------
@@ -163,13 +162,14 @@ namespace GxMcp.Worker.Services
             string outPath = Path.Combine(dir, name + ".json");
             File.WriteAllText(outPath, payload.ToString(Formatting.Indented));
 
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["written"] = true,
-                ["path"] = outPath,
-                ["endpointCount"] = arr.Count
-            }.ToString(Formatting.None);
+            return McpResponse.Ok(
+                code: "ApiSnapshotWritten",
+                result: new JObject
+                {
+                    ["written"] = true,
+                    ["path"] = outPath,
+                    ["endpointCount"] = arr.Count
+                });
         }
 
         // ---- diff_baseline --------------------------------------------------
@@ -193,9 +193,10 @@ namespace GxMcp.Worker.Services
                 currentEndpoints.Add(EndpointToJson(ep, includeSchema: false));
 
             var diff = DiffEndpoints(baselineEndpoints, currentEndpoints);
-            diff["status"] = "Success";
             diff["baselinePath"] = baselinePath;
-            return diff.ToString(Formatting.None);
+            return McpResponse.Ok(
+                code: "ApiDiffCompleted",
+                result: diff);
         }
 
         private string ResolveBaselinePath(string baselineArg)
@@ -641,12 +642,7 @@ namespace GxMcp.Worker.Services
 
         private static string Err(string code, string message)
         {
-            return new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Formatting.None);
+            return McpResponse.Err(code: code, message: message);
         }
     }
 }

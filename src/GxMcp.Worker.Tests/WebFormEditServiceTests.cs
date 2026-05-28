@@ -136,7 +136,7 @@ namespace GxMcp.Worker.Tests
                 ["name"] = "PanelX",
                 ["caption"] = "Hello there"
             }));
-            Assert.Equal("Success", resp["status"]?.ToString());
+            Assert.Equal("ok", resp["status"]?.ToString());
             Assert.NotNull(backend.LastWritten);
             Assert.Contains("Hello there", backend.LastWritten);
             Assert.False(backend.LastDryRun);
@@ -162,8 +162,8 @@ namespace GxMcp.Worker.Tests
             var backend = new FakeBackend();
             var svc = new WebFormEditService(backend);
             var resp = JObject.Parse(svc.Execute("add_button", new JObject { ["caption"] = "X" }));
-            Assert.Equal("Error", resp["status"]?.ToString());
-            Assert.Equal("MissingName", resp["code"]?.ToString());
+            Assert.Equal("error", resp["status"]?.ToString());
+            Assert.Equal("MissingName", resp["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -179,7 +179,7 @@ namespace GxMcp.Worker.Tests
                 ["name"] = "Y",
                 ["caption"] = "Z"
             }));
-            Assert.Equal("Success", resp["status"]?.ToString());
+            Assert.Equal("ok", resp["status"]?.ToString());
             Assert.Contains("Z", backend.LastWritten);
         }
     }

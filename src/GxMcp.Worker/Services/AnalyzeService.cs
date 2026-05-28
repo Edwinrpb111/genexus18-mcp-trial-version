@@ -116,11 +116,15 @@ namespace GxMcp.Worker.Services
                     result["impactAnalysis"] = JObject.Parse(impact);
                 } catch {}
 
-                return result.ToString();
+                return Models.McpResponse.Ok(target: target, code: "AnalyzeCompleted", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "AnalyzeFailed",
+                    message: ex.Message,
+                    hint: "Ensure the target object exists and the KB index is ready.",
+                    target: target);
             }
         }
 
@@ -206,7 +210,7 @@ namespace GxMcp.Worker.Services
                 }
 
                 var index = _indexCacheService?.GetIndex();
-                if (index == null || index.Objects == null) return Models.McpResponse.Error("Index not found", targetName, null, "Run the KB indexing flow before requesting impact analysis.");
+                if (index == null || index.Objects == null) return Models.McpResponse.Err(code: "SearchIndexMissing", message: "Index not found.", hint: "Run the KB indexing flow before requesting impact analysis.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index" }, "Builds the on-disk SearchIndex required for impact analysis.")), retryAfterMs: 10000, target: targetName);
 
                 // 2) Name resolution — preserve the existing priority ordering
                 //    (Procedure > Transaction > Table) so consumers see the
@@ -236,10 +240,8 @@ namespace GxMcp.Worker.Services
                         targetNode = ResolveIndexEntry(index, sdkName, out foundKey);
                         if (targetNode == null)
                         {
-                            return new JObject
+                            return Models.McpResponse.Ok(target: sdkName, code: "ImpactAnalysisCompleted", result: new JObject
                             {
-                                ["status"] = "Ready",
-                                ["target"] = sdkName,
                                 ["totalAffected"] = 0,
                                 ["blastRadiusScore"] = 0,
                                 ["riskLevel"] = "Unknown",
@@ -247,12 +249,12 @@ namespace GxMcp.Worker.Services
                                 ["callees"] = new JArray(),
                                 ["indexEdgesMissing"] = true,
                                 ["hint"] = "Object was found in the KB via the SDK but its call-graph edges are not yet in the search index. Call genexus_lifecycle(action='index', force=true) to clear the stale snapshot and run a full SDK rescan, then retry."
-                            }.ToString();
+                            });
                         }
                     }
                     else
                     {
-                        return Models.McpResponse.Error("Object not found in index", targetName, null, "The object was not found in the search index or the active Knowledge Base.");
+                        return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found in index.", hint: "The object was not found in the search index or the active Knowledge Base. Re-run after genexus_lifecycle action=index completes.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index", ["force"] = true }, "Forces a full KB rescan so newly added objects are discoverable.")), target: targetName);
                     }
                 }
 
@@ -271,9 +273,9 @@ namespace GxMcp.Worker.Services
                 // 3) Delegate the BFS to the unified graph service.
                 var graph = _graph ?? new CallerGraphService(_indexCacheService);
                 var callersResult = graph.GetCallersTransitive(targetName, 200, ct);
-                if (ct.IsCancellationRequested) return new JObject { ["status"] = "Cancelled", ["target"] = targetName }.ToString();
+                if (ct.IsCancellationRequested) return Models.McpResponse.Ok(target: targetName, code: "Cancelled", result: new JObject());
                 var calleesResult = graph.GetCalleesTransitive(targetName, 200, ct);
-                if (ct.IsCancellationRequested) return new JObject { ["status"] = "Cancelled", ["target"] = targetName }.ToString();
+                if (ct.IsCancellationRequested) return Models.McpResponse.Ok(target: targetName, code: "Cancelled", result: new JObject());
 
                 // De-dupe + index-aware enrichment (score / entry points / etc.).
                 var affected = new HashSet<string>(callersResult.Nodes, StringComparer.OrdinalIgnoreCase);
@@ -294,7 +296,6 @@ namespace GxMcp.Worker.Services
                 }
 
                 var json = new JObject();
-                json["status"] = "Ready";
                 json["target"] = targetName;
                 json["totalAffected"] = affected.Count;
                 json["blastRadiusScore"] = score;
@@ -321,7 +322,7 @@ namespace GxMcp.Worker.Services
 
                 GxMcp.Worker.Helpers.ProgressEmitter.Emit(100, 100, "Impact analysis: complete");
 
-                string impactJson = json.ToString();
+                string impactJson = Models.McpResponse.Ok(target: targetName, code: "ImpactAnalysisCompleted", result: json);
                 // v2.6.9 perf: populate impact cache (see _impactCache decl).
                 if (!string.IsNullOrEmpty(targetName))
                 {
@@ -335,7 +336,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"Impact Analysis failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "ImpactAnalysisFailed", message: "Impact Analysis failed: " + ex.Message, hint: "Check the worker log for the underlying exception. Re-run after verifying the KB index is ready.", target: targetName);
             }
         }
 
@@ -470,11 +471,11 @@ namespace GxMcp.Worker.Services
                         return json.ToString();
                     }
                 }
-                return "{\"status\":\"Error\",\"message\":\"Attribute not found\"}";
+                return Models.McpResponse.Err(code: "AttributeNotFound", message: "Attribute not found.", hint: "Confirm the attribute name is correct and exists in the active KB.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_list_objects", new JObject { ["typeFilter"] = "Attribute" }, "Lists all attributes in the KB so you can pick the right name.")));
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "GetAttributeMetadataFailed", message: ex.Message, hint: "Check the worker log for details.");
             }
         }
 
@@ -486,7 +487,7 @@ namespace GxMcp.Worker.Services
                 if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
-                if (vPart == null) return Models.McpResponse.Error("Variables part not found", name, "Variables", "The object does not expose a Variables part.", obj.Name, obj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
+                if (vPart == null) return Models.McpResponse.Err(code: "VariablesPartNotFound", message: "Variables part not found.", hint: "The object does not expose a Variables part. Check availableParts for what this object supports.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_inspect", new JObject { ["name"] = name }, "Returns availableParts so you can see which parts this object exposes.")), target: name, extra: new JObject { ["objectName"] = obj.Name, ["objectType"] = obj.TypeDescriptor?.Name, ["availableParts"] = new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)) });
 
                 var variables = new JArray();
                 int idx = 0;
@@ -507,11 +508,11 @@ namespace GxMcp.Worker.Services
                 var result = new JObject();
                 result["variables"] = variables;
                 result["source"] = VariableInjector.GetVariablesAsText((dynamic)vPart);
-                return result.ToString();
+                return Models.McpResponse.Ok(target: name, code: "VariablesRead", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "GetVariablesFailed", message: ex.Message, hint: "Ensure the KB is open and the target object exposes a Variables part.", target: name);
             }
         }
 
@@ -587,7 +588,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("GetEventFlow failed: " + ex);
-                return Models.McpResponse.Error("GetEventFlow failed", name, ex.GetType().FullName, ex.Message);
+                return Models.McpResponse.Err(code: "GetEventFlowFailed", message: "GetEventFlow failed: " + ex.Message, hint: "Ensure the object has an Events part and the KB is fully loaded.", target: name);
             }
         }
 
@@ -669,7 +670,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "GetHierarchyFailed", message: ex.Message, hint: "Ensure the KB is open and the target object exists.");
             }
         }
 
@@ -1101,7 +1102,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "InspectFailed", message: ex.Message, hint: "Ensure the KB is open and the target object exists.");
             }
         }
 
@@ -1197,7 +1198,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "GetSignatureFailed", message: ex.Message, hint: "Ensure the KB is open and the target object exists.", target: name);
             }
         }
 
@@ -1341,11 +1342,11 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(target))
-                    return "{\"status\":\"Error\",\"message\":\"target is required\"}";
+                    return Models.McpResponse.Err(code: "TargetRequired", message: "target is required", hint: "Provide a non-empty target name.");
 
                 var index = _indexCacheService?.GetIndex();
                 if (index == null || index.Objects == null)
-                    return Models.McpResponse.Error("Index not found", target, null, "Run the KB indexing flow before requesting parent_context analysis.");
+                    return Models.McpResponse.Err(code: "SearchIndexMissing", message: "Index not found.", hint: "Run the KB indexing flow before requesting parent_context analysis.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index" }, "Builds the SearchIndex required for parent_context analysis.")), retryAfterMs: 10000, target: target);
 
                 // Resolve the target entry (4-stage same as ImpactAnalysis).
                 var entry = ResolveIndexEntry(index, target, out var _);
@@ -1441,7 +1442,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "ParentContextFailed", message: ex.Message, hint: "Ensure the KB is open and the search index is ready.", target: target);
             }
         }
 
@@ -1481,15 +1482,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(target))
-                    return "{\"status\":\"Error\",\"message\":\"target is required\"}";
+                    return Models.McpResponse.Err(code: "TargetRequired", message: "target is required", hint: "Provide a non-empty target name.");
 
                 var index = _indexCacheService?.GetIndex();
                 if (index == null || index.Objects == null)
-                    return Models.McpResponse.Error("Index not found", target, null, "Run the KB indexing flow before requesting cross_platform_impact analysis.");
+                    return Models.McpResponse.Err(code: "SearchIndexMissing", message: "Index not found.", hint: "Run the KB indexing flow before requesting cross_platform_impact analysis.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index" }, "Builds the SearchIndex required for cross_platform_impact.")), retryAfterMs: 10000, target: target);
 
                 var entry = ResolveIndexEntry(index, target, out var _);
                 if (entry == null)
-                    return Models.McpResponse.Error("Object not found in index", target, null, "The object was not found in the search index.");
+                    return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found in index.", hint: "The object was not found in the search index. Re-run after genexus_lifecycle action=index completes.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index", ["force"] = true }, "Forces a full KB rescan so newly added objects are discoverable.")), target: target);
 
                 string canonicalName = entry.Name ?? target;
                 string canonicalType = entry.Type ?? "Object";
@@ -1545,35 +1546,37 @@ namespace GxMcp.Worker.Services
                 else if (rulesSource == null) confidence = "medium";
                 else confidence = "medium";
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["target"] = new JObject { ["name"] = canonicalName, ["type"] = canonicalType },
-                    ["platforms"] = new JObject
+                return McpResponse.Ok(
+                    target: canonicalName,
+                    code: "CrossPlatformImpactCompleted",
+                    result: new JObject
                     {
-                        ["Web"] = new JObject { ["callers"] = webArr, ["count"] = result.WebCallers.Count, ["divergenceSignals"] = new JArray() },
-                        ["SmartDevices"] = new JObject { ["callers"] = sdArr, ["count"] = result.SdCallers.Count, ["divergenceSignals"] = new JArray() }
-                    },
-                    ["crossPlatformDivergence"] = divArr,
-                    ["summary"] = new JObject
-                    {
-                        ["webCallers"] = result.WebCallers.Count,
-                        ["sdCallers"] = result.SdCallers.Count,
-                        ["divergencePoints"] = result.Divergence.Count
-                    },
-                    ["_meta"] = new JObject
-                    {
-                        ["confidence"] = confidence,
-                        ["detectorsRun"] = detectorsRun,
-                        ["detectorsPending"] = detectorsPending,
-                        ["rulesSourceAvailable"] = !string.IsNullOrEmpty(rulesSource),
-                        ["note"] = "Heuristic platform classification based on caller object types + transitive caller walk. Procedures are bucketed via depth-3 caller traversal."
-                    }
-                }.ToString();
+                        ["target"] = new JObject { ["name"] = canonicalName, ["type"] = canonicalType },
+                        ["platforms"] = new JObject
+                        {
+                            ["Web"] = new JObject { ["callers"] = webArr, ["count"] = result.WebCallers.Count, ["divergenceSignals"] = new JArray() },
+                            ["SmartDevices"] = new JObject { ["callers"] = sdArr, ["count"] = result.SdCallers.Count, ["divergenceSignals"] = new JArray() }
+                        },
+                        ["crossPlatformDivergence"] = divArr,
+                        ["summary"] = new JObject
+                        {
+                            ["webCallers"] = result.WebCallers.Count,
+                            ["sdCallers"] = result.SdCallers.Count,
+                            ["divergencePoints"] = result.Divergence.Count
+                        },
+                        ["_meta"] = new JObject
+                        {
+                            ["confidence"] = confidence,
+                            ["detectorsRun"] = detectorsRun,
+                            ["detectorsPending"] = detectorsPending,
+                            ["rulesSourceAvailable"] = !string.IsNullOrEmpty(rulesSource),
+                            ["note"] = "Heuristic platform classification based on caller object types + transitive caller walk. Procedures are bucketed via depth-3 caller traversal."
+                        }
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "CrossPlatformImpactFailed", message: ex.Message, hint: "Ensure the KB is open and the search index is ready.", target: target);
             }
         }
 
@@ -1747,15 +1750,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(targetName))
-                    return "{\"status\":\"Error\",\"message\":\"target is required\"}";
+                    return Models.McpResponse.Err(code: "TargetRequired", message: "target is required", hint: "Provide a non-empty target name.");
 
                 var index = _indexCacheService?.GetIndex();
                 if (index == null || index.Objects == null)
-                    return Models.McpResponse.Error("Index not found", targetName, null, "Run the KB indexing flow before requesting callers analysis.");
+                    return Models.McpResponse.Err(code: "SearchIndexMissing", message: "Index not found.", hint: "Run the KB indexing flow before requesting callers analysis.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index" }, "Builds the SearchIndex required for callers analysis.")), retryAfterMs: 10000, target: targetName);
 
                 var entry = ResolveIndexEntry(index, targetName, out var _);
                 if (entry == null)
-                    return Models.McpResponse.Error("Object not found in index", targetName, null, "The object was not found in the search index.");
+                    return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found in index.", hint: "The object was not found in the search index. Re-run after genexus_lifecycle action=index completes.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "index", ["force"] = true }, "Forces a full KB rescan so the object becomes discoverable.")), target: targetName);
 
                 string canonicalName = entry.Name ?? targetName;
                 var callerNames = entry.CalledBy ?? new List<string>();
@@ -1832,17 +1835,18 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return new JObject
-                {
-                    ["status"] = "Ready",
-                    ["target"] = canonicalName,
-                    ["callSiteCount"] = callers.Count,
-                    ["callers"] = callers
-                }.ToString();
+                return McpResponse.Ok(
+                    target: canonicalName,
+                    code: "CallerSitesFound",
+                    result: new JObject
+                    {
+                        ["callSiteCount"] = callers.Count,
+                        ["callers"] = callers
+                    });
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "FindCallerSitesFailed", message: ex.Message, hint: "Ensure the KB is open and the search index is ready.", target: targetName);
             }
         }
 
@@ -1935,7 +1939,6 @@ namespace GxMcp.Worker.Services
 
                 var result = new JObject
                 {
-                    ["status"] = "Success",
                     ["objects"] = new JArray(topRanked.Cast<JToken>().ToArray()),
                     ["totalScanned"] = idx.Objects.Count,
                     ["note"] = "score = editCount*5 + callerCount*2 + refCount. Edit counts read from .gx/snapshots/."
@@ -1957,11 +1960,11 @@ namespace GxMcp.Worker.Services
                     result["ascii"] = sb.ToString();
                 }
 
-                return result.ToString();
+                return McpResponse.Ok(code: "DependencyHeatmapCompleted", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "DependencyHeatmapFailed", message: ex.Message, hint: "Ensure the search index is ready; run genexus_lifecycle action=index first.");
             }
         }
 

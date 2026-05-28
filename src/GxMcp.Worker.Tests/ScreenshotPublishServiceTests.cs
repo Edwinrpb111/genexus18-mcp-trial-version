@@ -20,13 +20,13 @@ namespace GxMcp.Worker.Tests
 
                 var json = JObject.Parse(ScreenshotPublishService.PublishCore(src, tmpKb));
 
-                Assert.Equal("Success", (string)json["status"]!);
-                string published = (string)json["publishedPath"]!;
+                Assert.Equal("ok", (string)json["status"]!);
+                string published = (string)json["result"]!["publishedPath"]!;
                 Assert.True(File.Exists(published), "destination file should exist");
                 Assert.Contains(".gx", published);
                 Assert.Contains("published-screenshots", published);
-                Assert.EndsWith("shot.png", (string)json["basename"]!);
-                Assert.True((long)json["sizeBytes"]! > 0);
+                Assert.EndsWith("shot.png", (string)json["result"]!["basename"]!);
+                Assert.True((long)json["result"]!["sizeBytes"]! > 0);
             }
             finally
             {
@@ -39,8 +39,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new ScreenshotPublishService(kbService: null);
             var json = JObject.Parse(svc.Publish(@"C:\does\not\exist.png"));
-            Assert.Equal("Error", (string)json["status"]!);
-            Assert.Equal("NoKbOpen", (string)json["code"]!);
+            Assert.Equal("error", (string)json["status"]!);
+            Assert.Equal("NoKbOpen", (string)json["error"]!["code"]!);
         }
 
         [Fact]
@@ -56,8 +56,8 @@ namespace GxMcp.Worker.Tests
                 // via the public Publish method by also bypassing with kbPathOverride=null. So we
                 // hit NoKbOpen first. Instead, validate MissingPath branch.
                 var json = JObject.Parse(svc.Publish(null));
-                Assert.Equal("Error", (string)json["status"]!);
-                Assert.Equal("MissingPath", (string)json["code"]!);
+                Assert.Equal("error", (string)json["status"]!);
+                Assert.Equal("MissingPath", (string)json["error"]!["code"]!);
             }
             finally
             {

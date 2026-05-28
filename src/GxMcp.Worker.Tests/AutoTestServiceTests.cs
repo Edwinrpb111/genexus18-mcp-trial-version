@@ -27,8 +27,8 @@ namespace GxMcp.Worker.Tests
             var svc = new AutoTestService();
             var bogus = Path.Combine(_tempDir, "does-not-exist.jsonl");
             var j = JObject.Parse(svc.Generate(bogus));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Contains("does not exist", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Contains("does not exist", (string)j["error"]?["message"]);
         }
 
         [Fact]
@@ -36,8 +36,8 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new AutoTestService();
             var j = JObject.Parse(svc.Generate(""));
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Contains("path is required", (string)j["message"]);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Contains("path is required", (string)j["error"]?["message"]);
         }
 
         [Fact]
@@ -53,11 +53,11 @@ namespace GxMcp.Worker.Tests
 
             var svc = new AutoTestService();
             var j = JObject.Parse(svc.Generate(path));
-            Assert.Equal("Success", (string)j["status"]);
-            Assert.Equal(3, (int)j["linesRead"]);
-            var stubs = (JArray)j["stubsGenerated"];
+            Assert.Equal("ok", (string)j["status"]);
+            Assert.Equal(3, (int)j["result"]?["linesRead"]);
+            var stubs = (JArray)j["result"]?["stubsGenerated"];
             Assert.Equal(2, stubs.Count);
-            Assert.Empty((JArray)j["skipped"]);
+            Assert.Empty((JArray)j["result"]?["skipped"]);
         }
 
         [Fact]
@@ -73,12 +73,12 @@ namespace GxMcp.Worker.Tests
 
             var svc = new AutoTestService();
             var j = JObject.Parse(svc.Generate(path));
-            Assert.Equal("Success", (string)j["status"]);
+            Assert.Equal("ok", (string)j["status"]);
 
-            var stubs = (JArray)j["stubsGenerated"];
+            var stubs = (JArray)j["result"]?["stubsGenerated"];
             Assert.Equal(2, stubs.Count);
 
-            var skipped = (JArray)j["skipped"];
+            var skipped = (JArray)j["result"]?["skipped"];
             Assert.Single(skipped);
             Assert.Equal(2, (int)skipped[0]["line"]);
             Assert.Equal("malformed-json", (string)skipped[0]["reason"]);

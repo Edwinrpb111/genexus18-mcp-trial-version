@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -26,7 +27,11 @@ namespace GxMcp.Worker.Services
             string kbPath = ResolveKbPath(kbPathOverride);
             if (string.IsNullOrEmpty(kbPath))
             {
-                return Error("NoKbOpen", "No KB is currently open.");
+                return McpResponse.Err(
+                    code: "NoKbOpen",
+                    message: "No KB is currently open.",
+                    hint: "Open a KB first via genexus_kb action=open.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_kb", new JObject { ["action"] = "open" }, "Open a KB.") });
             }
             return ReportCore(kbPath, sinceIso, untilIso);
         }
@@ -38,18 +43,19 @@ namespace GxMcp.Worker.Services
                 string filePath = Path.Combine(kbPath, ".gx", "friction.jsonl");
                 if (!File.Exists(filePath))
                 {
-                    return new JObject
-                    {
-                        ["status"] = "Success",
-                        ["path"] = filePath,
-                        ["totalEntries"] = 0,
-                        ["byTool"] = new JArray(),
-                        ["byCode"] = new JArray(),
-                        ["severityHistogram"] = new JObject(),
-                        ["since"] = sinceIso ?? "",
-                        ["until"] = untilIso ?? "",
-                        ["note"] = "No friction.jsonl file — nothing to report yet."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Ok(
+                        code: "LearningReportGenerated",
+                        result: new JObject
+                        {
+                            ["path"] = filePath,
+                            ["totalEntries"] = 0,
+                            ["byTool"] = new JArray(),
+                            ["byCode"] = new JArray(),
+                            ["severityHistogram"] = new JObject(),
+                            ["since"] = sinceIso ?? "",
+                            ["until"] = untilIso ?? "",
+                            ["note"] = "No friction.jsonl file — nothing to report yet."
+                        });
                 }
 
                 DateTime? since = ParseIso(sinceIso);
@@ -107,21 +113,26 @@ namespace GxMcp.Worker.Services
                 foreach (var kv in sevHisto.OrderByDescending(kv => kv.Value))
                     sevObj[kv.Key] = kv.Value;
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["path"] = filePath,
-                    ["totalEntries"] = total,
-                    ["byTool"] = byToolArr,
-                    ["byCode"] = byCodeArr,
-                    ["severityHistogram"] = sevObj,
-                    ["since"] = sinceIso ?? "",
-                    ["until"] = untilIso ?? ""
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "LearningReportGenerated",
+                    result: new JObject
+                    {
+                        ["path"] = filePath,
+                        ["totalEntries"] = total,
+                        ["byTool"] = byToolArr,
+                        ["byCode"] = byCodeArr,
+                        ["severityHistogram"] = sevObj,
+                        ["since"] = sinceIso ?? "",
+                        ["until"] = untilIso ?? ""
+                    });
             }
             catch (Exception ex)
             {
-                return Error("ReportFailed", ex.Message);
+                return McpResponse.Err(
+                    code: "ReportFailed",
+                    message: ex.Message,
+                    hint: "Check that the friction.jsonl file is readable.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_whoami", null, "Check KB state.") });
             }
         }
 
@@ -151,13 +162,5 @@ namespace GxMcp.Worker.Services
             if (!string.IsNullOrEmpty(kbPathOverride)) return kbPathOverride;
             try { return _kbService?.GetKbPath(); } catch { return null; }
         }
-
-        private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
     }
 }

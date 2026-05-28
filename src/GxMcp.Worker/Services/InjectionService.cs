@@ -29,10 +29,26 @@ namespace GxMcp.Worker.Services
             try
             {
                 var kb = _kbService.GetKB();
-                if (kb == null) return McpResponse.Error("KB not opened", targetName, null, "Open a Knowledge Base before requesting dependency injection.");
+                if (kb == null) return McpResponse.Err(
+                    code: "KbNotOpened",
+                    message: "No Knowledge Base is open.",
+                    hint: "Open a Knowledge Base before requesting dependency injection.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_kb",
+                        args: new JObject { ["action"] = "open" },
+                        why: "Opens a KB so context injection can proceed.")),
+                    retryAfterMs: 2000);
 
                 var obj = _objectService.FindObject(targetName, typeFilter);
-                if (obj == null) return McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "The requested object is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject(),
+                        why: "Lists available objects so you can confirm the correct name.")),
+                    target: targetName);
 
                 sb.AppendLine($"# Context for {obj.TypeDescriptor.Name} {obj.Name}");
                 sb.AppendLine();
@@ -93,7 +109,11 @@ namespace GxMcp.Worker.Services
             {
                 Logger.Error("InjectContext fatal: " + ex.Message);
                 sb.AppendLine($"> Fatal Error: {ex.Message}");
-                return sb.Length > 0 ? sb.ToString() : "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return sb.Length > 0 ? sb.ToString() : McpResponse.Err(
+                    code: "InjectContextFailed",
+                    message: ex.Message,
+                    hint: "Check that the KB is open and the object is accessible.",
+                    target: targetName);
             }
         }
 

@@ -22,7 +22,16 @@ namespace GxMcp.Worker.Services
             try
             {
                 var index = _indexCache.GetIndex();
-                if (index == null) return McpResponse.Error("Search Index not found", type, null, "Run the KB indexing flow before requesting pattern samples.");
+                if (index == null) return McpResponse.Err(
+                    code: "SearchIndexMissing",
+                    message: "Search Index not found.",
+                    hint: "Run the KB indexing flow before requesting pattern samples.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index" },
+                        why: "Builds the on-disk SearchIndex required for pattern samples.")),
+                    retryAfterMs: 10000,
+                    target: type);
 
                 var candidates = index.Objects.Values
                     .Where(o => IsTypeMatch(o.Type, type))
@@ -36,7 +45,15 @@ namespace GxMcp.Worker.Services
                     candidates = index.Objects.Values.Where(o => IsTypeMatch(o.Type, type)).Take(1).ToList();
                 }
 
-                if (candidates.Count == 0) return McpResponse.Error("Pattern sample not found", type, null, "No indexed objects matched the requested type.");
+                if (candidates.Count == 0) return McpResponse.Err(
+                    code: "PatternSampleNotFound",
+                    message: "Pattern sample not found.",
+                    hint: "No indexed objects matched the requested type. Try a different type name or rebuild the index.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the index so newly added objects of the requested type are discoverable.")),
+                    target: type);
 
                 var best = candidates.First();
                 
@@ -50,11 +67,19 @@ namespace GxMcp.Worker.Services
                 result["complexity"] = best.Complexity;
                 result["source"] = source ?? "// No source available";
 
-                return result.ToString();
+                return McpResponse.Ok(target: type, code: "PatternSampleFound", result: result);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(
+                    code: "PatternSampleFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log; the index or object source may be corrupt.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "index", ["force"] = true },
+                        why: "Rebuilds the index from scratch if the cached data is corrupt.")),
+                    target: type);
             }
         }
 

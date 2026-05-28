@@ -13,12 +13,12 @@ namespace GxMcp.Worker.Tests
             var raw = svc.Welcome();
             var json = JObject.Parse(raw);
 
-            Assert.Equal("Success", (string)json["status"]!);
-            Assert.NotNull(json["kb"]);
-            Assert.NotNull(json["recentEdits"]);
-            Assert.NotNull(json["gotchas"]);
-            Assert.True(((JArray)json["gotchas"]!).Count == 3);
-            Assert.True(((JArray)json["topTools"]!).Count == 5);
+            Assert.Equal("ok", (string)json["status"]!);
+            Assert.NotNull(json["result"]!["kb"]);
+            Assert.NotNull(json["result"]!["recentEdits"]);
+            Assert.NotNull(json["result"]!["gotchas"]);
+            Assert.True(((JArray)json["result"]!["gotchas"]!).Count == 3);
+            Assert.True(((JArray)json["result"]!["topTools"]!).Count == 5);
         }
 
         [Fact]
@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new OrientService(kbService: null);
             var json = JObject.Parse(svc.Welcome());
-            Assert.Empty((JArray)json["recentEdits"]!);
+            Assert.Empty((JArray)json["result"]!["recentEdits"]!);
         }
     }
 }

@@ -63,15 +63,11 @@ namespace GxMcp.Worker.Services
             var state = _index != null ? _index.GetState() : null;
             if (state != null && state.Status != "Ready")
             {
-                var envelope = new JObject
-                {
-                    ["status"] = string.Equals(state.Status, "Reindexing", StringComparison.OrdinalIgnoreCase)
-                        ? "Reindexing"
-                        : "IndexCold",
-                    ["retryAfterMs"] = state.EtaMs ?? 5000
-                };
-                if (state.Progress.HasValue) envelope["progress"] = state.Progress.Value;
-                return envelope.ToString();
+                string indexCode = string.Equals(state.Status, "Reindexing", StringComparison.OrdinalIgnoreCase)
+                    ? "Reindexing" : "IndexCold";
+                var indexResult = new JObject { ["retryAfterMs"] = state.EtaMs ?? 5000 };
+                if (state.Progress.HasValue) indexResult["progress"] = state.Progress.Value;
+                return Models.McpResponse.Ok(code: indexCode, result: indexResult);
             }
             return SearchCore(c, ct);
         }
@@ -81,7 +77,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrEmpty(c.Callee) && string.IsNullOrEmpty(c.Pattern))
-                    return "{\"status\":\"Error\",\"message\":\"Provide 'callee' (semantic) or 'pattern' (regex).\"}";
+                    return Models.McpResponse.Err(code: "MissingCriteria", message: "Provide 'callee' (semantic) or 'pattern' (regex).");
 
                 Regex rx = null;
                 if (!string.IsNullOrEmpty(c.Pattern))
@@ -118,25 +114,22 @@ namespace GxMcp.Worker.Services
                     if (produced >= c.MaxResults) break;
                     if (ct.IsCancellationRequested)
                     {
-                        return new JObject
+                        return Models.McpResponse.Ok(code: "Cancelled", result: new JObject
                         {
-                            ["status"] = "Cancelled",
                             ["partialHits"] = hits,
                             ["totalScanned"] = scanned,
                             ["totalObjects"] = entries.Count
-                        }.ToString();
+                        });
                     }
                     if (swBudget.ElapsedMilliseconds > timeoutMs)
                     {
-                        var timeoutEnv = new JObject
+                        return Models.McpResponse.Ok(code: "Timeout", result: new JObject
                         {
-                            ["status"] = "Timeout",
                             ["partialHits"] = hits,
                             ["totalScanned"] = scanned,
                             ["totalObjects"] = entries.Count,
                             ["timeoutMs"] = timeoutMs
-                        };
-                        return timeoutEnv.ToString();
+                        });
                     }
                     scanned++;
                     KBObject obj;
@@ -260,16 +253,26 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                var response = new JObject
+                bool truncated = produced >= c.MaxResults;
+                var resultPayload = new JObject
                 {
-                    ["status"] = "Ready",
                     ["count"] = produced,
-                    ["truncated"] = produced >= c.MaxResults,
-                    ["hits"] = hits
+                    ["truncated"] = truncated,
+                    ["hits"] = hits,
+                    // v2.8.0: canonical pagination block — total unknown (source scan has no pre-counted total)
+                    ["pagination"] = new JObject
+                    {
+                        ["offset"]     = 0,
+                        ["limit"]      = c.MaxResults,
+                        ["returned"]   = produced,
+                        ["total"]      = JValue.CreateNull(),
+                        ["hasMore"]    = truncated,
+                        ["nextOffset"] = JValue.CreateNull()
+                    }
                 };
                 if (hits.Count > 0 && hits[0] is JObject topHit)
                 {
-                    response["_meta"] = new JObject
+                    resultPayload["_meta"] = new JObject
                     {
                         ["suggested_next"] = new JObject
                         {
@@ -282,11 +285,11 @@ namespace GxMcp.Worker.Services
                         }
                     };
                 }
-                return response.ToString();
+                return Models.McpResponse.Ok(code: "SourceSearchCompleted", result: resultPayload);
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(code: "SourceSearchFailed", message: ex.Message);
             }
         }
 

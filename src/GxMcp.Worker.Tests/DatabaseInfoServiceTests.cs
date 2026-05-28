@@ -30,8 +30,8 @@ namespace GxMcp.Worker.Tests
             var svc = new DatabaseInfoService(null);
             string json = svc.GetInfo();
             var obj = Newtonsoft.Json.Linq.JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("KB not open", obj["message"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("KbNotOpen", obj["error"]?["code"]?.ToString());
         }
     }
 }

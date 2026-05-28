@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -36,12 +37,15 @@ namespace GxMcp.Worker.Services
         }
 
         /// <summary>Resolves URL + parm encoding + optional GAM login cookies.</summary>
-        public string Resolve(string name, JArray args, JToken gamSession)
+        public string Resolve(string name, JArray args, JToken gamSession, bool dryRun = false)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(name))
-                    return new JObject { ["status"] = "Error", ["message"] = "name is required" }.ToString();
+                    return McpResponse.Err(
+                        code: "MissingName",
+                        message: "name is required.",
+                        nextSteps: new JArray { McpResponse.NextStep("genexus_run_object", new JObject { ["name"] = "<objectName>" }, "Provide the object name to resolve its URL.") });
 
                 // 1) Resolve aspx filename. GeneXus generates lowercase <name>.aspx.
                 string aspxName = name.ToLowerInvariant() + ".aspx";
@@ -60,9 +64,26 @@ namespace GxMcp.Worker.Services
 
                 string url = baseUrl + "/" + aspxName + (string.IsNullOrEmpty(query) ? string.Empty : "?" + query);
 
-                var result = new JObject
+                // dryRun: return the resolved URL without performing GAM login.
+                if (dryRun)
                 {
-                    ["status"] = "Success",
+                    return McpResponse.Ok(
+                        target: name,
+                        code: "DryRun",
+                        result: new JObject
+                        {
+                            ["preview"] = new JObject
+                            {
+                                ["url"] = url,
+                                ["aspxName"] = aspxName,
+                                ["baseUrl"] = baseUrl,
+                                ["note"] = "dryRun=true: GAM login not performed."
+                            }
+                        });
+                }
+
+                var resultPayload = new JObject
+                {
                     ["url"] = url,
                     ["signedIn"] = false,
                     ["hint"] = "Pass the url to `chrome-devtools-axi open <url>` to drive the object in a browser."
@@ -82,25 +103,28 @@ namespace GxMcp.Worker.Services
                         var (cookieHeader, signedIn, error) = LoginHook != null
                             ? LoginHook(loginUrl, auth.User, auth.Pass)
                             : DoGamLogin(loginUrl, auth.User, auth.Pass);
-                        result["signedIn"] = signedIn;
+                        resultPayload["signedIn"] = signedIn;
                         if (!string.IsNullOrEmpty(cookieHeader))
-                            result["cookies"] = ParseCookies(cookieHeader);
+                            resultPayload["cookies"] = ParseCookies(cookieHeader);
                         if (!string.IsNullOrEmpty(error))
-                            result["loginError"] = error;
+                            resultPayload["loginError"] = error;
                         if (signedIn)
-                            result["hint"] = "Cookies captured — pass them via `chrome-devtools-axi` or curl with the cookie header to skip the login screen.";
+                            resultPayload["hint"] = "Cookies captured — pass them via `chrome-devtools-axi` or curl with the cookie header to skip the login screen.";
                     }
                     else
                     {
-                        result["loginError"] = "gamSession requested but no credentials resolved (pass {user, pass} or set GXMCP_GAM_USER / GXMCP_GAM_PASS).";
+                        resultPayload["loginError"] = "gamSession requested but no credentials resolved (pass {user, pass} or set GXMCP_GAM_USER / GXMCP_GAM_PASS).";
                     }
                 }
 
-                return result.ToString();
+                return McpResponse.Ok(target: name, code: "ObjectResolved", result: resultPayload);
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
+                return McpResponse.Err(
+                    code: "RunObjectFailed",
+                    message: ex.Message,
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_run_object", new JObject { ["name"] = name }, "Retry after checking the object exists and the KB is open.") });
             }
         }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -84,13 +85,14 @@ namespace GxMcp.Worker.Services
             var src = _cloner.FindSource(sourceName, typeFilter);
             if (src == null)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "NotFound",
-                    ["message"] = "Source object not found: " + sourceName,
-                    ["sourceName"] = sourceName
-                }.ToString();
+                return McpResponse.Err(
+                    code: "NotFound",
+                    message: "Source object not found: " + sourceName,
+                    hint: "Check the object name and type filter, or use genexus_list_objects to enumerate available objects.",
+                    nextSteps: new JArray {
+                        McpResponse.NextStep("genexus_list_objects", null, "Enumerate available objects to verify the source name.")
+                    },
+                    extra: new JObject { ["sourceName"] = sourceName });
             }
 
             if (_cloner.TargetExists(newName))
@@ -99,35 +101,37 @@ namespace GxMcp.Worker.Services
                 // object is destructive enough that we want the agent to call
                 // genexus_delete_object explicitly. overwrite=true currently
                 // just surfaces a clearer hint.
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "TargetExists",
-                    ["message"] = "An object named '" + newName + "' already exists.",
-                    ["hint"] = overwrite
-                        ? "overwrite=true is reserved for a future revision. For now, delete the existing object first via genexus_delete_object name=" + newName + " confirm=true, then re-run genexus_save_as."
-                        : "Pick a different newName, or delete the existing object via genexus_delete_object name=" + newName + " confirm=true.",
-                    ["sourceName"] = sourceName,
-                    ["newName"] = newName
-                }.ToString();
+                string hint = overwrite
+                    ? "overwrite=true is reserved for a future revision. For now, delete the existing object first via genexus_delete_object name=" + newName + " confirm=true, then re-run genexus_save_as."
+                    : "Pick a different newName, or delete the existing object via genexus_delete_object name=" + newName + " confirm=true.";
+                return McpResponse.Err(
+                    code: "TargetExists",
+                    message: "An object named '" + newName + "' already exists.",
+                    hint: hint,
+                    nextSteps: new JArray {
+                        McpResponse.NextStep("genexus_delete_object", new JObject { ["name"] = newName, ["confirm"] = true }, "Delete the existing target before cloning."),
+                        McpResponse.NextStep("genexus_save_as", new JObject { ["name"] = sourceName, ["newName"] = "<differentName>" }, "Use a different target name.")
+                    },
+                    extra: new JObject { ["sourceName"] = sourceName, ["newName"] = newName });
             }
 
             // ---- dryRun: build the plan, never touch the SDK. ----
             if (dryRun)
             {
-                var plan = new JObject
-                {
-                    ["status"] = "DryRun",
-                    ["sourceName"] = sourceName,
-                    ["plan"] = new JObject
+                return McpResponse.Ok(
+                    target: sourceName,
+                    code: "DryRun",
+                    result: new JObject
                     {
-                        ["createType"] = src.Type,
-                        ["newName"] = newName,
-                        ["partsToClone"] = new JArray(src.Parts ?? new List<string>()),
-                        ["includePatternInstance"] = includePattern
-                    }
-                };
-                return plan.ToString();
+                        ["sourceName"] = sourceName,
+                        ["plan"] = new JObject
+                        {
+                            ["createType"] = src.Type,
+                            ["newName"] = newName,
+                            ["partsToClone"] = new JArray(src.Parts ?? new List<string>()),
+                            ["includePatternInstance"] = includePattern
+                        }
+                    });
             }
 
             // ---- Live path. Track progress so a partial failure surfaces a
@@ -168,7 +172,7 @@ namespace GxMcp.Worker.Services
                     {
                         ["name"] = newName,
                         ["pattern"] = inst.PatternKey,
-                        ["status"] = ok ? "Success" : "Failed",
+                        ["applied"] = ok,
                         ["detail"] = SafeParseOrString(applyResult)
                     };
                     if (ok) completedSteps.Add("applyPattern:" + inst.PatternKey);
@@ -176,9 +180,8 @@ namespace GxMcp.Worker.Services
                 // No WWP instance on source → silently omit the block (per spec).
             }
 
-            var resp = new JObject
+            var payload = new JObject
             {
-                ["status"] = "Success",
                 ["sourceName"] = sourceName,
                 ["created"] = new JObject
                 {
@@ -187,34 +190,39 @@ namespace GxMcp.Worker.Services
                     ["partsCloned"] = partsCloned
                 }
             };
-            if (patternBlock != null) resp["patternInstance"] = patternBlock;
-            return resp.ToString();
+            if (patternBlock != null) payload["patternInstance"] = patternBlock;
+            return McpResponse.Ok(target: newName, code: "SavedAs", result: payload);
         }
 
         private static string Partial(string sourceName, string newName, JArray completedSteps, string failedStep, string innerResult)
         {
-            return new JObject
-            {
-                ["status"] = "PartialFailure",
-                ["sourceName"] = sourceName,
-                ["newName"] = newName,
-                ["completedSteps"] = completedSteps,
-                ["failedStep"] = failedStep,
-                ["detail"] = SafeParseOrString(innerResult),
-                ["hint"] = "Some parts were already cloned. Use genexus_undo to revert, or genexus_delete_object name=" + newName + " confirm=true to remove the half-cloned target."
-            }.ToString();
+            return McpResponse.Err(
+                code: "PartialFailure",
+                message: "Save-as failed at step '" + failedStep + "'; " + completedSteps.Count + " step(s) already completed.",
+                hint: "Use genexus_delete_object name=" + newName + " confirm=true to remove the half-cloned target, then retry.",
+                nextSteps: new JArray {
+                    McpResponse.NextStep("genexus_delete_object", new JObject { ["name"] = newName, ["confirm"] = true }, "Remove the partially cloned object before retrying."),
+                    McpResponse.NextStep("genexus_save_as", new JObject { ["name"] = sourceName, ["newName"] = newName }, "Retry the clone after cleanup.")
+                },
+                extra: new JObject
+                {
+                    ["sourceName"] = sourceName,
+                    ["newName"] = newName,
+                    ["completedSteps"] = completedSteps,
+                    ["failedStep"] = failedStep,
+                    ["detail"] = SafeParseOrString(innerResult)
+                });
         }
 
         private static string Err(string code, string message, string sourceName)
         {
-            var j = new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            };
-            if (sourceName != null) j["sourceName"] = sourceName;
-            return j.ToString();
+            return McpResponse.Err(
+                code: code,
+                message: message,
+                nextSteps: new JArray {
+                    McpResponse.NextStep("genexus_save_as", new JObject { ["name"] = sourceName ?? "<name>", ["newName"] = "<newName>" }, "Retry with valid arguments.")
+                },
+                extra: sourceName != null ? new JObject { ["sourceName"] = sourceName } : null);
         }
 
         private static bool IsSuccess(string envelope)
@@ -224,6 +232,8 @@ namespace GxMcp.Worker.Services
             {
                 var j = JObject.Parse(envelope);
                 string status = j["status"]?.ToString();
+                // Accept both v2.8.0 canonical "ok" and legacy "Success".
+                if (string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase)) return true;
                 if (string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)) return true;
                 // Some services return no status on success and only set "error" on failure.
                 return j["error"] == null && j["code"] == null;
@@ -301,7 +311,7 @@ namespace GxMcp.Worker.Services
             if (srcToken == null)
             {
                 // Nothing to clone for this part (binary / unsupported) — that's not an error.
-                return new JObject { ["status"] = "Success", ["skipped"] = true, ["part"] = partName }.ToString();
+                return McpResponse.Ok(code: "Skipped", result: new JObject { ["skipped"] = true, ["part"] = partName });
             }
 
             string code = srcToken.ToString();
@@ -356,21 +366,23 @@ namespace GxMcp.Worker.Services
             // settings=null means "use defaults" — same behaviour as the IDE's Save-As.
             if (_patterns == null)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["message"] = "PatternApplyService is not wired in this worker build."
-                }.ToString();
+                return McpResponse.Err(
+                    code: "PatternServiceUnavailable",
+                    message: "PatternApplyService is not wired in this worker build.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_apply_pattern", new JObject { ["name"] = newName }, "Apply the pattern manually after the object is created.") });
             }
             try
             {
                 string key = sourceInstance?.PatternKey ?? "WorkWithPlus";
                 string result = _patterns.ApplyPattern(newName, key, settings: null);
-                return string.IsNullOrEmpty(result) ? "{\"status\":\"Success\"}" : result;
+                return string.IsNullOrEmpty(result) ? McpResponse.Ok(target: newName, code: "PatternApplied") : result;
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
+                return McpResponse.Err(
+                    code: "PatternApplyFailed",
+                    message: ex.Message,
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_apply_pattern", new JObject { ["name"] = newName }, "Apply the pattern manually.") });
             }
         }
     }

@@ -143,14 +143,15 @@ namespace GxMcp.Worker.Tests
         [Fact]
         public void AppendPersistedState_AlwaysAddsBothKeys()
         {
-            var resp = new JObject { ["status"] = "Success" };
+            // Canonical envelope status — AppendPersistedState should not mutate it.
+            var resp = new JObject { ["status"] = "ok" };
             var decorated = WriteService.AppendPersistedState(resp, "line1\nline2\nline3", null);
             Assert.NotNull(decorated["persistedHash"]);
             Assert.StartsWith("sha256:", decorated["persistedHash"].ToString());
             Assert.NotNull(decorated["persistedSnippet"]);
             Assert.False(string.IsNullOrEmpty(decorated["persistedSnippet"].ToString()));
             // Status survives the decoration
-            Assert.Equal("Success", decorated["status"].ToString());
+            Assert.Equal("ok", decorated["status"].ToString());
         }
 
         [Fact]

@@ -32,8 +32,8 @@ namespace GxMcp.Gateway
                 "# genexus_lifecycle\n\n" +
                 "Build, validate, index, or poll the active Knowledge Base.\n\n" +
                 "## Actions\n" +
-                "- `build` — non-blocking when `estimated_seconds >= 20`; returns `{ job_id, status: 'running' }` and surfaces `_meta.background_jobs` on the next call. Pass `wait_until_done: true` to block until terminal (single turn instead of polling).\n" +
-                "- `validate` — runs the GeneXus specifier; same async pattern as build.\n" +
+                "- `build` — non-blocking when `estimated_seconds >= 20`; returns `{ operationId, job_id, status: 'running', pollTarget: 'op:<id>' }` and surfaces `_meta.background_jobs` on the next call. Pass `wait_until_done: true` to block until terminal (single turn instead of polling).\n" +
+                "- `validate` — inline validation/specifier check. Returns the result in the same call; it does not currently use the background-job path.\n" +
                 "- `index` — rebuilds the search index. Pass `force=true` to ignore the on-disk cache.\n" +
                 "- `status` — accepts either a `taskId` or `job_id` via `target`; pass `wait_seconds > 0` to long-poll up to 600s.\n" +
                 "- `result` — fetch the completion payload of a finished operation.\n" +
@@ -57,7 +57,8 @@ namespace GxMcp.Gateway
                 "## Output\n" +
                 "- Returns `post_state.diff` (unified diff) by default.\n" +
                 "- `verbose: true` adds slices with ±15 lines of context.\n" +
-                "- `return_post_state: false` opts out of the post-state block to save tokens.\n\n" +
+                "- `return_post_state: false` opts out of the post-state block to save tokens.\n" +
+                "- `async: true` returns immediately with `operationId` / `job_id`; poll `genexus_lifecycle action=status|result target=op:<id>` for completion.\n\n" +
                 "## Disambiguation\n" +
                 "If `name` matches multiple objects, the error includes `suggestion` and `availableTypes`. Pass `type=<ObjectType>` or use `parentPath` to disambiguate.\n\n" +
                 "## Examples (source code)\n" +
@@ -111,6 +112,25 @@ namespace GxMcp.Gateway
                 "## Examples\n" +
                 "- `{ mode: 'impact', target: 'InvoiceProc' }`\n" +
                 "- `{ mode: 'summary', target: 'OrderTrn' }`\n",
+
+            ["genexus_variable"] =
+                "# genexus_variable\n\n" +
+                "Add, delete, or modify variables in an object's Variables part.\n\n" +
+                "## Required\n" +
+                "- `action` — `add`, `delete`, or `modify`\n" +
+                "- `name` — object that owns the variable\n" +
+                "- `varName` — variable name, including `&` when that is how the KB stores it\n" +
+                "- `typeName` — required for `add` and `modify`\n\n" +
+                "## Optional\n" +
+                "- `basedOn` — domain name for compatible typed variables\n" +
+                "- `async: true` returns immediately with `operationId` / `job_id`; poll `genexus_lifecycle action=status|result target=op:<id>` for completion.\n\n" +
+                "## Notes\n" +
+                "- GAM / WWP+ framework-managed variables are protected and return a refusal instead of mutating them.\n" +
+                "- `modify` preserves the variable name and description while changing the type atomically.\n\n" +
+                "## Examples\n" +
+                "- `{ action: 'add', name: 'InvoiceProc', varName: '&Total', typeName: 'Numeric(10.2)' }`\n" +
+                "- `{ action: 'modify', name: 'InvoiceProc', varName: '&State', typeName: 'Character(20)', async: true }`\n" +
+                "- `{ action: 'delete', name: 'InvoiceProc', varName: '&ScratchFlag' }`\n",
 
             ["genexus_read"] =
                 "# genexus_read\n\n" +
@@ -217,8 +237,8 @@ namespace GxMcp.Gateway
                 "Returns a composite envelope with three blocks:\n" +
                 "- `edit` — the diff from genexus_edit\n" +
                 "- `impact` — output of genexus_analyze mode=impact (callers, risk, etc.)\n" +
-                "- `build` — `{ taskId, status: 'Accepted' }` for async build, or `{ status: 'Skipped' }` when no callers\n\n" +
-                "Poll the build via `genexus_lifecycle action=status target=op:<taskId>`.\n\n" +
+                "- `build` — `{ taskId|TaskId, status: 'Accepted'|'Running', pollTarget }` for async caller rebuild, or `{ status: 'Skipped' }` when no callers\n\n" +
+                "Poll the build via `genexus_lifecycle action=status target=<pollTarget>`.\n\n" +
                 "## Errors\n" +
                 "If `name` matches multiple objects, the edit phase aborts and the envelope returns `status=Error` with an `alternatives` array — retry with one of the (`name`, `type`) pairs.\n\n" +
                 "## Example\n" +

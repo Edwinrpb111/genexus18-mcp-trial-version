@@ -28,7 +28,7 @@ namespace GxMcp.Worker.Services
             _patternAnalysisService = patternAnalysisService;
         }
 
-        public string Refactor(string target, string action, string payload)
+        public string Refactor(string target, string action, string payload, bool dryRun = false)
         {
             try {
                 if (action == "ExtractProcedure") {
@@ -58,38 +58,135 @@ namespace GxMcp.Worker.Services
                 }
 
                 if (action == "RenameVariable" || (oldName != null && oldName.StartsWith("&"))) {
+                    if (dryRun)
+                        return Models.McpResponse.Ok(
+                            target: target,
+                            code: "DryRun",
+                            result: new JObject
+                            {
+                                ["preview"] = new JObject
+                                {
+                                    ["action"] = "RenameVariable",
+                                    ["objectName"] = target,
+                                    ["oldName"] = oldName,
+                                    ["newName"] = newName
+                                }
+                            });
                     return RenameVariable(target, oldName, newName);
                 }
 
                 if (action == "RenameAttribute" || action == "RenameObject") {
+                    if (dryRun)
+                    {
+                        // Count CalledBy edges to show what would be updated.
+                        var index = _indexCacheService.GetIndex();
+                        int callerCount = 0;
+                        if (index != null && index.Objects.TryGetValue("Attribute:" + oldName, out var entry) && entry.CalledBy != null)
+                            callerCount = entry.CalledBy.Count;
+                        return Models.McpResponse.Ok(
+                            target: oldName,
+                            code: "DryRun",
+                            result: new JObject
+                            {
+                                ["preview"] = new JObject
+                                {
+                                    ["wouldRename"] = new JArray(new JObject
+                                    {
+                                        ["from"] = oldName,
+                                        ["to"] = newName,
+                                        ["callerCount"] = callerCount
+                                    })
+                                }
+                            });
+                    }
                     return RenameAttribute(oldName, newName);
                 }
 
-                return Models.McpResponse.Error("Refactor action not found", target, action, "Supported actions are RenameVariable, RenameAttribute, RenameObject, ExtractProcedure, WWPSetCondition.");
+                return Models.McpResponse.Err(
+                    code: "RefactorActionNotFound",
+                    message: $"Refactor action '{action}' not found.",
+                    hint: "Supported actions are RenameVariable, RenameAttribute, RenameObject, ExtractProcedure, WWPSetCondition.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_refactor",
+                        args: new JObject { ["target"] = target, ["action"] = "RenameVariable" },
+                        why: "Example of a valid refactor call; replace action with the intended one.")),
+                    target: target);
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "RefactorFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log for a stack trace; verify the target object exists and is writable.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = target },
+                        why: "Confirm the target object exists and its parts are accessible before retrying.")),
+                    target: target);
             }
         }
 
         private string WWPSetCondition(string target, string controlAttribute, string newConditionValue, string typeFilter)
         {
             if (_writeService == null || _patternAnalysisService == null)
-                return Models.McpResponse.Error("WWPSetCondition unavailable", target, "PatternInstance", "RefactorService missing WriteService/PatternAnalysisService dependencies.");
+                return Models.McpResponse.Err(
+                    code: "WWPSetConditionUnavailable",
+                    message: "WWPSetCondition unavailable: RefactorService missing WriteService/PatternAnalysisService dependencies.",
+                    hint: "This is an internal wiring issue; ensure RefactorService is constructed with all dependencies.",
+                    target: target);
+            // no-nextStep: internal dependency wiring failure; no user-actionable tool call can resolve it
             if (string.IsNullOrEmpty(controlAttribute))
-                return Models.McpResponse.Error("controlAttribute is required", target, "PatternInstance", "Provide the gridAttribute attribute name (e.g., 'DocCod').");
+                return Models.McpResponse.Err(
+                    code: "ControlAttributeRequired",
+                    message: "controlAttribute is required.",
+                    hint: "Provide the gridAttribute attribute name (e.g., 'DocCod').",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_analyze",
+                        args: new JObject { ["target"] = target, ["mode"] = "pattern_metadata" },
+                        why: "Lists all gridAttribute names available in the PatternInstance so you can pick the correct one.")),
+                    target: target);
             if (newConditionValue == null)
-                return Models.McpResponse.Error("value is required", target, "PatternInstance", "Provide the conditions string (e.g., 'DocTipOri = 24;'). Empty string clears.");
+                return Models.McpResponse.Err(
+                    code: "ConditionValueRequired",
+                    message: "value is required.",
+                    hint: "Provide the conditions string (e.g., 'DocTipOri = 24;'). Pass empty string to clear.",
+                    target: target);
+            // no-nextStep: missing scalar argument; no tool call can supply it
 
             var obj = _objectService.FindObject(target, typeFilter);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target, "PatternInstance", "Use type=<Transaction> to disambiguate.");
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "Use type=<Transaction> to disambiguate when multiple objects share the name.",
+                nextSteps: new JArray(Models.McpResponse.NextStep(
+                    tool: "genexus_search",
+                    args: new JObject { ["query"] = target },
+                    why: "Search for objects matching the name to find the correct identifier.")),
+                target: target);
 
             string xml = _patternAnalysisService.ReadPatternPartXml(obj, "PatternInstance", out _, out _);
             if (string.IsNullOrWhiteSpace(xml))
-                return Models.McpResponse.Error("PatternInstance not found", target, "PatternInstance", "Object does not expose a WorkWithPlus PatternInstance.");
+                return Models.McpResponse.Err(
+                    code: "PatternInstanceNotFound",
+                    message: "PatternInstance not found.",
+                    hint: "Object does not expose a WorkWithPlus PatternInstance.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_analyze",
+                        args: new JObject { ["target"] = target, ["mode"] = "pattern_metadata" },
+                        why: "Diagnose whether a WorkWithPlus instance exists for this object.")),
+                    target: target);
 
             XDocument doc;
             try { doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace); }
-            catch (Exception ex) { return Models.McpResponse.Error("PatternInstance parse failed", target, "PatternInstance", ex.Message); }
+            catch (Exception ex) {
+                return Models.McpResponse.Err(
+                    code: "PatternInstanceParseFailed",
+                    message: "PatternInstance parse failed: " + ex.Message,
+                    hint: "The PatternInstance XML is malformed; inspect the raw part content.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = target, ["part"] = "PatternInstance" },
+                        why: "Read the raw PatternInstance XML to diagnose the parse error.")),
+                    target: target);
+            }
 
             var matches = doc.Descendants("gridAttribute")
                 .Where(e => {
@@ -101,7 +198,15 @@ namespace GxMcp.Worker.Services
                 }).ToList();
 
             if (matches.Count == 0)
-                return Models.McpResponse.Error("Control not found", target, "PatternInstance", "No gridAttribute named '" + controlAttribute + "' in PatternInstance.");
+                return Models.McpResponse.Err(
+                    code: "ControlNotFound",
+                    message: $"No gridAttribute named '{controlAttribute}' found in PatternInstance.",
+                    hint: "Check the attribute name spelling; use pattern_metadata to list valid gridAttribute names.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_analyze",
+                        args: new JObject { ["target"] = target, ["mode"] = "pattern_metadata" },
+                        why: "Lists all gridAttribute names in the PatternInstance so you can pick the correct one.")),
+                    target: target);
 
             foreach (var el in matches)
             {
@@ -116,10 +221,23 @@ namespace GxMcp.Worker.Services
         private string ExtractProcedure(string sourceObjectName, string codeToExtract, string newProcName)
         {
             if (string.IsNullOrEmpty(codeToExtract) || string.IsNullOrEmpty(newProcName))
-                return Models.McpResponse.Error("Code and new procedure name are required", sourceObjectName, "Source", "Provide both the extracted code block and the new procedure name.");
+                return Models.McpResponse.Err(
+                    code: "ExtractProcedureArgsMissing",
+                    message: "Code and new procedure name are required.",
+                    hint: "Provide both the extracted code block and the new procedure name.",
+                    target: sourceObjectName);
+            // no-nextStep: missing scalar arguments; no tool call can supply them
 
             var sourceObj = _objectService.FindObject(sourceObjectName);
-            if (sourceObj == null) return Models.McpResponse.Error("Source object not found", sourceObjectName, "Source", "The source object for extraction is not available in the active Knowledge Base.");
+            if (sourceObj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Source object not found.",
+                hint: "The source object for extraction is not available in the active Knowledge Base.",
+                nextSteps: new JArray(Models.McpResponse.NextStep(
+                    tool: "genexus_search",
+                    args: new JObject { ["query"] = sourceObjectName },
+                    why: "Search for the object to confirm it exists and find its exact name.")),
+                target: sourceObjectName);
 
             try {
                 Logger.Info($"Extracting code to new procedure: {newProcName} from {sourceObjectName}");
@@ -130,7 +248,15 @@ namespace GxMcp.Worker.Services
                 if (createResult.Contains("error")) return createResult;
 
                 var newProc = _objectService.FindObject(newProcName) as global::Artech.Genexus.Common.Objects.Procedure;
-                if (newProc == null) return Models.McpResponse.Error("Failed to create new procedure object", newProcName, "Procedure", "The new procedure could not be created or resolved after extraction.");
+                if (newProc == null) return Models.McpResponse.Err(
+                    code: "ExtractProcedureCreateFailed",
+                    message: "Failed to create new procedure object.",
+                    hint: "The new procedure could not be created or resolved after extraction; the KB may be read-only.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = newProcName },
+                        why: "Check whether the procedure was partially created before the failure.")),
+                    target: newProcName);
 
                 var variablesFound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var matches = System.Text.RegularExpressions.Regex.Matches(codeToExtract, @"&(\w+)");
@@ -179,26 +305,66 @@ namespace GxMcp.Worker.Services
                     sourceObj.EnsureSave();
                     _indexCacheService.UpdateEntry(sourceObj);
                     _indexCacheService.UpdateEntry(newProc);
-                    return "{\"status\":\"Success\", \"procedure\":\"" + newProcName + "\", \"call\":\"" + callCode + "\"}";
+                    return Models.McpResponse.Ok(
+                        target: sourceObjectName,
+                        code: "ProcedureExtracted",
+                        result: new JObject { ["procedure"] = newProcName, ["call"] = callCode });
                 }
 
-                return Models.McpResponse.Error("Code block not found in source object", sourceObjectName, "Source", "The exact code block to extract was not found in the source object.");
+                return Models.McpResponse.Err(
+                    code: "CodeBlockNotFound",
+                    message: "Code block not found in source object.",
+                    hint: "The exact code block to extract was not found in the source object; ensure the code matches the source verbatim.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = sourceObjectName, ["part"] = "Source" },
+                        why: "Read the current source to locate the exact code block before retrying.")),
+                    target: sourceObjectName);
             } catch (Exception ex) {
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "ExtractProcedureFailed",
+                    message: ex.Message,
+                    hint: "Inspect the worker log for a stack trace; verify the source object and target procedure name.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_inspect",
+                        args: new JObject { ["name"] = sourceObjectName },
+                        why: "Confirm the source object is accessible and its parts are readable before retrying.")),
+                    target: sourceObjectName);
             }
         }
 
         private string RenameAttribute(string oldName, string newName)
         {
             if (string.IsNullOrEmpty(oldName) || string.IsNullOrEmpty(newName))
-                return Models.McpResponse.Error("Old and new names are required", oldName, null, "Provide both the current name and the replacement name.");
+                return Models.McpResponse.Err(
+                    code: "RenameArgsMissing",
+                    message: "Old and new names are required.",
+                    hint: "Provide both the current name and the replacement name.",
+                    target: oldName);
+            // no-nextStep: missing scalar arguments; no tool call can supply them
 
             var kb = _kbService.GetKB();
-            if (kb == null) return Models.McpResponse.Error("KB not open", oldName, null, "Open a Knowledge Base before running refactor operations.");
+            if (kb == null) return Models.McpResponse.Err(
+                code: "KbNotOpen",
+                message: "KB not open.",
+                hint: "Open a Knowledge Base before running refactor operations.",
+                nextSteps: new JArray(Models.McpResponse.NextStep(
+                    tool: "genexus_kb",
+                    args: new JObject { ["action"] = "open" },
+                    why: "Opens the configured Knowledge Base so refactor operations can proceed.")),
+                target: oldName);
 
             var attrObj = _objectService.FindObject(oldName);
             if (attrObj == null || !attrObj.TypeDescriptor.Name.Equals("Attribute", StringComparison.OrdinalIgnoreCase))
-                return Models.McpResponse.Error("Attribute not found", oldName, null, "The requested attribute is not available in the active Knowledge Base.");
+                return Models.McpResponse.Err(
+                    code: "AttributeNotFound",
+                    message: "Attribute not found.",
+                    hint: "The requested attribute is not available in the active Knowledge Base.",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_search",
+                        args: new JObject { ["query"] = oldName, ["type"] = "Attribute" },
+                        why: "Search for attributes matching the name to find the correct identifier.")),
+                    target: oldName);
 
             attrObj.Name = newName;
             attrObj.EnsureSave();
@@ -229,7 +395,10 @@ namespace GxMcp.Worker.Services
             }
 
             _indexCacheService.UpdateEntry(attrObj);
-            return "{\"status\":\"Success\", \"affectedObjects\":" + updatedCount + "}";
+            return Models.McpResponse.Ok(
+                target: oldName,
+                code: "AttributeRenamed",
+                result: new JObject { ["oldName"] = oldName, ["newName"] = newName, ["affectedObjects"] = updatedCount });
         }
 
         private string RenameVariable(string target, string oldName, string newName)
@@ -237,7 +406,15 @@ namespace GxMcp.Worker.Services
             string cleanOld = oldName.StartsWith("&") ? oldName.Substring(1) : oldName;
             string cleanNew = newName.StartsWith("&") ? newName.Substring(1) : newName;
             var obj = _objectService.FindObject(target);
-            if (obj == null) return Models.McpResponse.Error("Object not found", target, "Variables", "The requested object is not available in the active Knowledge Base.");
+            if (obj == null) return Models.McpResponse.Err(
+                code: "ObjectNotFound",
+                message: "Object not found.",
+                hint: "The requested object is not available in the active Knowledge Base.",
+                nextSteps: new JArray(Models.McpResponse.NextStep(
+                    tool: "genexus_search",
+                    args: new JObject { ["query"] = target },
+                    why: "Search for objects matching the name to find the correct identifier.")),
+                target: target);
 
             bool changed = false;
             var varPart = obj.Parts.Get<VariablesPart>();
@@ -259,8 +436,15 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            if (changed) { obj.EnsureSave(); _indexCacheService.UpdateEntry(obj); return "{\"status\":\"Success\"}"; }
-            return "{\"status\":\"No changes made\"}";
+            if (changed) {
+                obj.EnsureSave();
+                _indexCacheService.UpdateEntry(obj);
+                return Models.McpResponse.Ok(
+                    target: target,
+                    code: "VariableRenamed",
+                    result: new JObject { ["oldName"] = "&" + cleanOld, ["newName"] = "&" + cleanNew });
+            }
+            return Models.McpResponse.Ok(target: target, code: "NoChange", result: new JObject { ["reason"] = "Variable not found or no occurrences matched." });
         }
     }
 }

@@ -23,11 +23,11 @@ namespace GxMcp.Worker.Tests
             var svc = new DbDriftService(src);
             var jo = JObject.Parse(svc.Check("Aluno"));
 
-            Assert.Equal("Success", jo["status"]?.ToString());
-            Assert.Equal("reorg_plan", jo["source"]?.ToString());
-            Assert.Equal(0, jo["summary"]?["tables_with_drift"]?.ToObject<int>());
-            Assert.True(jo["summary"]?["reorg_stub"]?.ToObject<bool>());
-            Assert.NotNull(jo["note"]);
+            Assert.Equal("ok", jo["status"]?.ToString());
+            Assert.Equal("reorg_plan", jo["result"]?["source"]?.ToString());
+            Assert.Equal(0, jo["result"]?["summary"]?["tables_with_drift"]?.ToObject<int>());
+            Assert.True(jo["result"]?["summary"]?["reorg_stub"]?.ToObject<bool>());
+            Assert.NotNull(jo["result"]?["note"]);
         }
 
         [Fact]
@@ -41,8 +41,8 @@ namespace GxMcp.Worker.Tests
             };
             var svc = new DbDriftService(src);
             var jo = JObject.Parse(svc.Check("Aluno"));
-            Assert.Equal(1, jo["summary"]?["tables_with_drift"]?.ToObject<int>());
-            var tables = (JArray)jo["tables"];
+            Assert.Equal(1, jo["result"]?["summary"]?["tables_with_drift"]?.ToObject<int>());
+            var tables = (JArray)jo["result"]?["tables"];
             Assert.Single(tables);
             var t = (JObject)tables[0];
             Assert.Equal("TALUNO", t["name"]?.ToString());
@@ -62,7 +62,7 @@ namespace GxMcp.Worker.Tests
             };
             var svc = new DbDriftService(src);
             var jo = JObject.Parse(svc.Check(null));
-            var tables = (JArray)jo["tables"];
+            var tables = (JArray)jo["result"]?["tables"];
             Assert.Single(tables);
             Assert.Equal("error", tables[0]?["severity"]?.ToString());
             Assert.Equal("missing_table", tables[0]?["drift"]?[0]?["kind"]?.ToString());
@@ -78,8 +78,8 @@ namespace GxMcp.Worker.Tests
             };
             var svc = new DbDriftService(src);
             var jo = JObject.Parse(svc.Report("X"));
-            Assert.NotNull(jo["report"]);
-            string md = jo["report"]!.ToString();
+            Assert.NotNull(jo["result"]?["report"]);
+            string md = jo["result"]!["report"]!.ToString();
             Assert.Contains("Transaction", md);
             Assert.Contains("TX", md);
         }
@@ -90,8 +90,8 @@ namespace GxMcp.Worker.Tests
             var src = new FakeReorgSource { Json = "not-json" };
             var svc = new DbDriftService(src);
             var jo = JObject.Parse(svc.Check("X"));
-            Assert.Equal("Error", jo["status"]?.ToString());
-            Assert.Equal("ReorgPreviewMalformed", jo["code"]?.ToString());
+            Assert.Equal("error", jo["status"]?.ToString());
+            Assert.Equal("ReorgPreviewMalformed", jo["error"]?["code"]?.ToString());
             Assert.Equal("reorg_plan", jo["source"]?.ToString());
         }
     }

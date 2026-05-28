@@ -88,17 +88,18 @@ namespace GxMcp.Worker.Services
                 {
                     txArr.Add(SerializeTransaction(kv.Key, kv.Value));
                 }
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["target"] = target ?? "(all)",
-                    ["transactions"] = txArr,
-                    ["summary"] = new JObject
+                return McpResponse.Ok(
+                    code: "DbOptimizeAnalyzed",
+                    result: new JObject
                     {
-                        ["transactionsCovered"] = patternsByTx.Count,
-                        ["totalAccessPatterns"] = patternsByTx.Values.Sum(v => v.Count)
-                    }
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                        ["target"] = target ?? "(all)",
+                        ["transactions"] = txArr,
+                        ["summary"] = new JObject
+                        {
+                            ["transactionsCovered"] = patternsByTx.Count,
+                            ["totalAccessPatterns"] = patternsByTx.Values.Sum(v => v.Count)
+                        }
+                    });
             }
             catch (Exception ex)
             {
@@ -186,14 +187,16 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["transaction"] = transactionName,
-                    ["existingIndexes"] = existingArr,
-                    ["suggestedIndexes"] = suggested,
-                    ["redundantIndexes"] = redundant
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    target: transactionName,
+                    code: "DbIndexesSuggested",
+                    result: new JObject
+                    {
+                        ["transaction"] = transactionName,
+                        ["existingIndexes"] = existingArr,
+                        ["suggestedIndexes"] = suggested,
+                        ["redundantIndexes"] = redundant
+                    });
             }
             catch (Exception ex)
             {
@@ -236,9 +239,8 @@ namespace GxMcp.Worker.Services
 
                 var top = new JArray(ranked.Cast<object>().ToArray());
                 bool wantMd = string.Equals(format, "markdown", StringComparison.OrdinalIgnoreCase);
-                var env = new JObject
+                var reportPayload = new JObject
                 {
-                    ["status"] = "Success",
                     ["top10"] = top,
                     ["summary"] = new JObject
                     {
@@ -246,8 +248,8 @@ namespace GxMcp.Worker.Services
                         ["transactionsScanned"] = patternsByTx.Count
                     }
                 };
-                if (wantMd) env["report"] = RenderMarkdown(ranked);
-                return env.ToString(Newtonsoft.Json.Formatting.None);
+                if (wantMd) reportPayload["report"] = RenderMarkdown(ranked);
+                return McpResponse.Ok(code: "DbOptimizeReported", result: reportPayload);
             }
             catch (Exception ex)
             {
@@ -674,12 +676,7 @@ namespace GxMcp.Worker.Services
 
         private static string ErrorEnv(string code, string message)
         {
-            return new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message ?? string.Empty
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Err(code: code, message: message ?? string.Empty);
         }
 
         private static int ConfidenceRank(string c)

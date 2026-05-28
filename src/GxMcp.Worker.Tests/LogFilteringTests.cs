@@ -56,8 +56,8 @@ namespace GxMcp.Worker.Tests
             WriteLog(allLines);
 
             var result = ParseResult(CallReadLogs(lines: 5));
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split('\n');
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split('\n');
             Assert.Equal(5, lines?.Length);
             Assert.Contains("Line 49", lines![lines.Length - 1]);
         }
@@ -71,8 +71,8 @@ namespace GxMcp.Worker.Tests
             WriteLog(allLines);
 
             var result = ParseResult(CallReadLogs(lines: 0)); // 0 → default 100
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split('\n');
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split('\n');
             Assert.Equal(100, lines?.Length);
         }
 
@@ -92,8 +92,8 @@ namespace GxMcp.Worker.Tests
             });
 
             var result = ParseResult(CallReadLogs(objectFilter: "MyProc"));
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split('\n');
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split('\n');
             Assert.Equal(2, lines?.Length);
             Assert.All(lines!, l => Assert.Contains("MyProc", l));
         }
@@ -108,8 +108,8 @@ namespace GxMcp.Worker.Tests
             });
 
             var result = ParseResult(CallReadLogs(objectFilter: "MYPROC"));
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split('\n');
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split('\n');
             Assert.Equal(1, lines?.Length);
         }
 
@@ -129,8 +129,8 @@ namespace GxMcp.Worker.Tests
 
             // Request lines >= 2026-05-22T10:00:00 (local format matches log prefix).
             var result = ParseResult(CallReadLogs(sinceMode: "2026-05-22T10:00:00"));
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
             Assert.NotNull(lines);
             Assert.DoesNotContain(lines!, l => l.Contains("Early line"));
             Assert.Contains(lines!, l => l.Contains("Boundary line"));
@@ -148,8 +148,8 @@ namespace GxMcp.Worker.Tests
             });
 
             var result = ParseResult(CallReadLogs(sinceMode: "2026-05-22T10:00:00"));
-            Assert.Equal("Success", result["status"]?.ToString());
-            var lines = result["lines"]?.ToString().Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal("ok", result["status"]?.ToString());
+            var lines = result["result"]?["lines"]?.ToString().Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
             Assert.NotNull(lines);
             // Unparseable lines (no timestamp) are kept defensively.
             Assert.Contains(lines!, l => l.Contains("stack trace line without timestamp"));
@@ -164,9 +164,9 @@ namespace GxMcp.Worker.Tests
         {
             WriteLog(new[] { "[2026-05-22 10:00:00.000] [INFO] test" });
             var result = ParseResult(CallReadLogs());
-            Assert.Equal("Success", result["status"]?.ToString());
-            Assert.NotNull(result["logPath"]?.ToString());
-            Assert.NotNull(result["logDir"]?.ToString());
+            Assert.Equal("ok", result["status"]?.ToString());
+            Assert.NotNull(result["result"]?["logPath"]?.ToString());
+            Assert.NotNull(result["result"]?["logDir"]?.ToString());
         }
     }
 }

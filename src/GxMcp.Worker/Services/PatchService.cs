@@ -212,14 +212,30 @@ namespace GxMcp.Worker.Services
                     string readError = TryExtractError(currentResponse);
                     if (!string.IsNullOrWhiteSpace(readError))
                     {
-                        return Models.McpResponse.Error("Patch read failed", target, partName, readError);
+                        return Models.McpResponse.Err(
+                            code: "PatchReadFailed",
+                            message: "Patch read failed: " + readError,
+                            hint: "Ensure the target object and part exist in the active KB.",
+                            nextSteps: new JArray(Models.McpResponse.NextStep(
+                                tool: "genexus_read",
+                                args: new JObject { ["name"] = target, ["part"] = partName },
+                                why: "Verify the part is accessible before patching.")),
+                            target: target);
                     }
 
                     var json = JObject.Parse(currentResponse);
                     originalSource = json["source"]?.ToString();
                     if (originalSource == null)
                     {
-                        return Models.McpResponse.Error("Patch read failed", target, partName, "Could not retrieve source for requested part.");
+                        return Models.McpResponse.Err(
+                            code: "PatchReadSourceNull",
+                            message: "Could not retrieve source for the requested part.",
+                            hint: "The part may not expose a text source. Use genexus_read to inspect available parts.",
+                            nextSteps: new JArray(Models.McpResponse.NextStep(
+                                tool: "genexus_read",
+                                args: new JObject { ["name"] = target },
+                                why: "Lists available parts for this object.")),
+                            target: target);
                     }
                     UpdateCachedSource(cacheKey, originalSource);
                 }
@@ -358,7 +374,9 @@ namespace GxMcp.Worker.Services
                         {
                             try
                             {
+                                // v2.8.0: diagnostic fields go inside the error sub-object.
                                 var failureJson = JObject.Parse(failure);
+                                var errNode = failureJson["error"] as JObject ?? failureJson;
                                 var arr = new JArray();
                                 foreach (var nm in near)
                                 {
@@ -369,8 +387,8 @@ namespace GxMcp.Worker.Services
                                         ["snippet"] = nm.Snippet
                                     });
                                 }
-                                failureJson["nearMatches"] = arr;
-                                failureJson["nearMatchHint"] = "Top similar windows in source. Adjust 'context' to match exact tabs/whitespace of one of these and retry.";
+                                errNode["nearMatches"] = arr;
+                                errNode["nearMatchHint"] = "Top similar windows in source. Adjust 'context' to match exact tabs/whitespace of one of these and retry.";
 
                                 // v2.3.8 Task 3.2: byte-level divergence detail for the top window
                                 // when similarity is high enough that the agent likely just has
@@ -389,13 +407,10 @@ namespace GxMcp.Worker.Services
 
                                     if (top.Similarity >= 0.80)
                                     {
-                                        failureJson["nearMatchHintDetail"] = GxMcp.Worker.Helpers.DiffBuilder.ByteLevelDivergence(bestWindow, ctxJoined);
+                                        errNode["nearMatchHintDetail"] = GxMcp.Worker.Helpers.DiffBuilder.ByteLevelDivergence(bestWindow, ctxJoined);
                                     }
 
                                     // Item 4 (friction 2026-05-22): EOL mismatch short diff.
-                                    // When context lines have different EOL from source, show the
-                                    // first 3 lines the agent passed vs what the file actually has,
-                                    // so the agent can see the divergence at a glance.
                                     int eolDiffLines = Math.Min(3, contextLines.Length);
                                     bool eolMismatchDetected = false;
                                     var eolDiffArr = new JArray();
@@ -403,7 +418,6 @@ namespace GxMcp.Worker.Services
                                     {
                                         string agentLine = contextLines[i];
                                         string fileLine = sourceLines[top.StartLine + i];
-                                        // Highlight if they differ only by EOL/trailing whitespace
                                         bool linesMatchNorm = string.Equals(agentLine.TrimEnd(), fileLine.TrimEnd(), StringComparison.Ordinal);
                                         bool linesMatchExact = string.Equals(agentLine, fileLine, StringComparison.Ordinal);
                                         if (linesMatchNorm && !linesMatchExact)
@@ -420,19 +434,14 @@ namespace GxMcp.Worker.Services
                                     }
                                     if (eolMismatchDetected || top.Similarity >= 0.60)
                                     {
-                                        failureJson["eolDiff"] = eolDiffArr;
+                                        errNode["eolDiff"] = eolDiffArr;
                                         if (eolMismatchDetected)
                                         {
-                                            failureJson["eolDiffHint"] = "Lines differ only in trailing whitespace or EOL. The find context is otherwise correct — the patch pipeline normalizes EOLs automatically, so this mismatch should not cause NoMatch. Check for invisible characters or tab/space mix beyond trailing whitespace.";
+                                            errNode["eolDiffHint"] = "Lines differ only in trailing whitespace or EOL. The find context is otherwise correct — the patch pipeline normalizes EOLs automatically, so this mismatch should not cause NoMatch. Check for invisible characters or tab/space mix beyond trailing whitespace.";
                                         }
                                     }
 
                                     // Item 17 (friction 2026-05-22): Levenshtein-based did_you_mean.
-                                    // Compute edit distance between joined context and best window.
-                                    // Threshold: distance <= ceil(0.20 * len(context)).
-                                    // Guards: skip on huge contexts (O(n²) on STA thread would
-                                    // stall all in-process operations) and on low-similarity
-                                    // near-matches (the suggestion would point at unrelated code).
                                     int ctxLen = ctxJoined.Length;
                                     const int LevenshteinMaxLen = 2000;
                                     if (ctxLen <= LevenshteinMaxLen && top.Similarity >= 0.50)
@@ -441,7 +450,7 @@ namespace GxMcp.Worker.Services
                                         int levenDist = LevenshteinDistance(ctxJoined, bestWindow, threshold + 1);
                                         if (levenDist <= threshold)
                                         {
-                                            failureJson["did_you_mean"] = new JObject
+                                            errNode["did_you_mean"] = new JObject
                                             {
                                                 ["startLine"] = top.StartLine + 1,
                                                 ["endLine"] = top.StartLine + contextLines.Length,
@@ -477,8 +486,12 @@ namespace GxMcp.Worker.Services
                     string noChange = BuildPatchResult("NoChange", partName, normalizedOperation, expectedCount, matchCount, detailMessage);
                     try
                     {
+                        // v2.8.0: noChangeReason goes inside result (envelope is ok/NoChange).
                         var nj = JObject.Parse(noChange);
-                        nj["noChangeReason"] = literalIdentical ? "literal_identical" : "serializer_normalized";
+                        if (nj["result"] is JObject resultNode)
+                            resultNode["noChangeReason"] = literalIdentical ? "literal_identical" : "serializer_normalized";
+                        else
+                            nj["noChangeReason"] = literalIdentical ? "literal_identical" : "serializer_normalized";
                         noChange = nj.ToString();
                     }
                     catch { }
@@ -505,9 +518,11 @@ namespace GxMcp.Worker.Services
                         "Refused to persist suspected NoMatch payload (" + safetyReason + "). No write was attempted; on-disk source unchanged.");
                     try
                     {
+                        // v2.8.0: code lives at top level; extra fields go inside error object.
                         var safetyJson = JObject.Parse(safety);
-                        safetyJson["code"] = "patch_no_match";
-                        safetyJson["safetyReason"] = safetyReason;
+                        safetyJson["code"] = "PatchNoMatch";
+                        if (safetyJson["error"] is JObject errNode) errNode["safetyReason"] = safetyReason;
+                        else safetyJson["safetyReason"] = safetyReason;
                         safety = safetyJson.ToString();
                     }
                     catch (Exception jsonEx)
@@ -515,6 +530,54 @@ namespace GxMcp.Worker.Services
                         Logger.Debug("[PATCH] safety envelope augmentation failed: " + jsonEx.Message);
                     }
                     return AttachTimings(safety, readMs, patchMs, 0, sourceFromCache);
+                }
+
+                // Friction 2026-05-28 — early-reject Form-type transitions on
+                // WebForm/Layout parts. The SDK rejects html→layout (and vice
+                // versa) sub-tree edits without diagnostics; bail out here with
+                // a typed envelope so the agent doesn't burn a turn on a generic
+                // visual-write failure.
+                if (GxMcp.Worker.Helpers.WebFormXmlHelper.IsVisualPart(partName))
+                {
+                    string origFormType = WriteService.TryExtractFormType(workSource);
+                    string newFormType = WriteService.TryExtractFormType(updatedSource);
+                    if (!string.IsNullOrEmpty(origFormType)
+                        && !string.IsNullOrEmpty(newFormType)
+                        && !string.Equals(origFormType, newFormType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string transitionMsg = $"Form type transition not supported via mode=patch "
+                            + $"({origFormType} → {newFormType}). "
+                            + "Use mode='full' with a COMPLETE target-type body (a single <Form type=\""
+                            + newFormType + "\"> root containing all required children). "
+                            + "On WorkWithPlus KBs use genexus_create_popup or harvest dual-form XML from an existing layout-form WebPanel.";
+                        // v2.8.0: direct McpResponse.Err so the curated nextSteps
+                        // for FormTypeTransitionUnsupported land on the wire.
+                        var transitionFailure = Models.McpResponse.Err(
+                            code: "FormTypeTransitionUnsupported",
+                            message: transitionMsg,
+                            hint: "mode=patch can only adjust a body within the same Form type; use mode=full with a complete target-type body to switch types.",
+                            nextSteps: new JArray(
+                                GxMcp.Worker.Helpers.SkillHint.ReadStep(
+                                    GxMcp.Worker.Helpers.SkillHint.Navigation,
+                                    "Form type / Modal / CallProtocol terminology — this skill spells out what the SDK actually exposes vs common LLM hallucinations."),
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_create_popup",
+                                    args: new JObject { ["name"] = target },
+                                    why: "On WorkWithPlus KBs, creates a fresh layout-form popup with the right schema."),
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_edit",
+                                    args: new JObject { ["name"] = target, ["mode"] = "full", ["part"] = partName },
+                                    why: "Full-body replace is the supported path to change Form type.")),
+                            target: target,
+                            extra: new JObject
+                            {
+                                ["part"] = partName,
+                                ["operation"] = normalizedOperation,
+                                ["fromFormType"] = origFormType,
+                                ["toFormType"] = newFormType
+                            });
+                        return AttachTimings(transitionFailure, readMs, patchMs, 0, sourceFromCache);
+                    }
                 }
 
                 // 3. Write Back (re-normalize to CRLF for GeneXus)
@@ -525,7 +588,7 @@ namespace GxMcp.Worker.Services
                 long writeMs = writeStopwatch.ElapsedMilliseconds;
                 JObject writePayload = ParseWriteResult(writeResult);
 
-                bool primaryWriteSuccess = string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
+                bool primaryWriteSuccess = string.Equals(writePayload["_internalStatus"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
                 bool persistedMatches = false;
                 // Pattern parts: trust WriteService's own XmlEquivalence verification (it runs
                 // INSIDE WritePatternPart after the SDK save). PatchService's byte-level re-verify
@@ -615,7 +678,7 @@ namespace GxMcp.Worker.Services
                                 bool matchesOriginal = VerifyPersistedSource(target, partName, typeFilter, originalSource, out _);
                                 bool matchesFinal = VerifyPersistedSource(target, partName, typeFilter, finalCode, out _);
                                 var classification = ClassifyFallbackFailure(matchesOriginal, matchesFinal, fallbackErrText);
-                                writePayload["status"] = classification.Status;
+                                writePayload["_internalStatus"] = classification.Status;
                                 writePayload["code"] = classification.Code;
                                 if (classification.PatchLanded)
                                 {
@@ -660,7 +723,7 @@ namespace GxMcp.Worker.Services
                                 // Verify itself failed — fall back to the legacy generic error so
                                 // we don't lose the signal. Keep status=Error.
                                 Logger.Debug("[PATCH] post-fallback verify failed: " + verifyEx.Message);
-                                writePayload["status"] = "Error";
+                                writePayload["_internalStatus"] = "Error";
                                 writePayload["message"] = "Patch write fallback failed after persistence mismatch.";
                                 writePayload["fallbackWriteError"] = fallbackErrText;
                             }
@@ -687,7 +750,7 @@ namespace GxMcp.Worker.Services
                                 // it as a real divergence and roll back.
                                 if (TryClassifyOutOfWindowOnly(target, partName, typeFilter, workSource, updatedSource, finalCode, out var sideEffects))
                                 {
-                                    writePayload["status"] = "Success";
+                                    writePayload["_internalStatus"] = "Success";
                                     writePayload["persistedVerified"] = true;
                                     writePayload["persistedVerifyError"] = null;
                                     var meta = writePayload["_meta"] as JObject ?? new JObject();
@@ -698,7 +761,7 @@ namespace GxMcp.Worker.Services
                                 }
                                 else
                                 {
-                                writePayload["status"] = "Error";
+                                writePayload["_internalStatus"] = "Error";
                                 writePayload["message"] = "Patch write verification mismatch after fallback write.";
                                 AttachPersistedSnippet(writePayload, target, partName, typeFilter, finalCode);
 
@@ -736,18 +799,18 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                if (string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase) && persistedMatches)
+                if (string.Equals(writePayload["_internalStatus"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase) && persistedMatches)
                 {
                     UpdateCachedSource(cacheKey, finalCode);
                 }
 
-                if (verifyRollback && string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                if (verifyRollback && string.Equals(writePayload["_internalStatus"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
                 {
                     string verifyReadResponse = ReadSourceFast(target, partName, typeFilter);
                     string verifyReadError = TryExtractError(verifyReadResponse);
                     if (!string.IsNullOrWhiteSpace(verifyReadError))
                     {
-                        writePayload["status"] = "Error";
+                        writePayload["_internalStatus"] = "Error";
                         writePayload["message"] = "Apply verification read failed: " + verifyReadError;
                         writePayload["verifyRollback"] = true;
                     }
@@ -760,7 +823,7 @@ namespace GxMcp.Worker.Services
                         writePayload["verifyRollback"] = true;
                         if (!applyVerified)
                         {
-                            writePayload["status"] = "Error";
+                            writePayload["_internalStatus"] = "Error";
                             writePayload["message"] = "Apply verification mismatch: persisted content differs from patched content.";
                         }
                     }
@@ -772,7 +835,7 @@ namespace GxMcp.Worker.Services
                     writePayload["rollbackStatus"] = rollbackPayload["status"]?.ToString() ?? "Error";
                     if (!rollbackSuccess)
                     {
-                        writePayload["status"] = "Error";
+                        writePayload["_internalStatus"] = "Error";
                         writePayload["rollbackError"] = rollbackPayload["message"]?.ToString() ?? rollbackPayload["error"]?.ToString() ?? "Rollback failed.";
                     }
                     else
@@ -781,7 +844,7 @@ namespace GxMcp.Worker.Services
                         string rollbackReadError = TryExtractError(rollbackReadResponse);
                         if (!string.IsNullOrWhiteSpace(rollbackReadError))
                         {
-                            writePayload["status"] = "Error";
+                            writePayload["_internalStatus"] = "Error";
                             writePayload["rollbackError"] = "Rollback verification read failed: " + rollbackReadError;
                         }
                         else
@@ -792,30 +855,67 @@ namespace GxMcp.Worker.Services
                             writePayload["rollbackVerified"] = rollbackVerified;
                             if (!rollbackVerified)
                             {
-                                writePayload["status"] = "Error";
+                                writePayload["_internalStatus"] = "Error";
                                 writePayload["rollbackError"] = "Rollback verification mismatch: current content differs from original content.";
                             }
                         }
                     }
                 }
 
-                bool finalSuccess = string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
-                writePayload["patchStatus"] = finalSuccess ? "Applied" : "Failed";
-                writePayload["operation"] = normalizedOperation;
-                writePayload["expectedCount"] = expectedCount;
-                writePayload["matchCount"] = matchCount;
-                writePayload["timings"] = new JObject
+                // v2.8.0: convert the WriteService legacy envelope (status=Success/Error) to canonical shape.
+                // WriteService is out-of-scope for this migration; we lift its fields into result/error here.
+                bool finalSuccess = string.Equals(writePayload["_internalStatus"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
+                var resultObj = new JObject
                 {
-                    ["readMs"] = readMs,
-                    ["patchMs"] = patchMs,
-                    ["writeMs"] = writeMs,
-                    ["usedSourceCache"] = sourceFromCache
+                    ["part"] = string.IsNullOrWhiteSpace(partName) ? "Source" : partName,
+                    ["operation"] = normalizedOperation,
+                    ["expectedCount"] = expectedCount,
+                    ["matchCount"] = matchCount,
+                    ["timings"] = new JObject
+                    {
+                        ["readMs"] = readMs,
+                        ["patchMs"] = patchMs,
+                        ["writeMs"] = writeMs,
+                        ["usedSourceCache"] = sourceFromCache
+                    }
                 };
+                // Carry through WriteService diagnostic fields into result.
+                foreach (var prop in writePayload.Properties())
+                {
+                    string pn = prop.Name;
+                    if (pn == "status" || pn == "action" || pn == "target") continue;
+                    if (resultObj[pn] == null) resultObj[pn] = prop.Value;
+                }
                 if (returnPostState && finalSuccess && updatedSource != null)
-                    writePayload["post_state"] = GxMcp.Worker.Services.JsonPatchService.BuildPostState(originalSource, updatedSource, verbose);
-                if (patternShadowWarnings != null && patternShadowWarnings.Count > 0)
-                    writePayload["warnings"] = patternShadowWarnings;
-                return writePayload.ToString();
+                    resultObj["post_state"] = GxMcp.Worker.Services.JsonPatchService.BuildPostState(originalSource, updatedSource, verbose);
+
+                if (finalSuccess)
+                {
+                    string finalCode2 = finalSuccess ? "PatchApplied" : "PatchFailed";
+                    var canonical = JObject.Parse(Models.McpResponse.Ok(target: target, code: finalCode2, result: resultObj));
+                    if (patternShadowWarnings != null && patternShadowWarnings.Count > 0)
+                        canonical["warnings"] = patternShadowWarnings;
+                    return canonical.ToString();
+                }
+                else
+                {
+                    string writeMsg = writePayload["message"]?.ToString() ?? writePayload["error"]?.ToString() ?? "Patch write failed.";
+                    string writeCode = writePayload["code"]?.ToString();
+                    string errCode = !string.IsNullOrWhiteSpace(writeCode) ? writeCode : "PatchWriteFailed";
+                    var canonical = JObject.Parse(Models.McpResponse.Err(
+                        code: errCode,
+                        message: writeMsg,
+                        hint: "Re-read the object source and verify the part is writable, then retry.",
+                        nextSteps: new JArray(Models.McpResponse.NextStep(
+                            tool: "genexus_read",
+                            args: new JObject { ["name"] = target, ["part"] = partName },
+                            why: "Confirm the part content and state before retrying the patch.")),
+                        target: target,
+                        extra: resultObj));
+                    if (patternShadowWarnings != null && patternShadowWarnings.Count > 0)
+                        canonical["warnings"] = patternShadowWarnings;
+                    return canonical.ToString();
+                }
             }
             catch (Exception ex)
             {
@@ -1268,7 +1368,11 @@ namespace GxMcp.Worker.Services
         private static JObject ParseWriteResult(string writeResult)
         {
             try { return JObject.Parse(writeResult); }
-            catch { return new JObject { ["status"] = "Error", ["message"] = writeResult }; }
+            // Scaffold-only: this JObject is consumed by the ApplyPatch method's local
+            // writePayload checks; it is NEVER returned directly as the tool response.
+            // The final response is emitted via McpResponse.Ok / .Err at the bottom
+            // of ApplyPatch.
+            catch { return new JObject { ["_internalStatus"] = "Error", ["message"] = writeResult }; }
         }
 
         private static string TryExtractError(string response)
@@ -1278,7 +1382,19 @@ namespace GxMcp.Worker.Services
             try
             {
                 var json = JObject.Parse(response);
-                return json["error"]?.ToString();
+                // v2.8.0 canonical error envelope: { "status":"error", "error": { "message":"..." } }
+                string status = json["status"]?.ToString();
+                if (string.Equals(status, "error", StringComparison.OrdinalIgnoreCase))
+                {
+                    var errObj = json["error"] as JObject;
+                    if (errObj != null)
+                        return errObj["message"]?.ToString() ?? "error";
+                    return json["error"]?.ToString() ?? "error";
+                }
+                // Legacy error: { "status":"Error", "message":"..." }
+                if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+                    return json["message"]?.ToString() ?? json["error"]?.ToString() ?? "error";
+                return null; // ok / partial / accepted — not an error
             }
             catch
             {
@@ -1293,7 +1409,14 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null)
                 {
-                    return Models.McpResponse.Error("Object not found", target, partName, "The requested object is not available in the active Knowledge Base.");
+                    // Internal read helper — callers check for error via TryExtractError.
+                    // Use legacy Error shape here so TryExtractError() still picks up the error field.
+                    // no-nextStep: this is an internal helper; the error is consumed by TryExtractError() and re-surfaced by the calling public method which already carries nextSteps.
+                    return Models.McpResponse.Err(
+                        code: "ObjectNotFound",
+                        message: "Object not found.",
+                        hint: "Verify the object name and type in the active KB.",
+                        target: target);
                 }
 
                 string resolvedPart = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
@@ -1307,11 +1430,16 @@ namespace GxMcp.Worker.Services
                     string patternXml = _patternAnalysisService.ReadPatternPartXml(obj, resolvedPart, out _, out var resolvedPatternPartName);
                     if (patternXml == null)
                     {
-                        return Models.McpResponse.Error("Part not found", target, resolvedPart, "The object does not expose the requested pattern part.");
+                        return Models.McpResponse.Err(
+                            code: "PatternPartNotFound",
+                            message: "The object does not expose the requested pattern part.",
+                            hint: "Check the part name; pattern parts are typically 'PatternInstance'.",
+                            target: target);
                     }
+                    // Internal read response — intentionally not canonical so TryExtractError can probe it.
                     return new JObject
                     {
-                        ["status"] = "Success",
+                        ["status"] = "ok",
                         ["part"] = string.IsNullOrWhiteSpace(resolvedPatternPartName) ? resolvedPart : resolvedPatternPartName,
                         ["source"] = patternXml
                     }.ToString();
@@ -1320,7 +1448,16 @@ namespace GxMcp.Worker.Services
                 KBObjectPart part = PartAccessor.GetPart(obj, resolvedPart);
                 if (part == null)
                 {
-                    return Models.McpResponse.Error("Part not found", target, resolvedPart, "The object does not expose the requested part.");
+                    return Models.McpResponse.Err(
+                        code: "PartNotFound",
+                        message: "The object does not expose the requested part.",
+                        hint: "Use genexus_read on the target to list available parts.",
+                        nextSteps: new JArray(
+                            Models.McpResponse.NextStep(
+                                tool: "genexus_read",
+                                args: new JObject { ["name"] = target },
+                                why: "Returns availableParts so the next write picks a valid one.")),
+                        target: target);
                 }
 
                 string source = null;
@@ -1356,19 +1493,28 @@ namespace GxMcp.Worker.Services
 
                 if (source == null)
                 {
-                    return Models.McpResponse.Error("Part does not expose text source", target, resolvedPart, "Patch operations require a textual part.");
+                    return Models.McpResponse.Err(
+                        code: "PartNoTextSource",
+                        message: "Part does not expose a text source. Patch operations require a textual part.",
+                        hint: "Visual or binary parts cannot be patched via this operation.",
+                        target: target);
                 }
 
+                // Internal read response — intentionally not canonical so TryExtractError can probe it.
                 return new JObject
                 {
-                    ["status"] = "Success",
+                    ["status"] = "ok",
                     ["part"] = resolvedPart,
                     ["source"] = source
                 }.ToString();
             }
             catch (Exception ex)
             {
-                return Models.McpResponse.Error("Patch read failed", target, partName, ex.Message);
+                return Models.McpResponse.Err(
+                    code: "PatchReadFailed",
+                    message: "Patch read failed: " + ex.Message,
+                    hint: "Ensure the target object and part are accessible.",
+                    target: target);
             }
         }
 
@@ -1727,32 +1873,82 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        /// <summary>
+        /// v2.8.0: emits canonical envelope shape.
+        /// Success-family (Applied, NoChange, DryRun) → McpResponse.Ok with result payload.
+        /// Error-family (NoMatch, Ambiguous, Stale, Error) → McpResponse.Err with hint+nextSteps.
+        /// The signature is unchanged so all call-sites continue working without modification.
+        /// </summary>
         private static string BuildPatchResult(string patchStatus, string partName, string operation, int expectedCount, int matchCount, string details)
         {
-            bool isError = string.Equals(patchStatus, "NoMatch", StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(patchStatus, "Ambiguous", StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(patchStatus, "Error", StringComparison.OrdinalIgnoreCase);
-            var payload = new JObject
+            string part = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+            var resultPayload = new JObject
             {
-                ["status"] = isError ? "Error" : "Success",
-                ["patchStatus"] = patchStatus,
-                ["part"] = string.IsNullOrWhiteSpace(partName) ? "Source" : partName,
+                ["part"] = part,
+                ["operation"] = operation,
+                ["expectedCount"] = expectedCount,
+                ["matchCount"] = matchCount
+            };
+            if (!string.IsNullOrWhiteSpace(details))
+                resultPayload["details"] = details;
+
+            bool isOk = string.Equals(patchStatus, "Applied", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(patchStatus, "NoChange", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(patchStatus, "DryRun", StringComparison.OrdinalIgnoreCase);
+
+            if (isOk)
+            {
+                return Models.McpResponse.Ok(code: patchStatus, result: resultPayload);
+            }
+
+            // Error-family: derive a concrete hint + nextStep per status code.
+            string hint;
+            JArray nextSteps = null;
+            switch (patchStatus.ToLowerInvariant())
+            {
+                case "nomatch":
+                    hint = "The context block was not found in the part. Re-read the object source and copy the exact lines (tabs, whitespace, EOL) as the context.";
+                    nextSteps = new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = "(target)", ["part"] = part },
+                        why: "Returns the current source so you can copy a verbatim context block and retry the patch."));
+                    break;
+                case "ambiguous":
+                    hint = $"The context matched {matchCount} location(s) but expected {expectedCount}. Add more surrounding lines to make it unique, or pass replaceAll=true to apply to every match.";
+                    // no-nextStep: the right action depends on caller intent (unique vs replaceAll); too divergent to prescribe a single tool call.
+                    break;
+                case "stale":
+                    hint = "A concurrent write landed against this target while the patch was queued. Re-read the object source and rebuild the context from fresh content.";
+                    nextSteps = new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = "(target)", ["part"] = part },
+                        why: "Fetches the current (post-concurrent-write) source so the patch context can be refreshed."));
+                    break;
+                default: // "Error" and anything unexpected
+                    hint = "Check the operation, context, and part name; then retry.";
+                    nextSteps = new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = "(target)", ["part"] = part },
+                        why: "Verify the part exists and read its current source before retrying."));
+                    break;
+            }
+
+            // Embed the result payload inside the error envelope as extra fields so
+            // diagnostics (part, operation, expectedCount, matchCount, details) are not lost.
+            var extra = new JObject
+            {
+                ["part"] = part,
                 ["operation"] = operation,
                 ["expectedCount"] = expectedCount,
                 ["matchCount"] = matchCount
             };
 
-            if (!string.IsNullOrWhiteSpace(details))
-            {
-                payload["details"] = details;
-            }
-
-            if (isError)
-            {
-                payload["error"] = details;
-            }
-
-            return payload.ToString();
+            return Models.McpResponse.Err(
+                code: patchStatus,
+                message: string.IsNullOrWhiteSpace(details) ? $"Patch {patchStatus}." : details,
+                hint: hint,
+                nextSteps: nextSteps,
+                extra: extra);
         }
     }
 }

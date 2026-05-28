@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -16,7 +17,7 @@ namespace GxMcp.Worker.Services
 
         public GithubService(KbService kbService) { _kbService = kbService; }
 
-        public string CreatePr(string title, string body, string baseBranch, string workingDir)
+        public string CreatePr(string title, string body, string baseBranch, string workingDir, bool dryRun = false)
         {
             if (string.IsNullOrWhiteSpace(title))
                 return Err("title is required.");
@@ -27,15 +28,32 @@ namespace GxMcp.Worker.Services
             // values that begin with '-' so they can't be re-parsed as flags
             // (the legitimate values for these never start with '-').
             if (title.TrimStart().StartsWith("-"))
-                return new JObject { ["status"] = "Error", ["code"] = "InvalidTitle", ["message"] = "title may not start with '-'." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "InvalidTitle", message: "title may not start with '-'.", hint: "Provide a PR title that does not begin with a dash.");
             if (!string.IsNullOrWhiteSpace(baseBranch) && baseBranch.TrimStart().StartsWith("-"))
-                return new JObject { ["status"] = "Error", ["code"] = "InvalidBaseBranch", ["message"] = "baseBranch may not start with '-'." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "InvalidBaseBranch", message: "baseBranch may not start with '-'.", hint: "Provide a valid branch name that does not begin with a dash.");
 
             string cwd = string.IsNullOrEmpty(workingDir) ? (TryGetKbPath() ?? Directory.GetCurrentDirectory()) : workingDir;
 
             var argList = new System.Collections.Generic.List<string> { "pr", "create", "--title", title };
             if (!string.IsNullOrWhiteSpace(body)) { argList.Add("--body"); argList.Add(body); }
             if (!string.IsNullOrWhiteSpace(baseBranch)) { argList.Add("--base"); argList.Add(baseBranch); }
+
+            // dryRun: return the resolved command without shelling out.
+            if (dryRun)
+            {
+                return McpResponse.Ok(
+                    code: "DryRun",
+                    result: new JObject
+                    {
+                        ["preview"] = new JObject
+                        {
+                            ["exe"] = "gh",
+                            ["args"] = new Newtonsoft.Json.Linq.JArray(argList.ToArray()),
+                            ["cwd"] = cwd,
+                            ["note"] = "dryRun=true: gh pr create was not executed."
+                        }
+                    });
+            }
 
             int exit;
             string stdout, stderr;
@@ -45,37 +63,33 @@ namespace GxMcp.Worker.Services
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "GhCliNotInstalled",
-                    ["hint"] = "Install GitHub CLI from https://cli.github.com/ and run `gh auth login`."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "GhCliNotInstalled",
+                    message: "GitHub CLI (gh) is not installed or not on PATH.",
+                    hint: "Install GitHub CLI from https://cli.github.com/ and run `gh auth login`.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        "genexus_github",
+                        new JObject { ["action"] = "create_pr", ["title"] = title },
+                        "Retry after installing and authenticating the gh CLI.")));
             }
             catch (Exception ex) { return Err(ex.Message); }
 
             if (exit != 0)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "GhExitNonZero",
-                    ["exitCode"] = exit,
-                    ["stderr"] = stderr ?? "",
-                    ["cwd"] = cwd
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "GhExitNonZero",
+                    message: "gh pr create exited with code " + exit + ".",
+                    hint: "Check stderr for authentication or remote-push errors.",
+                    extra: new JObject { ["exitCode"] = exit, ["stderr"] = stderr ?? "", ["cwd"] = cwd });
             }
             string url = (stdout ?? "").Trim();
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["url"] = url,
-                ["cwd"] = cwd
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "GithubPrCreated",
+                result: new JObject { ["url"] = url, ["cwd"] = cwd });
         }
 
         private string TryGetKbPath() { try { return _kbService?.GetKbPath(); } catch { return null; } }
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Newtonsoft.Json.Formatting.None);
+        private static string Err(string m) => McpResponse.Err(code: "GithubError", message: m);
 
         /// <summary>
         /// Windows CommandLineToArgv-compatible quoting per the rules at

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -22,7 +23,14 @@ namespace GxMcp.Worker.Services
                 dynamic kb = _kbService?.GetKB();
                 if (kb == null)
                 {
-                    return new JObject { ["status"] = "Error", ["message"] = "KB not open" }.ToString();
+                    return McpResponse.Err(
+                        code: "KbNotOpen",
+                        message: "No KB is currently open.",
+                        hint: "Open a KB first with genexus_kb action=open.",
+                        nextSteps: new Newtonsoft.Json.Linq.JArray(McpResponse.NextStep(
+                            "genexus_kb",
+                            new JObject { ["action"] = "open", ["path"] = "<kb path>" },
+                            "Open the target KB before calling db_info.")));
                 }
 
                 dynamic environment = kb.DesignModel.Environment;
@@ -63,16 +71,14 @@ namespace GxMcp.Worker.Services
                     };
                     env["dialect"] = defaultStore["dialect"];
                 }
-                env["status"] = "Success";
-                return env.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(code: "DatabaseInfoCollected", result: env);
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["message"] = ex.Message
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "DatabaseInfoFailed",
+                    message: ex.Message,
+                    hint: "Check that the KB environment exposes DataStores via the SDK.");
             }
         }
 

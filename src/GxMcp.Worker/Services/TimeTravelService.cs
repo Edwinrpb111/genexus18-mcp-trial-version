@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -60,16 +61,16 @@ namespace GxMcp.Worker.Services
             if (string.IsNullOrWhiteSpace(name)) return Err("name is required.");
             if (string.IsNullOrWhiteSpace(at)) return Err("at is required (ISO timestamp or commit sha).");
             if (!IsSafeObjectName(name))
-                return new JObject { ["status"] = "Error", ["code"] = "InvalidName", ["message"] = "name must match [A-Za-z0-9._-]{1,200}." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "InvalidName", message: "name must match [A-Za-z0-9._-]{1,200}.");
             if (!IsSafeAtValue(at))
-                return new JObject { ["status"] = "Error", ["code"] = "InvalidAt", ["message"] = "at must be a commit sha (7-40 hex) or an ISO-8601 timestamp; metacharacters and leading '-' are rejected." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "InvalidAt", message: "at must be a commit sha (7-40 hex) or an ISO-8601 timestamp; metacharacters and leading '-' are rejected.");
 
             string kbPath = null;
             try { kbPath = _kbService?.GetKbPath(); } catch { }
             if (string.IsNullOrEmpty(kbPath) || !Directory.Exists(kbPath))
                 return Err("KB path not resolvable.");
             if (!Directory.Exists(Path.Combine(kbPath, ".git")))
-                return new JObject { ["status"] = "Error", ["code"] = "KbNotInGit", ["hint"] = "Initialise git in the KB directory (git init) to enable time-travel." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "KbNotInGit", message: "KB is not in a git repository.", hint: "Initialise git in the KB directory (git init) to enable time-travel.");
 
             // Resolve `at` → commit sha. ISO timestamp uses `git log --before=<iso> -1`.
             string commit;
@@ -83,14 +84,14 @@ namespace GxMcp.Worker.Services
                 string so, se;
                 exit = RunGit(kbPath, new[] { "log", "--before=" + at, "-1", "--pretty=%H" }, out so, out se);
                 if (exit != 0 || string.IsNullOrWhiteSpace(so))
-                    return new JObject { ["status"] = "Error", ["code"] = "NoCommitBefore", ["at"] = at, ["stderr"] = se }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Err(code: "NoCommitBefore", message: "No commit found before the specified timestamp.", extra: new JObject { ["at"] = at, ["stderr"] = se });
                 commit = so.Trim();
             }
 
             // Find the object's directory on disk via SDK or by walking the KB.
             string objDir = TryFindObjectDirectory(kbPath, name);
             if (string.IsNullOrEmpty(objDir))
-                return new JObject { ["status"] = "Error", ["code"] = "ObjectNotFoundOnDisk", ["name"] = name }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "ObjectNotFoundOnDisk", message: "Object directory not found on disk.", target: name);
 
             // Make objDir relative to git root for `git show`.
             string rel = MakeRelative(kbPath, objDir);
@@ -99,7 +100,7 @@ namespace GxMcp.Worker.Services
             // `--` separator: keep the path positional even if `rel` starts with '-'.
             e2 = RunGit(kbPath, new[] { "ls-tree", "-r", "--name-only", commit, "--", rel }, out lsOut, out lsErr);
             if (e2 != 0)
-                return new JObject { ["status"] = "Error", ["code"] = "GitLsTreeFailed", ["commit"] = commit, ["stderr"] = lsErr }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "GitLsTreeFailed", message: "git ls-tree failed.", extra: new JObject { ["commit"] = commit, ["stderr"] = lsErr });
 
             var parts = new JArray();
             foreach (var line in lsOut.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
@@ -112,14 +113,12 @@ namespace GxMcp.Worker.Services
                 parts.Add(new JObject { ["path"] = path, ["bytes"] = content.Length, ["content"] = content });
             }
 
-            return new JObject
+            return McpResponse.Ok(target: name, code: "TimeTravelRecovered", result: new JObject
             {
-                ["status"] = "Success",
-                ["name"] = name,
                 ["recoveredFromCommit"] = commit,
                 ["parts"] = parts,
                 ["hint"] = "Parts are returned read-only. Call genexus_edit mode=full to restore any of them."
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            });
         }
 
         private string TryFindObjectDirectory(string kbPath, string name)
@@ -160,7 +159,7 @@ namespace GxMcp.Worker.Services
             return p.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? p.Substring(rootFull.Length).Replace('\\', '/') : full;
         }
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString(Newtonsoft.Json.Formatting.None);
+        private static string Err(string m) => McpResponse.Err(code: "TimeTravelFailed", message: m);
 
         private static int RunGit(string cwd, string[] args, out string stdout, out string stderr)
         {

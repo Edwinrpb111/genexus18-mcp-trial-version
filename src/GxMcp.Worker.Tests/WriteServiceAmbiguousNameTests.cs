@@ -55,7 +55,7 @@ namespace GxMcp.Worker.Tests
             string result = ws.WriteObject("InvoiceProc", "Source", "// code");
             var json = JObject.Parse(result);
 
-            Assert.Equal("Error", json["status"]?.ToString());
+            Assert.Equal("error", json["status"]?.ToString());
             var alternatives = json["alternatives"] as JArray;
             Assert.NotNull(alternatives);
             Assert.True(alternatives.Count >= 2, "Expected at least 2 alternatives");
@@ -76,7 +76,7 @@ namespace GxMcp.Worker.Tests
             string result = ws.WriteObject("InvoiceProc", "Source", "// code");
             var json = JObject.Parse(result);
 
-            Assert.Contains("Ambiguous", json["message"]?.ToString());
+            Assert.Contains("Ambiguous", json["error"]?["message"]?.ToString());
         }
 
         [Fact]

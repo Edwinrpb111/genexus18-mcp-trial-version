@@ -324,6 +324,61 @@ namespace GxMcp.Worker.Services
 
         public string Dispatch(string line)
         {
+            // v2.8.0 — idempotency. When the caller threads a `clientRequestId`
+            // through the RPC params, this dispatcher serves a cached response
+            // for the same id within a 5-minute TTL. Lets LLM clients retry
+            // safely after a socket drop / gateway timeout without double-
+            // applying the underlying mutation. Excluded methods (ping, control)
+            // skip the cache because they're meta operations.
+            string requestId = null;
+            string method0 = null;
+            try
+            {
+                var req0 = JObject.Parse(line);
+                method0 = req0["method"]?.ToString()?.ToLowerInvariant();
+                requestId = req0["params"]?["clientRequestId"]?.ToString()
+                    ?? (req0["params"]?["params"] as JObject)?["clientRequestId"]?.ToString();
+            }
+            catch { /* fall through to normal dispatch */ }
+
+            bool cacheable = !string.IsNullOrEmpty(requestId)
+                && method0 != "ping" && method0 != "control";
+            if (cacheable)
+            {
+                // v2.8.0 (#37) — TryServe now waits for any in-flight call
+                // with the same id, so a fast LLM retry within the original
+                // call's window blocks on the first and gets the same result.
+                string replay = GxMcp.Worker.Helpers.IdempotencyCache.TryServe(requestId);
+                if (replay != null) return replay;
+                // Mark this call as in-flight BEFORE executing so siblings
+                // that race in mid-flight block instead of double-applying.
+                GxMcp.Worker.Helpers.IdempotencyCache.BeginInflight(requestId);
+            }
+
+            string result;
+            try
+            {
+                result = DispatchInternal(line);
+            }
+            catch
+            {
+                if (cacheable) GxMcp.Worker.Helpers.IdempotencyCache.AbortInflight(requestId);
+                throw;
+            }
+
+            if (cacheable && !string.IsNullOrEmpty(result))
+            {
+                GxMcp.Worker.Helpers.IdempotencyCache.Store(requestId, result);
+            }
+            else if (cacheable)
+            {
+                GxMcp.Worker.Helpers.IdempotencyCache.AbortInflight(requestId);
+            }
+            return result;
+        }
+
+        private string DispatchInternal(string line)
+        {
             try
             {
                 var request = JObject.Parse(line);
@@ -396,7 +451,10 @@ namespace GxMcp.Worker.Services
                             try
                             {
                                 var openResult = JObject.Parse(result);
-                                if (string.Equals(openResult["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                                // v2.8.0 — KbService.OpenKB now emits the canonical envelope
+                                // (status:"ok"). Recognize only the canonical shape; legacy
+                                // emissions were removed in this release.
+                                if (string.Equals(openResult["status"]?.ToString(), "ok", StringComparison.Ordinal))
                                 {
                                     Environment.SetEnvironmentVariable("GX_KB_PATH", target);
                                 }
@@ -410,6 +468,24 @@ namespace GxMcp.Worker.Services
                         if (action == "BulkIndex")
                         {
                             bool force = args?["force"]?.ToObject<bool?>() ?? false;
+                            bool indexDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                            if (indexDryRun)
+                            {
+                                string kbPathForDry = null;
+                                try { kbPathForDry = _kbService.GetKbPath(); } catch { }
+                                return Models.McpResponse.Ok(
+                                    code: "DryRun",
+                                    result: new JObject
+                                    {
+                                        ["preview"] = new JObject
+                                        {
+                                            ["action"] = "index",
+                                            ["force"] = force,
+                                            ["kbPath"] = kbPathForDry,
+                                            ["note"] = "dryRun=true: index rebuild not executed."
+                                        }
+                                    });
+                            }
                             return _kbService.BulkIndex(force);
                         }
                         if (action == "SelfTest") return _selfTestService.RunAllTests();
@@ -452,9 +528,12 @@ namespace GxMcp.Worker.Services
                             // v2.3.8 Task 1.2: surface unified IndexState from IndexCacheService.
                             // Gateway uses this to populate the `index` block in whoami.
                             var st = _indexCacheService.GetState();
+                            // v2.8.0 — index state shape is the tool's payload (not an envelope).
+                            // Renamed top-level "status" to "indexStatus" to avoid colliding with
+                            // the canonical envelope's "status" once wrapped in McpResponse.Ok.
                             var j = new JObject
                             {
-                                ["status"] = st.Status ?? "Cold",
+                                ["indexStatus"] = st.Status ?? "Cold",
                                 ["totalObjects"] = st.TotalObjects,
                                 ["lastIndexedAt"] = st.LastIndexedAt.HasValue
                                     ? (JToken)st.LastIndexedAt.Value.ToUniversalTime().ToString("o")
@@ -505,7 +584,7 @@ namespace GxMcp.Worker.Services
                             }
                             catch (Exception ex) { Logger.Debug("[GetIndexState] recentlyChanged failed: " + ex.Message); }
 
-                            return j.ToString();
+                            return Models.McpResponse.Ok(code: "IndexState", result: j);
                         }
                         if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
                         if (action == "ListPatternSnapshots") return _kbValidationService.ListPatternSnapshots(target);
@@ -638,7 +717,7 @@ namespace GxMcp.Worker.Services
                             // shape without calling newObj.Save(). args carries the flag.
                             return _objectService.CreateObject(args?["type"]?.ToString(), target, args);
                         }
-                        if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false);
+                        if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false, args?["dryRun"]?.ToObject<bool?>() ?? false);
                         if (action == "SaveAs") return _saveAsService.SaveAs(args ?? new JObject());
                         if (action == "WorkerReload")
                         {
@@ -704,24 +783,30 @@ namespace GxMcp.Worker.Services
                     case "write":
                         if (action == "AddVariable")
                         {
+                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
                             return _writeService.AddVariable(
                                 target,
                                 args?["varName"]?.ToString(),
-                                args?["typeName"]?.ToString());
+                                args?["typeName"]?.ToString(),
+                                varDryRun);
                         }
                         if (action == "DeleteVariable")
                         {
+                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
                             return _writeService.DeleteVariable(
                                 target,
-                                args?["varName"]?.ToString());
+                                args?["varName"]?.ToString(),
+                                varDryRun);
                         }
                         if (action == "ModifyVariable")
                         {
+                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
                             return _writeService.ModifyVariable(
                                 target,
                                 args?["varName"]?.ToString(),
                                 args?["typeName"]?.ToString(),
-                                args?["basedOn"]?.ToString());
+                                args?["basedOn"]?.ToString(),
+                                varDryRun);
                         }
                         if (action == "ValidatePayload")
                         {
@@ -961,20 +1046,20 @@ namespace GxMcp.Worker.Services
                             try
                             {
                                 var probe = Services.SdkSurfaceProbe.Run(args?["outputDir"]?.ToString());
-                                var resp = new JObject
-                                {
-                                    ["status"] = "Success",
-                                    ["rawJsonPath"] = probe.RawJsonPath,
-                                    ["indexMdPath"] = probe.IndexMdPath,
-                                    ["generatorsMdPath"] = probe.GeneratorsMdPath,
-                                    ["rawSizeBytes"] = probe.RawSizeBytes,
-                                    ["assembliesScanned"] = probe.AssembliesScanned,
-                                    ["typesScanned"] = probe.TypesScanned,
-                                    ["generatorCandidates"] = probe.GeneratorCandidates,
-                                    ["warnings"] = new JArray(probe.Warnings),
-                                    ["note"] = "Inspect rawJsonPath with jq, or read INDEX.md / generators.md for navigable views. See docs/sdk-probe/README.md."
-                                };
-                                return resp.ToString(Newtonsoft.Json.Formatting.None);
+                                return Models.McpResponse.Ok(
+                                    code: "SdkProbeCompleted",
+                                    result: new JObject
+                                    {
+                                        ["rawJsonPath"] = probe.RawJsonPath,
+                                        ["indexMdPath"] = probe.IndexMdPath,
+                                        ["generatorsMdPath"] = probe.GeneratorsMdPath,
+                                        ["rawSizeBytes"] = probe.RawSizeBytes,
+                                        ["assembliesScanned"] = probe.AssembliesScanned,
+                                        ["typesScanned"] = probe.TypesScanned,
+                                        ["generatorCandidates"] = probe.GeneratorCandidates,
+                                        ["warnings"] = new JArray(probe.Warnings),
+                                        ["note"] = "Inspect rawJsonPath with jq, or read INDEX.md / generators.md for navigable views. See docs/sdk-probe/README.md."
+                                    });
                             }
                             catch (Exception ex)
                             {
@@ -1081,6 +1166,9 @@ namespace GxMcp.Worker.Services
                             string notifyOnFailure = args?["notifyOnFailure"]?.ToString();
                             // Item 28 (Tier-S, EXPERIMENTAL) — fastIncremental opt-in.
                             bool fastIncremental = args?["fastIncremental"]?.ToObject<bool?>() ?? false;
+                            bool buildDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                            if (buildDryRun)
+                                return _buildService.BuildDryRun(action, target, includeCallees, cap);
                             return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy, notifyOnFailure, fastIncremental);
                         }
                     case "validation":
@@ -1119,12 +1207,30 @@ namespace GxMcp.Worker.Services
                             return _securityAuditService.AuditGam();
                         if (string.Equals(action, "scan_secrets", StringComparison.OrdinalIgnoreCase))
                             return _securityAuditService.ScanSecrets();
-                        return Models.McpResponse.Error("Unknown action", target, null, $"Unsupported security action '{action}'.");
+                        return Models.McpResponse.Err(
+                            code: "UnknownAction",
+                            message: $"Unsupported security action '{action}'.",
+                            hint: "Call genexus_security with no action to see the supported list.",
+                            nextSteps: new JArray(
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_orient",
+                                    args: new JObject(),
+                                    why: "Shows the tool catalog so the right action can be chosen.")),
+                            target: target);
                     // Item 65 — genexus_orient welcome card
                     case "orient":
                         if (string.Equals(action, "Welcome", StringComparison.OrdinalIgnoreCase))
                             return _orientService.Welcome();
-                        return Models.McpResponse.Error("Unknown action", target, null, $"Unsupported orient action '{action}'.");
+                        return Models.McpResponse.Err(
+                            code: "UnknownAction",
+                            message: $"Unsupported orient action '{action}'.",
+                            hint: "Call genexus_orient with no action to see the supported list.",
+                            nextSteps: new JArray(
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_orient",
+                                    args: new JObject(),
+                                    why: "Shows the tool catalog so the right action can be chosen.")),
+                            target: target);
                     case "property":
                         var propType = args?["type"]?.ToString();
                         if (action == "Set")
@@ -1166,7 +1272,10 @@ namespace GxMcp.Worker.Services
                         if (action == "Format") return _formatService.Format(payload);
                         break;
                     case "refactor":
-                        return _refactorService.Refactor(target, action, payload);
+                    {
+                        bool refactorDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                        return _refactorService.Refactor(target, action, payload, refactorDryRun);
+                    }
                     case "popup":
                         if (action == "Create")
                         {
@@ -1204,7 +1313,8 @@ namespace GxMcp.Worker.Services
                             string roName = target ?? args?["name"]?.ToString();
                             var roArgs = args?["args"] as JArray;
                             var gamToken = args?["gamSession"];
-                            return _runObjectService.Resolve(roName, roArgs, gamToken);
+                            bool roDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                            return _runObjectService.Resolve(roName, roArgs, gamToken, roDryRun);
                         }
                         break;
                     case "explain":
@@ -1271,7 +1381,9 @@ namespace GxMcp.Worker.Services
                             target ?? args?["target"]?.ToString(),
                             args?["part"]?.ToString(),
                             args?["ownerId"]?.ToString(),
-                            args?["ttlSec"]?.ToObject<int?>() ?? 300);
+                            args?["ttlSec"]?.ToObject<int?>() ?? 300,
+                            kbPathOverride: null,
+                            dryRun: request["dryRun"]?.ToObject<bool?>() ?? false);
                     case "whatif":
                         if (string.Equals(action, "Simulate", StringComparison.OrdinalIgnoreCase))
                             return _whatIfService.Simulate(args?["change"] as JObject);
@@ -1303,7 +1415,7 @@ namespace GxMcp.Worker.Services
                         return _typeIntrospectService.Run(args ?? new JObject());
                     case "github":
                         if (string.Equals(action, "CreatePr", StringComparison.OrdinalIgnoreCase))
-                            return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString());
+                            return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString(), request["dryRun"]?.ToObject<bool?>() ?? false);
                         break;
                     case "aicomplete":
                         if (string.Equals(action, "Complete", StringComparison.OrdinalIgnoreCase))
@@ -1365,7 +1477,16 @@ namespace GxMcp.Worker.Services
                             string locName = target ?? args?["name"]?.ToString();
                             return _kbExplorerService.Locate(locName);
                         }
-                        return Models.McpResponse.Error("Unknown action", target, action, $"Unsupported kbexplorer action '{action}'.");
+                        return Models.McpResponse.Err(
+                            code: "UnknownAction",
+                            message: $"Unsupported kbexplorer action '{action}'.",
+                            hint: "Call genexus_kbexplorer with no action to see the supported list.",
+                            nextSteps: new JArray(
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_orient",
+                                    args: new JObject(),
+                                    why: "Shows the tool catalog so the right action can be chosen.")),
+                            target: target);
                     case "navigation":
                         if (string.Equals(action, "View", StringComparison.OrdinalIgnoreCase))
                         {
@@ -1373,7 +1494,16 @@ namespace GxMcp.Worker.Services
                             bool latest = args?["latest"]?.ToObject<bool?>() ?? false;
                             return _navigationViewService.View(navName, latest);
                         }
-                        return Models.McpResponse.Error("Unknown action", target, action, $"Unsupported navigation action '{action}'.");
+                        return Models.McpResponse.Err(
+                            code: "UnknownAction",
+                            message: $"Unsupported navigation action '{action}'.",
+                            hint: "Call genexus_navigation with no action to see the supported list.",
+                            nextSteps: new JArray(
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_orient",
+                                    args: new JObject(),
+                                    why: "Shows the tool catalog so the right action can be chosen.")),
+                            target: target);
                     case "blame":
                         if (string.Equals(action, "Get", StringComparison.OrdinalIgnoreCase))
                         {
@@ -1387,7 +1517,16 @@ namespace GxMcp.Worker.Services
                             };
                             return _blameService.Blame(blameReq);
                         }
-                        return Models.McpResponse.Error("Unknown action", target, action, $"Unsupported blame action '{action}'.");
+                        return Models.McpResponse.Err(
+                            code: "UnknownAction",
+                            message: $"Unsupported blame action '{action}'.",
+                            hint: "Call genexus_blame with no action to see the supported list.",
+                            nextSteps: new JArray(
+                                Models.McpResponse.NextStep(
+                                    tool: "genexus_orient",
+                                    args: new JObject(),
+                                    why: "Shows the tool catalog so the right action can be chosen.")),
+                            target: target);
                     case "browser_capture":
                         if (action == "Capture")
                         {
@@ -1412,17 +1551,24 @@ namespace GxMcp.Worker.Services
                         break;
                 }
 
-                return Models.McpResponse.Error(
-                    "Method or Action not found",
-                    target,
-                    action,
-                    string.Format("Unsupported dispatch combination. Method='{0}', Action='{1}'.", method ?? "", action ?? "")
-                );
+                return Models.McpResponse.Err(
+                    code: "UnknownMethodOrAction",
+                    message: string.Format("Unsupported dispatch combination. Method='{0}', Action='{1}'.", method ?? "", action ?? ""),
+                    hint: "Call genexus_help action=route goal=<intent> for the right tool, or genexus_orient for an overview.",
+                    nextSteps: new JArray(
+                        Models.McpResponse.NextStep(
+                            tool: "genexus_orient",
+                            args: new JObject(),
+                            why: "Shows the tool catalog so the right action can be chosen.")),
+                    target: target);
                 } // end using ProgressContext
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\":\"" + EscapeJsonString(ex.Message) + "\"}";
+                return Models.McpResponse.Err(
+                    code: "DispatcherException",
+                    message: ex.Message,
+                    hint: "Inspect worker logs for the full exception chain; this is an unhandled dispatcher error.");
             }
         }
 

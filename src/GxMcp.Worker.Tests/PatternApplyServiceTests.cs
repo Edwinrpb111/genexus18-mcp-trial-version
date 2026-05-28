@@ -114,8 +114,8 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPattern(ObjName, "WorkWithPlus");
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Contains("not found", obj["message"]?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Contains("not found", obj["error"]?["message"]?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
             Assert.Equal(0, engine.ApplyCalls);
         }
 
@@ -132,12 +132,12 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPatternToObject(null, WWP, "WorkWithPlus", new JObject { ["foo"] = "bar" }, reapply: false, objectNameForResponse: ObjName);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Success", obj["status"]?.ToString());
-            Assert.True(obj["wasFirstApply"]?.ToObject<bool>());
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.True(obj["result"]?["wasFirstApply"]?.ToObject<bool>());
             Assert.Equal(1, engine.ApplyCalls);
             Assert.Equal(0, engine.ReapplyCalls);
 
-            var generated = (JArray)obj["generatedObjects"];
+            var generated = (JArray)obj["result"]?["generatedObjects"];
             Assert.Equal(2, generated.Count);
             Assert.Contains("WWAlpha", generated.ToObject<List<string>>());
         }
@@ -155,8 +155,8 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPatternToObject(null, WWP, "WorkWithPlus", null, reapply: false, objectNameForResponse: ObjName);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Success", obj["status"]?.ToString());
-            Assert.False(obj["wasFirstApply"]?.ToObject<bool>());
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.False(obj["result"]?["wasFirstApply"]?.ToObject<bool>());
             Assert.Equal(0, engine.ApplyCalls);
             Assert.Equal(0, engine.ReapplyCalls);
         }
@@ -171,8 +171,8 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPatternToObject(null, WWP, "WorkWithPlus", null, reapply: true, objectNameForResponse: ObjName);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Success", obj["status"]?.ToString());
-            Assert.False(obj["wasFirstApply"]?.ToObject<bool>());
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.False(obj["result"]?["wasFirstApply"]?.ToObject<bool>());
             Assert.Equal(0, engine.ReapplyCalls);
         }
 
@@ -185,8 +185,8 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPatternToObject(null, WWP, "WorkWithPlus", null, reapply: true, objectNameForResponse: ObjName);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Success", obj["status"]?.ToString());
-            Assert.True(obj["wasFirstApply"]?.ToObject<bool>());
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.True(obj["result"]?["wasFirstApply"]?.ToObject<bool>());
             Assert.Equal(1, engine.ApplyCalls);
             Assert.Equal(0, engine.ReapplyCalls);
         }
@@ -203,8 +203,8 @@ namespace GxMcp.Worker.Tests
             string json = svc.ApplyPatternToObject(null, WWP, "WorkWithPlus", null, reapply: false, objectNameForResponse: ObjName);
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Contains("boom", obj["message"]?.ToString() ?? "");
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Contains("boom", obj["error"]?["message"]?.ToString() ?? "");
         }
 
         // Live integration smokes. Opt-in via GXMCP_TEST_KB=<path-to-kb> and

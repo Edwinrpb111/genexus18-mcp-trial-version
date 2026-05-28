@@ -51,7 +51,7 @@ namespace GxMcp.Worker.Tests
                 callerTemplate: null, availableTemplates: null);
             Assert.NotNull(r);
             var env = JObject.Parse(r);
-            Assert.Equal("Error", env["status"]!.ToString());
+            Assert.Equal("error", env["status"]!.ToString());
             Assert.Equal(parentType, env["parentType"]!.ToString());
             Assert.Equal("Foo", env["target"]!.ToString());
             Assert.NotNull(env["validParentTypes"]);
@@ -59,7 +59,7 @@ namespace GxMcp.Worker.Tests
             Assert.Contains("Transaction", valid);
             Assert.Contains("WebPanel", valid);
             Assert.Contains("SDPanel", valid);
-            Assert.NotNull(env["hint"]);
+            Assert.NotNull(env["error"]?["hint"]);
         }
 
         [Fact]
@@ -74,8 +74,8 @@ namespace GxMcp.Worker.Tests
 
             Assert.NotNull(r);
             var env = JObject.Parse(r);
-            Assert.Equal("Error", env["status"]!.ToString());
-            Assert.Contains("NotInCatalog", env["message"]!.ToString());
+            Assert.Equal("error", env["status"]!.ToString());
+            Assert.Contains("NotInCatalog", env["error"]?["message"]!.ToString());
             var available = (JArray)env["availableTemplates"]!;
             Assert.Equal(3, available.Count);
             Assert.Contains("MatIsoTemplate", available);
@@ -126,7 +126,7 @@ namespace GxMcp.Worker.Tests
                 callerTemplate: null, availableTemplates: null);
             Assert.NotNull(r);
             var env = JObject.Parse(r);
-            Assert.Equal("Error", env["status"]!.ToString());
+            Assert.Equal("error", env["status"]!.ToString());
         }
 
         [Fact]

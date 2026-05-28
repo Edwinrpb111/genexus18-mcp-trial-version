@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -39,24 +40,24 @@ namespace GxMcp.Worker.Services
             var validation = ValidateSpec(spec);
             if (validation.Count > 0)
             {
-                return new JObject
-                {
-                    ["status"] = "ValidationError",
-                    ["validation"] = JArray.FromObject(validation),
-                    ["hint"] = "Fix the listed JSON paths and retry. Nothing was created."
-                };
+                return JObject.Parse(McpResponse.Err(
+                    code: "ValidationError",
+                    message: "Feature spec failed validation.",
+                    hint: "Fix the listed JSON paths and retry. Nothing was created.",
+                    extra: new JObject { ["validation"] = JArray.FromObject(validation) }));
             }
 
             var plan = BuildPlan(spec);
 
             if (dryRun)
             {
-                return new JObject
-                {
-                    ["status"] = "DryRun",
-                    ["plan"] = plan,
-                    ["hint"] = "No mutations performed. Re-run with dryRun=false to execute."
-                };
+                return JObject.Parse(McpResponse.Ok(
+                    code: "DryRun",
+                    result: new JObject
+                    {
+                        ["plan"] = plan,
+                        ["hint"] = "No mutations performed. Re-run with dryRun=false to execute."
+                    }));
             }
 
             return Execute(plan);
@@ -307,36 +308,28 @@ namespace GxMcp.Worker.Services
                 }
                 catch (Exception ex)
                 {
-                    return new JObject
-                    {
-                        ["status"] = "PartialFailure",
-                        ["completedSteps"] = completed,
-                        ["failedStep"] = new JObject
+                    return JObject.Parse(McpResponse.Err(
+                        code: "ScaffoldPartialFailure",
+                        message: "Underlying tool '" + tool + "' threw at step " + i + ": " + ex.Message,
+                        hint: "Inspect KB state and call genexus_undo if needed; then retry from step " + i + ".",
+                        extra: new JObject
                         {
-                            ["index"] = i,
-                            ["tool"] = tool,
-                            ["args"] = args,
-                            ["error"] = ex.Message
-                        },
-                        ["hint"] = "Underlying tool threw. Inspect KB state and call genexus_undo if needed; then retry from step " + i + "."
-                    };
+                            ["completedSteps"] = completed,
+                            ["failedStep"] = new JObject { ["index"] = i, ["tool"] = tool, ["args"] = args }
+                        }));
                 }
 
                 if (!IsOk(result))
                 {
-                    return new JObject
-                    {
-                        ["status"] = "PartialFailure",
-                        ["completedSteps"] = completed,
-                        ["failedStep"] = new JObject
+                    return JObject.Parse(McpResponse.Err(
+                        code: "ScaffoldPartialFailure",
+                        message: "Step " + i + " (" + tool + ") returned a non-Ok envelope.",
+                        hint: "Fix and rerun manually, or call genexus_undo to revert prior steps.",
+                        extra: new JObject
                         {
-                            ["index"] = i,
-                            ["tool"] = tool,
-                            ["args"] = args,
-                            ["result"] = result
-                        },
-                        ["hint"] = "Step " + i + " (" + tool + ") returned a non-Ok envelope. Fix and rerun manually, or call genexus_undo to revert prior steps."
-                    };
+                            ["completedSteps"] = completed,
+                            ["failedStep"] = new JObject { ["index"] = i, ["tool"] = tool, ["args"] = args, ["result"] = result }
+                        }));
                 }
 
                 completed.Add(new JObject
@@ -348,12 +341,13 @@ namespace GxMcp.Worker.Services
                 });
             }
 
-            return new JObject
-            {
-                ["status"] = "Ok",
-                ["completedSteps"] = completed,
-                ["stepCount"] = completed.Count
-            };
+            return JObject.Parse(McpResponse.Ok(
+                code: "ScaffoldCompleted",
+                result: new JObject
+                {
+                    ["completedSteps"] = completed,
+                    ["stepCount"] = completed.Count
+                }));
         }
 
         private static bool IsOk(JObject env)
@@ -361,10 +355,14 @@ namespace GxMcp.Worker.Services
             if (env == null) return false;
             string s = env["status"]?.ToString();
             if (string.IsNullOrEmpty(s)) return env["error"] == null; // no status + no error = treat as ok
-            return string.Equals(s, "Ok", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(s, "Success", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(s, "Accepted", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(s, "Created", StringComparison.OrdinalIgnoreCase);
+            // TODO(v2.8.0): caller reads dispatcher result — accepts both legacy and canonical statuses
+            // until all dispatcher tool responses are migrated.
+            return string.Equals(s, "ok", StringComparison.OrdinalIgnoreCase)       // canonical v2.8.0
+                || string.Equals(s, "accepted", StringComparison.OrdinalIgnoreCase)  // canonical v2.8.0
+                || string.Equals(s, "Ok", StringComparison.OrdinalIgnoreCase)        // legacy
+                || string.Equals(s, "Success", StringComparison.OrdinalIgnoreCase)   // legacy
+                || string.Equals(s, "Accepted", StringComparison.OrdinalIgnoreCase)  // legacy
+                || string.Equals(s, "Created", StringComparison.OrdinalIgnoreCase);  // legacy
         }
     }
 }

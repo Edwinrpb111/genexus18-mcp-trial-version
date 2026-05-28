@@ -1,5 +1,6 @@
 using System;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using GxMcp.Worker.Structure;
 using Newtonsoft.Json.Linq;
 
@@ -20,19 +21,35 @@ namespace GxMcp.Worker.Services
             {
                 var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null)
-                    return new JObject { ["status"] = "Error", ["message"] = "Object not found: " + target }.ToString();
+                    return McpResponse.Err(
+                        code: "ObjectNotFound",
+                        message: "Object not found: " + target,
+                        hint: "Check the object name and type filter. Use genexus_list_objects to browse.",
+                        nextSteps: new JArray(
+                            McpResponse.NextStep(
+                                tool: "genexus_list_objects",
+                                args: new JObject { ["name_contains"] = target },
+                                why: "Lists objects whose names match, in case of a typo."),
+                            McpResponse.NextStep(
+                                tool: "genexus_lifecycle",
+                                args: new JObject { ["action"] = "index", ["force"] = true },
+                                why: "Rebuilds the SearchIndex if the object exists but isn't indexed.")),
+                        target: target);
 
                 var available = PartAccessor.GetAvailableParts(obj);
                 var raw = _objectService.ReadObjectSourceParts(obj.Name, available, typeFilter);
                 var inner = JsonUtil.SafeParse(raw) as JObject ?? new JObject();
-                inner["status"] = "Success";
                 inner["description"] = obj.Description;
                 inner["availableParts"] = new JArray(available);
-                return inner.ToString();
+                return McpResponse.Ok(target: obj.Name, code: "ExportCompleted", result: inner);
             }
             catch (Exception ex)
             {
-                return new JObject { ["status"] = "Error", ["message"] = ex.Message }.ToString();
+                return McpResponse.Err(
+                    code: "ExportFailed",
+                    message: ex.Message,
+                    hint: "Check that the object exists and parts are readable.",
+                    target: target);
             }
         }
     }

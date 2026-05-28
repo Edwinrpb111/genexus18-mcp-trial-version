@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Xml.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -104,13 +105,11 @@ namespace GxMcp.Worker.Services
 
             if (string.Equals(xmlBefore, xmlAfter, StringComparison.Ordinal))
             {
-                return new JObject
+                return McpResponse.Ok(target: target, code: "NoChange", result: new JObject
                 {
-                    ["status"] = "NoChange",
                     ["action"] = action,
-                    ["target"] = target,
                     ["warnings"] = JArray.FromObject(warnings)
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                });
             }
 
             string writeResult;
@@ -127,17 +126,28 @@ namespace GxMcp.Worker.Services
             try { writeObj = JObject.Parse(writeResult ?? "{}"); }
             catch { writeObj = new JObject { ["raw"] = writeResult }; }
 
-            var resp = new JObject
+            string writeStatus = writeObj["status"]?.ToString() ?? string.Empty;
+            bool writeOk = string.Equals(writeStatus, "ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "Success", StringComparison.OrdinalIgnoreCase)
+                        || dryRun;
+
+            var resultPayload = new JObject
             {
-                ["status"] = writeObj["status"]?.ToString() ?? (dryRun ? "DryRun" : "Success"),
                 ["action"] = action,
-                ["target"] = target,
                 ["controlsAdded"] = JArray.FromObject(controlsAdded),
                 ["warnings"] = JArray.FromObject(warnings),
                 ["xmlBeforeAfterDiff"] = BuildShortDiff(xmlBefore, xmlAfter),
                 ["write"] = writeObj
             };
-            return resp.ToString(Newtonsoft.Json.Formatting.None);
+
+            if (!writeOk)
+            {
+                string writeMsg = writeObj["error"]?["message"]?.ToString() ?? writeObj["message"]?.ToString() ?? "WebForm write failed.";
+                return McpResponse.Err(code: "WebFormEditFailed", message: writeMsg, target: target, extra: resultPayload);
+            }
+
+            string editCode = dryRun ? "DryRun" : "WebFormEdited";
+            return McpResponse.Ok(target: target, code: editCode, result: resultPayload);
         }
 
         // --- Pure XML mutation core (testable) -------------------------------------------------
@@ -380,12 +390,7 @@ namespace GxMcp.Worker.Services
 
         private static string Err(string code, string message)
         {
-            return new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Err(code: code, message: message);
         }
     }
 }

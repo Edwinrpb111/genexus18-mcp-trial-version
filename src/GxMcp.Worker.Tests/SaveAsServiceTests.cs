@@ -89,15 +89,15 @@ namespace GxMcp.Worker.Tests
             var args = new JObject { ["name"] = "ProcA", ["newName"] = "ProcACopy" };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Success", json["status"]?.ToString());
-            Assert.Equal("ProcA", json["sourceName"]?.ToString());
-            Assert.Equal("ProcACopy", json["created"]?["name"]?.ToString());
-            Assert.Equal("Procedure", json["created"]?["type"]?.ToString());
-            var partsCloned = (JArray)json["created"]?["partsCloned"];
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Equal("ProcA", json["result"]?["sourceName"]?.ToString());
+            Assert.Equal("ProcACopy", json["result"]?["created"]?["name"]?.ToString());
+            Assert.Equal("Procedure", json["result"]?["created"]?["type"]?.ToString());
+            var partsCloned = (JArray)json["result"]?["created"]?["partsCloned"];
             Assert.NotNull(partsCloned);
             Assert.Equal(3, partsCloned.Count);
             Assert.Equal("Source", partsCloned[0].ToString());
-            Assert.Null(json["patternInstance"]);
+            Assert.Null(json["result"]?["patternInstance"]);
             Assert.Single(cloner.Creates);
             Assert.Equal(3, cloner.Clones.Count);
         }
@@ -112,9 +112,9 @@ namespace GxMcp.Worker.Tests
             var args = new JObject { ["name"] = "ProcA", ["newName"] = "ProcACopy" };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Error", json["status"]?.ToString());
-            Assert.Equal("TargetExists", json["code"]?.ToString());
-            Assert.Contains("genexus_delete_object", json["hint"]?.ToString() ?? "");
+            Assert.Equal("error", json["status"]?.ToString());
+            Assert.Equal("TargetExists", json["error"]?["code"]?.ToString());
+            Assert.Contains("genexus_delete_object", json["error"]?["hint"]?.ToString() ?? "");
             Assert.Empty(cloner.Creates);
             Assert.Empty(cloner.Clones);
         }
@@ -134,8 +134,8 @@ namespace GxMcp.Worker.Tests
             };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("TargetExists", json["code"]?.ToString());
-            Assert.Contains("reserved", json["hint"]?.ToString() ?? "");
+            Assert.Equal("TargetExists", json["error"]?["code"]?.ToString());
+            Assert.Contains("reserved", json["error"]?["hint"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -147,9 +147,9 @@ namespace GxMcp.Worker.Tests
             var args = new JObject { ["name"] = "Nope", ["newName"] = "NopeCopy" };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Error", json["status"]?.ToString());
-            Assert.Equal("NotFound", json["code"]?.ToString());
-            Assert.Contains("Nope", json["message"]?.ToString() ?? "");
+            Assert.Equal("error", json["status"]?.ToString());
+            Assert.Equal("NotFound", json["error"]?["code"]?.ToString());
+            Assert.Contains("Nope", json["error"]?["message"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -167,8 +167,8 @@ namespace GxMcp.Worker.Tests
             };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Success", json["status"]?.ToString());
-            Assert.Null(json["patternInstance"]);
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Null(json["result"]?["patternInstance"]);
             Assert.Empty(cloner.Applies);
         }
 
@@ -191,9 +191,9 @@ namespace GxMcp.Worker.Tests
             };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Success", json["status"]?.ToString());
-            Assert.Equal("Success", json["patternInstance"]?["status"]?.ToString());
-            Assert.Equal("WorkWithPlus", json["patternInstance"]?["pattern"]?.ToString());
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.True(json["result"]?["patternInstance"]?["applied"]?.ToObject<bool>() ?? false);
+            Assert.Equal("WorkWithPlus", json["result"]?["patternInstance"]?["pattern"]?.ToString());
             Assert.Single(cloner.Applies);
             Assert.Equal("CustomerHCopy", cloner.Applies[0].name);
         }
@@ -212,10 +212,11 @@ namespace GxMcp.Worker.Tests
             };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("DryRun", json["status"]?.ToString());
-            Assert.Equal("Procedure", json["plan"]?["createType"]?.ToString());
-            Assert.Equal("ProcACopy", json["plan"]?["newName"]?.ToString());
-            var parts = (JArray)json["plan"]?["partsToClone"];
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Equal("DryRun", json["code"]?.ToString());
+            Assert.Equal("Procedure", json["result"]?["plan"]?["createType"]?.ToString());
+            Assert.Equal("ProcACopy", json["result"]?["plan"]?["newName"]?.ToString());
+            var parts = (JArray)json["result"]?["plan"]?["partsToClone"];
             Assert.NotNull(parts);
             Assert.Equal(2, parts.Count);
 
@@ -235,12 +236,13 @@ namespace GxMcp.Worker.Tests
             var args = new JObject { ["name"] = "ProcA", ["newName"] = "ProcACopy" };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("PartialFailure", json["status"]?.ToString());
+            Assert.Equal("error", json["status"]?.ToString());
+            Assert.Equal("PartialFailure", json["error"]?["code"]?.ToString());
             Assert.Equal("clonePart:Rules", json["failedStep"]?.ToString());
             var done = (JArray)json["completedSteps"];
             Assert.Contains(done, t => t.ToString() == "create:ProcACopy");
             Assert.Contains(done, t => t.ToString() == "clonePart:Source");
-            Assert.Contains("genexus_undo", json["hint"]?.ToString() ?? "");
+            Assert.Contains("genexus_delete_object", json["error"]?["hint"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -252,8 +254,8 @@ namespace GxMcp.Worker.Tests
             var args = new JObject { ["name"] = "ProcA", ["newName"] = "ProcA" };
             var json = JObject.Parse(svc.SaveAs(args));
 
-            Assert.Equal("Error", json["status"]?.ToString());
-            Assert.Equal("usage_error", json["code"]?.ToString());
+            Assert.Equal("error", json["status"]?.ToString());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
         }
     }
 }

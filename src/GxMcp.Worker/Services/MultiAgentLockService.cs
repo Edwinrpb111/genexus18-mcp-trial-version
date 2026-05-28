@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -21,11 +22,36 @@ namespace GxMcp.Worker.Services
             _kbService = kbService;
         }
 
-        public string Dispatch(string action, string target, string part, string ownerId, int ttlSec, string kbPathOverride = null)
+        public string Dispatch(string action, string target, string part, string ownerId, int ttlSec, string kbPathOverride = null, bool dryRun = false)
         {
             string kbPath = ResolveKbPath(kbPathOverride);
             if (string.IsNullOrEmpty(kbPath))
-                return Error("NoKbOpen", "No KB is currently open.");
+                return McpResponse.Err(
+                    code: "NoKbOpen",
+                    message: "No KB is currently open.",
+                    hint: "Open a KB first via genexus_kb action=open.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_kb", new JObject { ["action"] = "open" }, "Open a KB.") });
+            if (dryRun)
+            {
+                string locksDir = System.IO.Path.Combine(kbPath, ".gx", "locks");
+                string lockPath = System.IO.Path.Combine(locksDir, Sanitize(target, part) + ".lock");
+                return McpResponse.Ok(
+                    target: target,
+                    code: "DryRun",
+                    result: new JObject
+                    {
+                        ["preview"] = new JObject
+                        {
+                            ["action"] = action,
+                            ["target"] = target,
+                            ["part"] = part,
+                            ["ownerId"] = ownerId,
+                            ["ttlSec"] = ttlSec,
+                            ["lockPath"] = lockPath,
+                            ["note"] = "dryRun=true: no lock file written or deleted."
+                        }
+                    });
+            }
             return DispatchCore(kbPath, action, target, part, ownerId, ttlSec);
         }
 
@@ -34,7 +60,10 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(target))
-                    return Error("MissingTarget", "target is required.");
+                    return McpResponse.Err(
+                        code: "MissingTarget",
+                        message: "target is required.",
+                        hint: "Pass target=<object name> to identify which object to lock.");
                 if (ttlSec <= 0) ttlSec = 300;
                 if (ttlSec > 86400) ttlSec = 86400;
 
@@ -51,42 +80,48 @@ namespace GxMcp.Worker.Services
                         var existing = TryReadLock(lockPath, out bool expired);
                         if (existing == null || expired)
                         {
-                            return new JObject
-                            {
-                                ["status"] = "Success",
-                                ["action"] = "status",
-                                ["held"] = false,
-                                ["holder"] = JValue.CreateNull(),
-                                ["path"] = lockPath
-                            }.ToString(Newtonsoft.Json.Formatting.None);
+                            return McpResponse.Ok(
+                                target: target,
+                                code: "LockStatusRetrieved",
+                                result: new JObject
+                                {
+                                    ["held"] = false,
+                                    ["holder"] = JValue.CreateNull(),
+                                    ["path"] = lockPath
+                                });
                         }
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["action"] = "status",
-                            ["held"] = true,
-                            ["holder"] = existing,
-                            ["path"] = lockPath
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            target: target,
+                            code: "LockHeld",
+                            result: new JObject
+                            {
+                                ["held"] = true,
+                                ["holder"] = existing,
+                                ["path"] = lockPath
+                            });
                     }
 
                     case "acquire":
                     {
                         if (string.IsNullOrWhiteSpace(ownerId))
-                            return Error("MissingOwnerId", "ownerId is required for acquire.");
+                            return McpResponse.Err(
+                                code: "MissingOwnerId",
+                                message: "ownerId is required for acquire.",
+                                hint: "Pass ownerId=<unique agent id> to identify the lock holder.",
+                                target: target);
                         var existing = TryReadLock(lockPath, out bool expired);
                         if (existing != null && !expired)
                         {
                             string existingOwner = existing["ownerId"]?.ToString();
                             if (!string.Equals(existingOwner, ownerId, StringComparison.Ordinal))
                             {
-                                return new JObject
-                                {
-                                    ["status"] = "Conflict",
-                                    ["code"] = "AlreadyHeld",
-                                    ["action"] = "acquire",
-                                    ["holder"] = existing
-                                }.ToString(Newtonsoft.Json.Formatting.None);
+                                return McpResponse.Err(
+                                    code: "AlreadyHeld",
+                                    message: "Lock is already held by another owner.",
+                                    hint: "Wait for the current holder to release the lock or for it to expire.",
+                                    nextSteps: new JArray { McpResponse.NextStep("genexus_multi_agent_lock", new JObject { ["action"] = "status", ["target"] = target }, "Check current lock status.") },
+                                    target: target,
+                                    extra: new JObject { ["holder"] = existing });
                             }
                             // Same owner re-acquiring — refresh TTL.
                         }
@@ -99,28 +134,30 @@ namespace GxMcp.Worker.Services
                             ["part"] = part ?? string.Empty
                         };
                         File.WriteAllText(lockPath, entry.ToString(Newtonsoft.Json.Formatting.None));
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["action"] = "acquire",
-                            ["held"] = true,
-                            ["holder"] = entry,
-                            ["path"] = lockPath,
-                            ["takeover"] = expired
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            target: target,
+                            code: "LockAcquired",
+                            result: new JObject
+                            {
+                                ["held"] = true,
+                                ["holder"] = entry,
+                                ["path"] = lockPath,
+                                ["takeover"] = expired
+                            });
                     }
 
                     case "release":
                     {
                         if (!File.Exists(lockPath))
                         {
-                            return new JObject
-                            {
-                                ["status"] = "Success",
-                                ["action"] = "release",
-                                ["held"] = false,
-                                ["note"] = "no lock file"
-                            }.ToString(Newtonsoft.Json.Formatting.None);
+                            return McpResponse.Ok(
+                                target: target,
+                                code: "LockReleased",
+                                result: new JObject
+                                {
+                                    ["held"] = false,
+                                    ["note"] = "no lock file"
+                                });
                         }
                         var existing = TryReadLock(lockPath, out bool expired);
                         if (existing != null && !expired)
@@ -128,33 +165,44 @@ namespace GxMcp.Worker.Services
                             string existingOwner = existing["ownerId"]?.ToString();
                             if (!string.Equals(existingOwner, ownerId, StringComparison.Ordinal))
                             {
-                                return new JObject
-                                {
-                                    ["status"] = "Error",
-                                    ["code"] = "WrongOwner",
-                                    ["action"] = "release",
-                                    ["holder"] = existing,
-                                    ["message"] = "ownerId mismatch; refusing to release."
-                                }.ToString(Newtonsoft.Json.Formatting.None);
+                                return McpResponse.Err(
+                                    code: "WrongOwner",
+                                    message: "ownerId mismatch; refusing to release.",
+                                    hint: "Only the lock owner can release it. Pass the correct ownerId.",
+                                    target: target,
+                                    extra: new JObject { ["holder"] = existing });
                             }
                         }
                         File.Delete(lockPath);
-                        return new JObject
-                        {
-                            ["status"] = "Success",
-                            ["action"] = "release",
-                            ["held"] = false,
-                            ["takeover"] = expired
-                        }.ToString(Newtonsoft.Json.Formatting.None);
+                        return McpResponse.Ok(
+                            target: target,
+                            code: "LockReleased",
+                            result: new JObject
+                            {
+                                ["held"] = false,
+                                ["takeover"] = expired
+                            });
                     }
 
                     default:
-                        return Error("UnknownAction", "action must be acquire|release|status; got '" + action + "'.");
+                        return McpResponse.Err(
+                            code: "UnknownAction",
+                            message: "action must be acquire|release|status; got '" + action + "'.",
+                            hint: "Pass action=acquire, action=release, or action=status.",
+                            nextSteps: new JArray(
+                                McpResponse.NextStep(
+                                    tool: "genexus_multi_agent_lock",
+                                    args: new JObject { ["action"] = "status", ["target"] = target },
+                                    why: "Inspect current lock state before retrying with the right action.")));
                 }
             }
             catch (Exception ex)
             {
-                return Error("LockOperationFailed", ex.Message);
+                return McpResponse.Err(
+                    code: "LockOperationFailed",
+                    message: ex.Message,
+                    hint: "Check file system permissions for the .gx/locks directory.",
+                    target: target);
             }
         }
 
@@ -201,13 +249,5 @@ namespace GxMcp.Worker.Services
             if (!string.IsNullOrEmpty(kbPathOverride)) return kbPathOverride;
             try { return _kbService?.GetKbPath(); } catch { return null; }
         }
-
-        private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
     }
 }

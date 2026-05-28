@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 KBObject obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return Models.McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Verify the object name with genexus_query.", nextSteps: new JArray(Models.McpResponse.NextStep("genexus_query", new JObject { ["name"] = target }, "Search for the object by name.")), target: target);
 
                 // Build markdown
                 var md = new StringBuilder();
@@ -122,12 +122,12 @@ namespace GxMcp.Worker.Services
                 string filePath = Path.Combine(docsDir, $"{target.Replace(":", "_")}.md");
                 File.WriteAllText(filePath, md.ToString(), Encoding.UTF8);
 
-                return JObject.FromObject(new {
-                    status = "Documentation generated",
-                    file = filePath,
-                    dependencies = references.Distinct().ToList(),
-                    markdown = md.ToString()
-                }).ToString();
+                return Models.McpResponse.Ok(target: target, code: "WikiGenerated", result: new JObject
+                {
+                    ["file"] = filePath,
+                    ["dependencies"] = new JArray(references.Distinct().ToList()),
+                    ["markdown"] = md.ToString()
+                });
             }
             catch (Exception ex)
             {

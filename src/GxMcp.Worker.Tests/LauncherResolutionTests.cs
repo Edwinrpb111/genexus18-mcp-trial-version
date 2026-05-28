@@ -55,8 +55,9 @@ namespace GxMcp.Worker.Tests
             var task = svc.RunAsync(null);
             task.Wait();
             var r = task.Result;
-            Assert.Equal("NoLauncher", r["status"]?.ToString());
-            Assert.Contains("Pass explicit target", r["hint"]?.ToString() ?? "");
+            Assert.Equal("error", r["status"]?.ToString());
+            Assert.Equal("NoLauncher", r["error"]?["code"]?.ToString());
+            Assert.Contains("Pass explicit target", r["error"]?["hint"]?.ToString() ?? "");
         }
 
         [Fact]

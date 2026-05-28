@@ -1,5 +1,6 @@
 using System;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using GxMcp.Worker.Structure;
 using Newtonsoft.Json.Linq;
 
@@ -40,15 +41,17 @@ namespace GxMcp.Worker.Services
 
                 if (context <= 0) context = 3;
                 var diff = DiffBuilder.UnifiedDiff(before, after, context);
-                return new JObject
-                {
-                    ["mode"] = mode,
-                    ["target"] = target,
-                    ["part"] = partName,
-                    ["diff"] = diff,
-                    ["beforeLines"] = before.Split('\n').Length,
-                    ["afterLines"] = after.Split('\n').Length,
-                }.ToString();
+                return McpResponse.Ok(
+                    target: target,
+                    code: "DiffComputed",
+                    result: new JObject
+                    {
+                        ["mode"] = mode,
+                        ["part"] = partName,
+                        ["diff"] = diff,
+                        ["beforeLines"] = before.Split('\n').Length,
+                        ["afterLines"] = after.Split('\n').Length,
+                    });
             }
             catch (Exception ex) { return Err(ex.Message); }
         }
@@ -63,6 +66,6 @@ namespace GxMcp.Worker.Services
             return PartAccessor.GetFirstSourceText(obj);
         }
 
-        private static string Err(string m) => new JObject { ["status"] = "Error", ["message"] = m }.ToString();
+        private static string Err(string m) => McpResponse.Err(code: "DiffFailed", message: m);
     }
 }

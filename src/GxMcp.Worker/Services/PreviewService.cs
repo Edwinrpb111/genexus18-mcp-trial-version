@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -309,11 +310,11 @@ namespace GxMcp.Worker.Services
                 try { resolved = _launcherResolver?.Invoke(); } catch { }
                 if (string.IsNullOrWhiteSpace(resolved))
                 {
-                    var noLauncher = new JObject
-                    {
-                        ["status"] = "NoLauncher",
-                        ["hint"] = "Pass explicit target=<webpanel>. No KB launcher object is configured and no IsMain WebPanel/SDPanel was found in the index."
-                    };
+                    var noLauncher = JObject.Parse(McpResponse.Err(
+                        code: "NoLauncher",
+                        message: "No KB launcher object is configured and no IsMain WebPanel/SDPanel was found in the index.",
+                        hint: "Pass explicit target=<webpanel> or set a startup object via genexus_kb_startup.",
+                        nextSteps: new JArray { McpResponse.NextStep("genexus_kb_startup", new JObject { ["action"] = "set" }, "Set the KB startup object.") }));
                     return Task.FromResult(noLauncher);
                 }
                 name = resolved;
@@ -490,12 +491,15 @@ namespace GxMcp.Worker.Services
             bool BudgetExceeded() => sw.ElapsedMilliseconds > budgetMs;
             JObject Timeout(string stage)
             {
-                result["status"] = "Error";
-                result["code"] = "PreviewTimeout";
-                result["elapsedMs"] = sw.ElapsedMilliseconds;
-                result["stage"] = stage;
-                result["hint"] = "Preview exceeded the wall-clock budget (default 60s; override GXMCP_PREVIEW_BUDGET_MS). The STA worker has been released; retry with auth credentials or buildFirst=false.";
-                return result;
+                return JObject.Parse(McpResponse.Err(
+                    code: "PreviewTimeout",
+                    message: "Preview exceeded the wall-clock budget (default 60s; override GXMCP_PREVIEW_BUDGET_MS). The STA worker has been released.",
+                    hint: "Retry with auth credentials pre-injected or buildFirst=false to skip the build step.",
+                    nextSteps: new JArray {
+                        McpResponse.NextStep("genexus_preview", new JObject { ["target"] = name, ["buildFirst"] = false }, "Skip build to reduce elapsed time."),
+                        McpResponse.NextStep("genexus_lifecycle", new JObject { ["action"] = "build", ["target"] = name }, "Pre-build then re-run preview.")
+                    },
+                    extra: new JObject { ["elapsedMs"] = sw.ElapsedMilliseconds, ["stage"] = stage }));
             }
             try
             {

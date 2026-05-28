@@ -13,7 +13,7 @@ namespace GxMcp.Worker.Tests
             var svc = new ExplainService(kbService: null, objectService: null);
             var raw = svc.Explain(null, null, null);
             var json = JObject.Parse(raw);
-            Assert.Equal("Error", (string)json["status"]!);
+            Assert.Equal("error", (string)json["status"]!);
         }
 
         [Fact]
@@ -25,8 +25,8 @@ namespace GxMcp.Worker.Tests
             var svc = new ExplainService(kbService: null, objectService: null);
             var raw = svc.Explain("DoesNotExist", null, null);
             var json = JObject.Parse(raw);
-            Assert.Equal("Error", (string)json["status"]!);
-            Assert.Equal("ObjectNotFound", (string)json["message"]!);
+            Assert.Equal("error", (string)json["status"]!);
+            Assert.Equal("ObjectNotFound", (string)json["error"]?["code"]!);
         }
 
         [Fact]

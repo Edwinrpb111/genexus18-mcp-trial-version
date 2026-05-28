@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -36,24 +37,23 @@ namespace GxMcp.Worker.Services
 
         public string Diagnose()
         {
-            var envelope = new JObject
+            var payload = new JObject
             {
-                ["status"] = "Success",
                 ["checkedAt"] = DateTime.UtcNow.ToString("o")
             };
             var warnings = new List<string>();
 
-            envelope["version"] = SafeBlock(BuildVersionBlock, warnings, "version");
+            payload["version"] = SafeBlock(BuildVersionBlock, warnings, "version");
             JObject gx = SafeBlock(BuildGxBlock, warnings, "geneXus");
-            envelope["geneXus"] = gx;
+            payload["geneXus"] = gx;
             JObject kb = SafeBlock(BuildKbBlock, warnings, "kb");
-            envelope["kb"] = kb;
+            payload["kb"] = kb;
             JObject worker = SafeBlock(BuildWorkerBlock, warnings, "worker");
-            envelope["worker"] = worker;
+            payload["worker"] = worker;
             JObject cache = SafeBlock(BuildCacheBlock, warnings, "cache");
-            envelope["cache"] = cache;
+            payload["cache"] = cache;
             JObject telemetry = SafeBlock(BuildTelemetryBlock, warnings, "telemetry");
-            envelope["telemetry"] = telemetry;
+            payload["telemetry"] = telemetry;
 
             // ---- Warnings ----------------------------------------------------
             try
@@ -86,12 +86,12 @@ namespace GxMcp.Worker.Services
                 warnings.Add("warning-computation failed: " + ex.Message);
             }
 
-            envelope["warnings"] = new JArray(warnings.Cast<object>().ToArray());
-            envelope["hint"] = warnings.Count > 0
+            payload["warnings"] = new JArray(warnings.Cast<object>().ToArray());
+            payload["hint"] = warnings.Count > 0
                 ? (JToken)new JValue(warnings[0])
                 : JValue.CreateNull();
 
-            return envelope.ToString(Formatting.None);
+            return McpResponse.Ok(code: "DoctorOk", result: payload);
         }
 
         // -------------------------------------------------------------------

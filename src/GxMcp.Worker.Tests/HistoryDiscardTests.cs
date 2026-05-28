@@ -39,10 +39,11 @@ namespace GxMcp.Worker.Tests
                 writer: (t, p, c) => "{\"status\":\"Success\"}");
 
             var json = JObject.Parse(result);
-            Assert.Equal("NoSnapshot", json["status"]?.ToString());
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Equal("NoSnapshot", json["code"]?.ToString());
             Assert.Equal("MyPanel", json["target"]?.ToString());
-            Assert.Equal("Source", json["part"]?.ToString());
-            Assert.Contains("Edit this object first", json["hint"]?.ToString() ?? "");
+            Assert.Equal("Source", json["result"]?["part"]?.ToString());
+            Assert.Contains("Edit this object first", json["result"]?["hint"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -56,8 +57,9 @@ namespace GxMcp.Worker.Tests
                 writer: (t, p, c) => "{\"status\":\"Success\"}");
 
             var json = JObject.Parse(result);
-            Assert.Equal("NoSnapshot", json["status"]?.ToString());
-            Assert.Equal("Source", json["part"]?.ToString());
+            Assert.Equal("ok", json["status"]?.ToString());
+            Assert.Equal("NoSnapshot", json["code"]?.ToString());
+            Assert.Equal("Source", json["result"]?["part"]?.ToString());
         }
 
         [Fact]
@@ -86,7 +88,7 @@ namespace GxMcp.Worker.Tests
                 writer: (t, p, c) =>
                 {
                     writtenTarget = t; writtenPart = p; writtenContent = c;
-                    return "{\"status\":\"Success\"}";
+                    return "{\"status\":\"ok\",\"code\":\"WriteApplied\"}";
                 });
 
             Assert.Equal("MyPanel", writtenTarget);
@@ -94,7 +96,7 @@ namespace GxMcp.Worker.Tests
             Assert.Equal("NEW CONTENT", writtenContent);
 
             var json = JObject.Parse(result);
-            Assert.Equal("Success", json["status"]?.ToString());
+            Assert.Equal("ok", json["status"]?.ToString());
             Assert.True(json["discarded"]?.ToObject<bool>() ?? false);
             Assert.NotNull(json["restoredFrom"]);
             Assert.NotNull(json["restoredSnapshot"]);

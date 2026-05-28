@@ -22,10 +22,11 @@ namespace GxMcp.Worker.Tests
             try
             {
                 var json = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-A", 300));
-                Assert.Equal("Success", (string)json["status"]);
-                Assert.True((bool)json["held"]);
-                Assert.Equal("agent-A", (string)json["holder"]["ownerId"]);
-                Assert.True(File.Exists((string)json["path"]));
+                Assert.Equal("ok", (string)json["status"]);
+                Assert.Equal("LockAcquired", (string)json["code"]);
+                Assert.True((bool)json["result"]["held"]);
+                Assert.Equal("agent-A", (string)json["result"]["holder"]["ownerId"]);
+                Assert.True(File.Exists((string)json["result"]["path"]));
             }
             finally { try { Directory.Delete(kb, recursive: true); } catch { } }
         }
@@ -38,8 +39,8 @@ namespace GxMcp.Worker.Tests
             {
                 MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-A", 300);
                 var json = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-B", 300));
-                Assert.Equal("Conflict", (string)json["status"]);
-                Assert.Equal("AlreadyHeld", (string)json["code"]);
+                Assert.Equal("error", (string)json["status"]);
+                Assert.Equal("AlreadyHeld", (string)json["error"]["code"]);
                 Assert.Equal("agent-A", (string)json["holder"]["ownerId"]);
             }
             finally { try { Directory.Delete(kb, recursive: true); } catch { } }
@@ -53,12 +54,12 @@ namespace GxMcp.Worker.Tests
             {
                 MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-A", 300);
                 var json = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "release", "Invoice", "Events", "agent-B", 300));
-                Assert.Equal("Error", (string)json["status"]);
-                Assert.Equal("WrongOwner", (string)json["code"]);
+                Assert.Equal("error", (string)json["status"]);
+                Assert.Equal("WrongOwner", (string)json["error"]["code"]);
                 // Lock file still exists.
                 var status = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "status", "Invoice", "Events", null, 300));
-                Assert.True((bool)status["held"]);
-                Assert.Equal("agent-A", (string)status["holder"]["ownerId"]);
+                Assert.True((bool)status["result"]["held"]);
+                Assert.Equal("agent-A", (string)status["result"]["holder"]["ownerId"]);
             }
             finally { try { Directory.Delete(kb, recursive: true); } catch { } }
         }
@@ -84,10 +85,11 @@ namespace GxMcp.Worker.Tests
                 File.WriteAllText(lockFile, expired.ToString(Newtonsoft.Json.Formatting.None));
 
                 var json = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-B", 300));
-                Assert.Equal("Success", (string)json["status"]);
-                Assert.True((bool)json["held"]);
-                Assert.Equal("agent-B", (string)json["holder"]["ownerId"]);
-                Assert.True((bool)json["takeover"]);
+                Assert.Equal("ok", (string)json["status"]);
+                Assert.Equal("LockAcquired", (string)json["code"]);
+                Assert.True((bool)json["result"]["held"]);
+                Assert.Equal("agent-B", (string)json["result"]["holder"]["ownerId"]);
+                Assert.True((bool)json["result"]["takeover"]);
             }
             finally { try { Directory.Delete(kb, recursive: true); } catch { } }
         }
@@ -100,10 +102,11 @@ namespace GxMcp.Worker.Tests
             {
                 MultiAgentLockService.DispatchCore(kb, "acquire", "Invoice", "Events", "agent-A", 300);
                 var rel = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "release", "Invoice", "Events", "agent-A", 300));
-                Assert.Equal("Success", (string)rel["status"]);
-                Assert.False((bool)rel["held"]);
+                Assert.Equal("ok", (string)rel["status"]);
+                Assert.Equal("LockReleased", (string)rel["code"]);
+                Assert.False((bool)rel["result"]["held"]);
                 var status = JObject.Parse(MultiAgentLockService.DispatchCore(kb, "status", "Invoice", "Events", null, 300));
-                Assert.False((bool)status["held"]);
+                Assert.False((bool)status["result"]["held"]);
             }
             finally { try { Directory.Delete(kb, recursive: true); } catch { } }
         }

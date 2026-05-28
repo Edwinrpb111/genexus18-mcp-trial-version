@@ -46,24 +46,28 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrWhiteSpace(target))
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "MissingTarget",
-                    ["hint"] = "Pass target=<object name>."
-                }.ToString();
+                return McpResponse.Err(
+                    code: "MissingTarget",
+                    message: "target is required.",
+                    hint: "Pass target=<object name>.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        "genexus_build_plan",
+                        new JObject { ["target"] = "<object name>" },
+                        "Provide the object name to generate a build plan for.")));
             }
             if (maxNodes <= 0 || maxNodes > 500) maxNodes = 100;
 
             var idx = _indexCache?.GetIndex();
             if (idx == null)
             {
-                return new JObject
-                {
-                    ["status"] = "Unwired",
-                    ["code"] = "ItemDeferred",
-                    ["hint"] = "Index not ready; run genexus_lifecycle action=index first then retry."
-                }.ToString();
+                return McpResponse.Err(
+                    code: "IndexNotReady",
+                    message: "Search index is not ready.",
+                    hint: "Run genexus_lifecycle action=index first, then retry.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        "genexus_lifecycle",
+                        new JObject { ["action"] = "index" },
+                        "Rebuild the index so build plan can walk the callee graph.")));
             }
 
             // Walk callees breadth-first. We deliberately mirror the build-order
@@ -115,10 +119,8 @@ namespace GxMcp.Worker.Services
             }
             if (queue.Count > 0) truncated = true;
 
-            var result = new JObject
+            var resultPayload = new JObject
             {
-                ["status"] = "Success",
-                ["target"] = target,
                 ["nodes"] = new JArray(nodes.Cast<JToken>().ToArray()),
                 ["edges"] = new JArray(edges.Cast<JToken>().ToArray()),
                 ["totalEstimatedSeconds"] = totalEstimatedSec,
@@ -128,9 +130,9 @@ namespace GxMcp.Worker.Services
 
             if (string.Equals(format, "ascii", StringComparison.OrdinalIgnoreCase))
             {
-                result["ascii"] = RenderAscii(target, nodes, edges, totalEstimatedSec);
+                resultPayload["ascii"] = RenderAscii(target, nodes, edges, totalEstimatedSec);
             }
-            return result.ToString();
+            return McpResponse.Ok(target: target, code: "BuildPlanComputed", result: resultPayload);
         }
 
         private static int EstimateSeconds(string name, string typeName, JObject toolStatsP95)

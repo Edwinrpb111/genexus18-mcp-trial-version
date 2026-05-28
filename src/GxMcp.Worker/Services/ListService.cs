@@ -504,6 +504,17 @@ namespace GxMcp.Worker.Services
             }
             response["results"] = results;
 
+            // v2.8.0: canonical pagination block
+            response["pagination"] = new JObject
+            {
+                ["offset"]     = offset,
+                ["limit"]      = pageSize,
+                ["returned"]   = results.Count,
+                ["total"]      = total,
+                ["hasMore"]    = hasMore,
+                ["nextOffset"] = hasMore ? (JToken)(int)consumed : JValue.CreateNull()
+            };
+
             var meta = new JObject();
 
             // Handle empty results: determine and attach empty_reason

@@ -79,7 +79,8 @@ namespace GxMcp.Worker.Tests
 
             var result = svc.Scaffold(bad, dryRun: false);
 
-            Assert.Equal("ValidationError", result["status"]?.ToString());
+            Assert.Equal("error", result["status"]?.ToString());
+            Assert.Equal("ValidationError", result["error"]?["code"]?.ToString());
             var errs = (JArray)result["validation"];
             Assert.NotNull(errs);
             Assert.True(errs.Count >= 3, $"expected ≥3 validation errors, got {errs.Count}: {errs}");
@@ -101,8 +102,9 @@ namespace GxMcp.Worker.Tests
 
             var result = svc.Scaffold(ValidSpec(), dryRun: true);
 
-            Assert.Equal("DryRun", result["status"]?.ToString());
-            var plan = (JArray)result["plan"];
+            Assert.Equal("ok", result["status"]?.ToString());
+            Assert.Equal("DryRun", result["code"]?.ToString());
+            var plan = (JArray)result["result"]?["plan"];
             Assert.NotNull(plan);
             // create_object(Transaction) + apply_pattern(WWP) + create_object(Proc) = 3
             Assert.Equal(3, plan.Count);
@@ -126,7 +128,7 @@ namespace GxMcp.Worker.Tests
 
             var result = svc.Scaffold(ValidSpec(tests: true), dryRun: false);
 
-            Assert.Equal("Ok", result["status"]?.ToString());
+            Assert.Equal("ok", result["status"]?.ToString());
             // Transaction + apply_pattern + Procedure + ProcedureTest = 4
             Assert.Equal(4, dispatcher.Calls.Count);
             Assert.Equal("genexus_create_object", dispatcher.Calls[0].tool);
@@ -143,7 +145,7 @@ namespace GxMcp.Worker.Tests
             Assert.Equal("genexus_create_object", dispatcher.Calls[3].tool);
             Assert.Equal("GetEnrollmentsByCourseTest", dispatcher.Calls[3].args["name"]?.ToString());
 
-            var completed = (JArray)result["completedSteps"];
+            var completed = (JArray)result["result"]?["completedSteps"];
             Assert.Equal(4, completed.Count);
         }
 
@@ -162,7 +164,8 @@ namespace GxMcp.Worker.Tests
 
             var result = svc.Scaffold(ValidSpec(), dryRun: false);
 
-            Assert.Equal("PartialFailure", result["status"]?.ToString());
+            Assert.Equal("error", result["status"]?.ToString());
+            Assert.Equal("ScaffoldPartialFailure", result["error"]?["code"]?.ToString());
             var completed = (JArray)result["completedSteps"];
             Assert.Single(completed);
             Assert.Equal(0, (int)completed[0]["index"]);

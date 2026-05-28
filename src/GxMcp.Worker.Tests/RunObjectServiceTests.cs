@@ -37,14 +37,14 @@ namespace GxMcp.Worker.Tests
             var args = new JArray { 27, 1, 6179 };
             string json = svc.Resolve("ListaAtiCPAlunoUniGra", args, null);
             var jo = JObject.Parse(json);
-            Assert.Equal("Success", jo["status"]?.ToString());
-            string url = jo["url"]?.ToString();
+            Assert.Equal("ok", jo["status"]?.ToString());
+            string url = jo["result"]?["url"]?.ToString();
             Assert.NotNull(url);
             Assert.Contains("/listaaticpalunounigra.aspx", url);
             Assert.Contains("p1=27", url);
             Assert.Contains("p2=1", url);
             Assert.Contains("p3=6179", url);
-            Assert.False(jo["signedIn"]?.ToObject<bool>() ?? true);
+            Assert.False(jo["result"]?["signedIn"]?.ToObject<bool>() ?? true);
         }
 
         [Fact]
@@ -53,7 +53,7 @@ namespace GxMcp.Worker.Tests
             var svc = MakeSvc();
             string json = svc.Resolve("Home", null, null);
             var jo = JObject.Parse(json);
-            string url = jo["url"]?.ToString();
+            string url = jo["result"]?["url"]?.ToString();
             Assert.NotNull(url);
             Assert.EndsWith("/home.aspx", url);
             Assert.DoesNotContain("?", url);
@@ -65,8 +65,8 @@ namespace GxMcp.Worker.Tests
             var svc = MakeSvc();
             string json = svc.Resolve(null, new JArray(), null);
             var jo = JObject.Parse(json);
-            Assert.Equal("Error", jo["status"]?.ToString());
-            Assert.Contains("name", jo["message"]?.ToString() ?? "");
+            Assert.Equal("error", jo["status"]?.ToString());
+            Assert.Contains("name", jo["error"]?["message"]?.ToString() ?? "");
         }
 
         [Fact]
@@ -82,8 +82,8 @@ namespace GxMcp.Worker.Tests
             var gam = JObject.Parse("{\"user\":\"alice\",\"pass\":\"secret\"}");
             string json = svc.Resolve("Home", null, gam);
             var jo = JObject.Parse(json);
-            Assert.True(jo["signedIn"]?.ToObject<bool>() ?? false);
-            var cookies = jo["cookies"] as JObject;
+            Assert.True(jo["result"]?["signedIn"]?.ToObject<bool>() ?? false);
+            var cookies = jo["result"]?["cookies"] as JObject;
             Assert.NotNull(cookies);
             Assert.Equal("abc123", cookies["GAM_Session"]?.ToString());
         }
@@ -95,7 +95,7 @@ namespace GxMcp.Worker.Tests
             var gam = JObject.Parse("{\"user\":\"\",\"pass\":\"\"}");
             string json = svc.Resolve("Home", null, gam);
             var jo = JObject.Parse(json);
-            Assert.False(jo["signedIn"]?.ToObject<bool>() ?? true);
+            Assert.False(jo["result"]?["signedIn"]?.ToObject<bool>() ?? true);
         }
 
         [Fact]

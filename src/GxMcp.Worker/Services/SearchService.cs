@@ -101,6 +101,16 @@ namespace GxMcp.Worker.Services
                             dataType = e.DataType, table = e.RootTable
                         })
                     });
+                    // v2.8.0: canonical pagination block
+                    exactObj["pagination"] = new JObject
+                    {
+                        ["offset"]     = 0,
+                        ["limit"]      = exactList.Count,
+                        ["returned"]   = exactList.Count,
+                        ["total"]      = exactList.Count,
+                        ["hasMore"]    = false,
+                        ["nextOffset"] = JValue.CreateNull()
+                    };
                     if (exactList.Count > 0)
                     {
                         var top = exactList[0];
@@ -372,6 +382,17 @@ namespace GxMcp.Worker.Services
                     if (!string.IsNullOrEmpty(token)) responseObj["nextCursor"] = token;
                 }
 
+                // v2.8.0: canonical pagination block
+                responseObj["pagination"] = new JObject
+                {
+                    ["offset"]     = startIndex,
+                    ["limit"]      = effectiveLimit,
+                    ["returned"]   = scoredResults.Count,
+                    ["total"]      = total,
+                    ["hasMore"]    = hasMore,
+                    ["nextOffset"] = hasMore ? (JToken)(int)(startIndex + scoredResults.Count) : JValue.CreateNull()
+                };
+
                 // Only surface a "suggested_next" when the top result is a confident
                 // name match (exact >= 10000, prefix >= 1000). Substring/vector-only
                 // hits had been driving agents to wrong objects (e.g. literal
@@ -475,6 +496,16 @@ namespace GxMcp.Worker.Services
                     ["total"] = 1,
                     ["hasMore"] = false,
                     ["results"] = new JArray(single),
+                    // v2.8.0: canonical pagination block
+                    ["pagination"] = new JObject
+                    {
+                        ["offset"]     = 0,
+                        ["limit"]      = 1,
+                        ["returned"]   = 1,
+                        ["total"]      = 1,
+                        ["hasMore"]    = false,
+                        ["nextOffset"] = JValue.CreateNull()
+                    },
                     ["_meta"] = new JObject
                     {
                         ["direct_lookup"] = true,
@@ -507,12 +538,23 @@ namespace GxMcp.Worker.Services
         // so agents know to retry and clients can render a progress hint.
         private string BuildPartialResponse(string query, object[] results, int total, bool scanning)
         {
+            int returned = results?.Length ?? 0;
             var resp = new JObject
             {
-                ["count"] = results?.Length ?? 0,
+                ["count"] = returned,
                 ["total"] = total,
                 ["hasMore"] = false,
-                ["results"] = results == null ? new JArray() : JArray.FromObject(results)
+                ["results"] = results == null ? new JArray() : JArray.FromObject(results),
+                // v2.8.0: canonical pagination block
+                ["pagination"] = new JObject
+                {
+                    ["offset"]     = 0,
+                    ["limit"]      = returned,
+                    ["returned"]   = returned,
+                    ["total"]      = total,
+                    ["hasMore"]    = false,
+                    ["nextOffset"] = JValue.CreateNull()
+                }
             };
             AnnotatePartial(resp);
             if (!scanning) resp["_meta"]["indexStatus"] = "empty";

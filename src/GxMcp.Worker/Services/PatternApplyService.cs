@@ -73,9 +73,9 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(objectName))
-                    return McpResponse.Error("Object name is required.", objectName);
+                    return McpResponse.Err(code: "MissingObjectName", message: "Object name is required.", hint: "Pass name=<KBObject name>.", target: objectName);
                 if (string.IsNullOrWhiteSpace(patternKey))
-                    return McpResponse.Error("Pattern key is required.", objectName);
+                    return McpResponse.Err(code: "MissingPatternKey", message: "Pattern key is required.", hint: "Pass pattern='WorkWithPlus' or a known GUID.", target: objectName);
 
                 if (!TryResolvePatternId(patternKey, out Guid patternId))
                     return PatternUnavailable(patternKey, "Unknown pattern key. Pass 'WorkWithPlus' or a known GUID.");
@@ -86,7 +86,8 @@ namespace GxMcp.Worker.Services
                     // Reuse existing not-found shape (best-effort: tests may inject a null _objectService)
                     if (_objectService != null)
                         return HealingService.FormatNotFoundError(objectName, _objectService.GetLoadedIndexOrNull());
-                    return McpResponse.Error("Object not found", objectName);
+                    // no-nextStep: _objectService is null only in unit-test injection scenarios; HealingService.FormatNotFoundError carries nextSteps in the normal code path above.
+                    return McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Verify the name with genexus_query.", target: objectName);
                 }
 
                 // Parent-type gate — extracted into TryBuildTypeGateRejection so
@@ -119,7 +120,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("PatternApplyService.ApplyPattern failed: " + ex);
-                return McpResponse.Error(ex.Message, objectName);
+                return McpResponse.Err(code: "ApplyPatternFailed", message: ex.Message, hint: "Check the worker log for stack trace details.", target: objectName);
             }
         }
 
@@ -131,14 +132,15 @@ namespace GxMcp.Worker.Services
             try
             {
                 if (string.IsNullOrWhiteSpace(objectName))
-                    return McpResponse.Error("Object name is required.", objectName);
+                    return McpResponse.Err(code: "MissingObjectName", message: "Object name is required.", hint: "Pass name=<KBObject name>.", target: objectName);
 
                 KBObject obj = ResolveObject(objectName);
                 if (obj == null)
                 {
                     if (_objectService != null)
                         return HealingService.FormatNotFoundError(objectName, _objectService.GetLoadedIndexOrNull());
-                    return McpResponse.Error("Object not found", objectName);
+                    // no-nextStep: _objectService is null only in unit-test injection scenarios; HealingService.FormatNotFoundError carries nextSteps in the normal code path above.
+                    return McpResponse.Err(code: "ObjectNotFound", message: "Object not found.", hint: "Verify the name with genexus_query.", target: objectName);
                 }
 
                 // Friction 2026-05-25 item #6 — IDE lock pre-check. The GeneXus
@@ -156,7 +158,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("PatternApplyService.ReapplyPattern failed: " + ex);
-                return McpResponse.Error(ex.Message, objectName);
+                return McpResponse.Err(code: "ReapplyPatternFailed", message: ex.Message, hint: "Check the worker log for stack trace details.", target: objectName);
             }
         }
 
@@ -223,16 +225,20 @@ namespace GxMcp.Worker.Services
 
                 if (hits.Count == 0) return null;
 
-                var err = new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "IdeHoldsLock",
-                    ["message"] = "GeneXus IDE has " + (hits.Count == 1 ? "an object" : "objects") + " open that would deadlock the SDK reapply call. Close the tab(s) in the IDE (or save and switch to another object) and retry.",
-                    ["target"] = objectName,
-                    ["lockedObjects"] = new JArray(hits),
-                    ["hint"] = "Close '" + (string)hits[0]["object"] + "' (and any other listed object) in the GeneXus IDE before calling reapply. The MCP worker and the IDE cannot hold the same KBObject handle simultaneously."
-                };
-                return err.ToString(Newtonsoft.Json.Formatting.None);
+                string lockMsg = "GeneXus IDE has " + (hits.Count == 1 ? "an object" : "objects") + " open that would deadlock the SDK reapply call. Close the tab(s) in the IDE (or save and switch to another object) and retry.";
+                string lockHint = "Close '" + (string)hits[0]["object"] + "' (and any other listed object) in the GeneXus IDE before calling reapply. The MCP worker and the IDE cannot hold the same KBObject handle simultaneously.";
+                var lockExtra = new JObject { ["lockedObjects"] = new JArray(hits) };
+                var errEnv = JObject.Parse(McpResponse.Err(
+                    code: "IdeHoldsLock",
+                    message: lockMsg,
+                    hint: lockHint,
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_lifecycle",
+                        args: new JObject { ["action"] = "status" },
+                        why: "Check if the worker is still responsive after closing the IDE tab.")),
+                    target: objectName,
+                    extra: lockExtra));
+                return errEnv.ToString(Newtonsoft.Json.Formatting.None);
             }
             catch (Exception ex)
             {
@@ -349,14 +355,17 @@ namespace GxMcp.Worker.Services
             {
                 string errName = objectNameForResponse ?? obj?.Name ?? "";
                 Logger.Error("PatternEngine apply failed for '" + errName + "': " + ex);
-                var err = new JObject
-                {
-                    ["status"] = "Error",
-                    ["target"] = errName,
-                    ["patternKey"] = patternKey,
-                    ["message"] = ex.Message
-                };
-                return err.ToString(Newtonsoft.Json.Formatting.None);
+                var errExtra = new JObject { ["patternKey"] = patternKey };
+                return McpResponse.Err(
+                    code: "PatternEngineApplyFailed",
+                    message: ex.Message,
+                    hint: "Verify the pattern package is installed and the KB is open.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_apply_pattern",
+                        args: new JObject { ["name"] = errName, ["pattern"] = patternKey },
+                        why: "Retry after verifying the pattern package and KB state.")),
+                    target: errName,
+                    extra: errExtra);
             }
 
             string targetName = objectNameForResponse ?? obj?.Name ?? "";
@@ -513,10 +522,10 @@ namespace GxMcp.Worker.Services
             catch (Exception ex) { Logger.Debug("ApplyPattern: post-projection validate best-effort: " + ex.Message); }
             Phase("postValidate");
 
-            var response = new JObject
+            // v2.8.0: PartialFailure → "partial" status; Success → "ok".
+            // All payload fields go under result.
+            var patternResult = new JObject
             {
-                ["status"] = patternValidationIssues != null ? "PartialFailure" : "Success",
-                ["target"] = targetName,
                 ["parentType"] = parentTypeName,
                 ["bindingMode"] = bindingMode,
                 ["patternKey"] = patternKey,
@@ -525,36 +534,66 @@ namespace GxMcp.Worker.Services
                 ["generatedObjects"] = new JArray(generated),
                 ["errors"] = new JArray(result?.Errors ?? Enumerable.Empty<string>())
             };
+            JArray patternWarnings = null;
+            if (patternValidationIssues != null)
+            {
+                patternWarnings = new JArray();
+                foreach (var issue in patternValidationIssues) patternWarnings.Add(issue);
+            }
+            // Mutable response JObject for post-processing (slowReapply, NoOp, etc.).
+            // Will be converted to canonical at the bottom of this method.
+            var response = new JObject
+            {
+                // Internal tracking field (not emitted); converted to canonical McpResponse before return.
+                ["_opStatus"] = patternValidationIssues != null ? "PartialFailure" : "Success",
+                ["target"] = targetName,
+                ["_result"] = patternResult
+            };
             if (staleInstanceRecovered)
             {
-                response["staleInstanceRecovered"] = true;
-                response["staleInstanceHint"] = "PatternInstance metadata was present on the parent but the generated WorkWithPlus host was missing (typically from a prior delete). Engine apply was re-run as if this were a fresh apply so the family regenerates instead of producing an empty PatternInstance.";
+                patternResult["staleInstanceRecovered"] = true;
+                patternResult["staleInstanceHint"] = "PatternInstance metadata was present on the parent but the generated WorkWithPlus host was missing (typically from a prior delete). Engine apply was re-run as if this were a fresh apply so the family regenerates instead of producing an empty PatternInstance.";
             }
             if (patternValidationIssues != null)
             {
-                response["patternValidationIssues"] = patternValidationIssues;
-                response["hint"] = "Pattern apply persisted, but the parent's Events code references controls the fresh PatternInstance doesn't expose. The next IDE 'Ctrl+S' will fail with these errors. Edit the parent's Events to remove or rename the referenced controls (typically " +
-                                   "`GrpX.Visible = …` or similar) before saving in the IDE.";
+                patternResult["patternValidationIssues"] = patternValidationIssues;
+                // hint surfaces in the partial warnings below
             }
 
             // Reapply projection-time surfacing. The STA-bound SDK call can't be
             // hard-aborted from another thread, but a structured signal lets the
             // agent decide to close the IDE tab / retry without re-reading logs.
             // Threshold matches the warn-log at the projection site.
+            string projectionTimedOutCode = null;
             if (reapply && projectionElapsedMs > 30000)
             {
-                response["slowReapply"] = true;
-                response["projectionMs"] = projectionElapsedMs;
-                response["slowReapplyHint"] = $"Reapply projection took {projectionElapsedMs}ms (threshold 30000ms). " +
+                patternResult["slowReapply"] = true;
+                patternResult["projectionMs"] = projectionElapsedMs;
+                patternResult["slowReapplyHint"] = $"Reapply projection took {projectionElapsedMs}ms (threshold 30000ms). " +
                                               $"The most common cause is the GeneXus IDE holding '{targetName}' or 'WorkWithPlus{targetName}' open in a tab — close it and retry. " +
                                               $"If no IDE is running, the SDK may be hung on a stale handle; restart the worker via genexus_worker_reload mode=hard.";
+
+                long hardTimeoutMs = 300_000;
+                try
+                {
+                    var raw = Environment.GetEnvironmentVariable("GENEXUS_MCP_REAPPLY_TIMEOUT_MS");
+                    if (!string.IsNullOrWhiteSpace(raw) && long.TryParse(raw, out var parsed) && parsed > 0)
+                    {
+                        hardTimeoutMs = parsed;
+                    }
+                }
+                catch { /* env read best-effort */ }
+                if (projectionElapsedMs > hardTimeoutMs)
+                {
+                    projectionTimedOutCode = "ProjectionTimedOut";
+                    patternResult["recoveryRequired"] = true;
+                    patternResult["recoveryHint"] = $"Projection ran past the {hardTimeoutMs}ms hard-timeout. " +
+                                                "The worker may hold stale SDK handles after this. " +
+                                                "Call genexus_worker_reload mode=hard, or reconnect MCP via /mcp.";
+                }
             }
 
-            // Surface the WWP host (`WorkWithPlus<X>`) explicitly when present — agents
-            // need this name to read/edit the PatternInstance after a first-apply. We
-            // ONLY surface it when the SDK actually created/has it; deriving the name
-            // from convention when it doesn't exist would mislead the agent into reading
-            // a non-existent object (see WebPanel-direct case below).
+            // Surface the WWP host (`WorkWithPlus<X>`) explicitly when present.
             string host = generated.FirstOrDefault(n => n.StartsWith("WorkWithPlus", StringComparison.Ordinal));
             if (host == null && obj != null && _objectService != null)
             {
@@ -565,11 +604,9 @@ namespace GxMcp.Worker.Services
                 }
                 catch { /* lookup best-effort */ }
             }
-            if (!string.IsNullOrEmpty(host)) response["patternHost"] = host;
+            if (!string.IsNullOrEmpty(host)) patternResult["patternHost"] = host;
 
-            // F23: surface available `WorkWithPlus for Web Template` names so agents
-            // don't have to guess on the next call. Helpful especially on Web/SDPanel
-            // direct-attach paths where `settings.template` is required.
+            // F23: surface available `WorkWithPlus for Web Template` names.
             if (obj?.TypeDescriptor?.Name == "WebPanel" || obj?.TypeDescriptor?.Name == "SDPanel")
             {
                 try
@@ -577,21 +614,14 @@ namespace GxMcp.Worker.Services
                     var templates = ListWwpWebTemplates();
                     if (templates.Count > 0)
                     {
-                        response["availableTemplates"] = new JArray(templates);
+                        patternResult["availableTemplates"] = new JArray(templates);
                     }
                 }
                 catch { /* best-effort */ }
             }
 
-            // No-op detection: PatternEngine.ApplyPattern returns void; on certain target
-            // shapes (notably a bare WebPanel against the default WorkWithPlus pattern in
-            // GeneXus 18.0.7), the call completes cleanly but the SDK doesn't actually
-            // attach a PatternInstance or generate the family. Without this check the
-            // agent gets a misleading Success and goes on to read a non-existent host.
-            //
-            // Heuristic: no family generated AND target itself has no PatternInstance
-            // part AND no host exists for it. We downgrade `status` to `NoOp` and emit
-            // an actionable `recommendation` instead of pretending the apply worked.
+            // No-op detection.
+            bool isNoOp = false;
             if (generated.Count == 0 && host == null && obj != null)
             {
                 bool targetHasPatternInstance = false;
@@ -613,18 +643,6 @@ namespace GxMcp.Worker.Services
 
                 if (!targetHasPatternInstance)
                 {
-                    // F16: Use the OFFICIAL WWP package API discovered via deep reflection
-                    // on DVelop.Patterns.WorkWithPlus.Helpers.PatternInstancePackageInterface:
-                    //   1. CreatePatternInstanceWithTemplate(KBModel, KBObject, String, out PatternInstance)
-                    //      — creates a host bound to the parent with a registered Template
-                    //   2. SetPatternApplyOnSave(KBObject)
-                    //      — toggles "apply pattern on save" so derived objects regenerate
-                    //   3. ValidateAndSave(KBObject)
-                    //      — WWP custom validator + persist; fires the generators
-                    //
-                    // This is the IDE's canonical apply path (Right-click → Apply Pattern).
-                    // Earlier shortcuts (private ctor → ghost host, auto-orchestrate →
-                    // destructive) bypassed the WWP lifecycle wired by these helpers.
                     string sett_template = settings != null ? settings["template"]?.ToString() : null;
                     bool packageAttached = false;
                     string packageAttachError = null;
@@ -641,16 +659,16 @@ namespace GxMcp.Worker.Services
 
                     if (packageAttached)
                     {
-                        response["status"] = "Success";
-                        response["wasFirstApply"] = true;
-                        response["directAttach"] = true;
-                        response["directAttachRoute"] = "PatternInstancePackageInterface";
-                        response["template"] = usedTemplate;
-                        response["directAttachNote"] = "Attached via the official WWP package API (CreatePatternInstanceWithTemplate + SetPatternApplyOnSave + ValidateAndSave). Host '" + createdHostName + "' is bound through the IDE's canonical lifecycle, so PatternInstance edits trigger regeneration on save.";
+                        response["_opStatus"] = "Success";
+                        patternResult["wasFirstApply"] = true;
+                        patternResult["directAttach"] = true;
+                        patternResult["directAttachRoute"] = "PatternInstancePackageInterface";
+                        patternResult["template"] = usedTemplate;
+                        patternResult["directAttachNote"] = "Attached via the official WWP package API (CreatePatternInstanceWithTemplate + SetPatternApplyOnSave + ValidateAndSave). Host '" + createdHostName + "' is bound through the IDE's canonical lifecycle, so PatternInstance edits trigger regeneration on save.";
                         if (!string.IsNullOrEmpty(createdHostName))
                         {
-                            response["patternHost"] = createdHostName;
-                            response["generatedObjects"] = new JArray(createdHostName);
+                            patternResult["patternHost"] = createdHostName;
+                            patternResult["generatedObjects"] = new JArray(createdHostName);
                             try
                             {
                                 var idx = _objectService?.GetKbService()?.GetIndexCache();
@@ -665,17 +683,12 @@ namespace GxMcp.Worker.Services
                     }
                     else
                     {
-                        response["status"] = "NoOp";
-                        response["noOpReason"] = "Engine ApplyPattern void overload no-op'd on this target, and the WWP package's CreatePatternInstanceWithTemplate fallback also failed: " + (packageAttachError ?? "unknown");
-                        response["recommendation"] = obj.TypeDescriptor?.Name == "WebPanel"
+                        isNoOp = true;
+                        patternResult["noOpReason"] = "Engine ApplyPattern void overload no-op'd on this target, and the WWP package's CreatePatternInstanceWithTemplate fallback also failed: " + (packageAttachError ?? "unknown");
+                        patternResult["recommendation"] = obj.TypeDescriptor?.Name == "WebPanel"
                             ? "Either: (1) pass an explicit `settings.template` matching a `WorkWithPlus for Web Template` object in this KB (we tried auto-discovery first). (2) Apply WorkWithPlus to a Transaction — the engine generates 'WW<Trn>' as a wired WWP screen."
                             : "Apply WorkWithPlus to a Transaction to generate the WWP family.";
 
-                        // Diagnostic probes (perf-gated): pattern + full SDK surface dump.
-                        // These are useful when investigating a NoOp regression but
-                        // expensive (full reflection sweep + multi-MB disk write). Opt in
-                        // with GX_MCP_SDK_PROBE=1 — the recommendation/availableTemplates
-                        // already give the agent enough to act on without the dump.
                         if (string.Equals(Environment.GetEnvironmentVariable("GX_MCP_SDK_PROBE"), "1", StringComparison.Ordinal))
                         {
                             try
@@ -683,10 +696,10 @@ namespace GxMcp.Worker.Services
                                 var dump = DumpSdkSurface(patternDefinition, patternId);
                                 string dumpPath = Path.Combine(Path.GetTempPath(), "gxmcp_pattern_probe.json");
                                 File.WriteAllText(dumpPath, dump.ToString(Newtonsoft.Json.Formatting.Indented));
-                                response["sdkProbePath"] = dumpPath;
+                                patternResult["sdkProbePath"] = dumpPath;
 
                                 var fullProbe = SdkSurfaceProbe.Run(Environment.GetEnvironmentVariable("GX_MCP_SDK_PROBE_DIR"));
-                                response["sdkSurfaceProbe"] = new JObject
+                                patternResult["sdkSurfaceProbe"] = new JObject
                                 {
                                     ["rawJsonPath"] = fullProbe.RawJsonPath,
                                     ["indexMdPath"] = fullProbe.IndexMdPath,
@@ -698,7 +711,7 @@ namespace GxMcp.Worker.Services
                                     ["warnings"] = new JArray(fullProbe.Warnings)
                                 };
                             }
-                            catch (Exception ex) { response["sdkProbeError"] = ex.Message; }
+                            catch (Exception ex) { patternResult["sdkProbeError"] = ex.Message; }
                         }
                     }
                 }
@@ -707,8 +720,50 @@ namespace GxMcp.Worker.Services
             Phase("tailEnvelope");
             Logger.Info("[ApplyPattern-PERF] target=" + targetName + " parent=" + parentTypeName + " phases=" + string.Join(",", phases));
 
-            GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(response, GxMcp.Worker.Helpers.WriteResultMeta.SdkPatternEngine);
-            return response.ToString(Newtonsoft.Json.Formatting.None);
+            // v2.8.0: convert internal working status to canonical envelope.
+            string internalStatus = response["_opStatus"]?.ToString() ?? "Success";
+            string canonicalCode = projectionTimedOutCode ?? (isNoOp ? "PatternNoOp" : "PatternApplied");
+
+            string canonicalJson;
+            if (isNoOp)
+            {
+                // NoOp: engine completed but nothing was generated — emit as error so the
+                // agent gets actionable nextSteps rather than a misleading ok.
+                canonicalJson = McpResponse.Err(
+                    code: "PatternNoOp",
+                    message: patternResult["noOpReason"]?.ToString() ?? "Pattern apply produced no generated objects.",
+                    hint: patternResult["recommendation"]?.ToString() ?? "Apply WorkWithPlus to a Transaction or supply settings.template for a WebPanel.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_apply_pattern",
+                        args: new JObject { ["name"] = targetName, ["pattern"] = patternKey, ["settings"] = new JObject { ["template"] = "(available template name)" } },
+                        why: "Retry with an explicit template name from patternResult.availableTemplates.")),
+                    target: targetName,
+                    extra: patternResult);
+            }
+            else if (string.Equals(internalStatus, "PartialFailure", StringComparison.OrdinalIgnoreCase))
+            {
+                // Partial: pattern applied but has validation issues.
+                var partialWarnings = new JArray();
+                if (patternValidationIssues != null)
+                {
+                    string validationHint = "Pattern apply persisted, but the parent's Events code references controls the fresh PatternInstance doesn't expose. The next IDE 'Ctrl+S' will fail with these errors. Edit the parent's Events to remove or rename the referenced controls (typically `GrpX.Visible = …` or similar) before saving in the IDE.";
+                    partialWarnings.Add(new JObject { ["code"] = "PatternValidationIssues", ["message"] = validationHint, ["issues"] = patternValidationIssues });
+                }
+                canonicalJson = McpResponse.Partial(
+                    target: targetName,
+                    code: "PatternAppliedWithWarnings",
+                    result: patternResult,
+                    warnings: partialWarnings.Count > 0 ? partialWarnings : null);
+            }
+            else
+            {
+                canonicalJson = McpResponse.Ok(target: targetName, code: canonicalCode, result: patternResult);
+            }
+
+            // Re-attach SDK path tag and return.
+            var canonicalObj = JObject.Parse(canonicalJson);
+            GxMcp.Worker.Helpers.WriteResultMeta.TagSdkPath(canonicalObj, GxMcp.Worker.Helpers.WriteResultMeta.SdkPatternEngine);
+            return canonicalObj.ToString(Newtonsoft.Json.Formatting.None);
         }
 
         // F23: list all `WorkWithPlus for Web Template` KBObjects in the current KB —
@@ -743,16 +798,22 @@ namespace GxMcp.Worker.Services
 
             if (!isTransaction && !isWebPanelKind)
             {
-                var rej = new JObject
+                var rejExtra = new JObject
                 {
-                    ["status"] = "Error",
-                    ["target"] = objName,
                     ["patternKey"] = patternKey,
                     ["parentType"] = parentType,
-                    ["message"] = $"WorkWithPlus cannot be applied to a {parentType}.",
-                    ["validParentTypes"] = new JArray("Transaction", "WebPanel", "SDPanel"),
-                    ["hint"] = "Apply WorkWithPlus only to a Transaction (generates WW/View/Export family) or to a WebPanel/SDPanel (direct-attach with a Template; pass settings.template or let the MCP auto-discover one)."
+                    ["validParentTypes"] = new JArray("Transaction", "WebPanel", "SDPanel")
                 };
+                var rej = JObject.Parse(McpResponse.Err(
+                    code: "PatternParentTypeMismatch",
+                    message: $"WorkWithPlus cannot be applied to a {parentType}.",
+                    hint: "Apply WorkWithPlus only to a Transaction (generates WW/View/Export family) or to a WebPanel/SDPanel (direct-attach with a Template; pass settings.template or let the MCP auto-discover one).",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_apply_pattern",
+                        args: new JObject { ["name"] = objName, ["pattern"] = patternKey },
+                        why: "Call on a Transaction or WebPanel instead.")),
+                    target: objName,
+                    extra: rejExtra));
                 return rej.ToString(Newtonsoft.Json.Formatting.None);
             }
 
@@ -762,16 +823,22 @@ namespace GxMcp.Worker.Services
                 && availableTemplates.Count > 0
                 && !availableTemplates.Any(t => string.Equals(t, callerTemplate, StringComparison.OrdinalIgnoreCase)))
             {
-                var bad = new JObject
+                var badExtra = new JObject
                 {
-                    ["status"] = "Error",
-                    ["target"] = objName,
                     ["patternKey"] = patternKey,
                     ["parentType"] = parentType,
-                    ["message"] = $"Template '{callerTemplate}' is not a registered `WorkWithPlus for Web Template` in this KB.",
-                    ["availableTemplates"] = new JArray(availableTemplates),
-                    ["hint"] = "Pass settings.template equal to one of availableTemplates, or omit it to auto-discover."
+                    ["availableTemplates"] = new JArray(availableTemplates)
                 };
+                var bad = JObject.Parse(McpResponse.Err(
+                    code: "PatternTemplateNotFound",
+                    message: $"Template '{callerTemplate}' is not a registered `WorkWithPlus for Web Template` in this KB.",
+                    hint: "Pass settings.template equal to one of availableTemplates, or omit it to auto-discover.",
+                    nextSteps: new JArray(McpResponse.NextStep(
+                        tool: "genexus_apply_pattern",
+                        args: new JObject { ["name"] = objName, ["pattern"] = patternKey, ["settings"] = new JObject { ["template"] = availableTemplates[0] } },
+                        why: $"Retries with the first available template ({availableTemplates[0]}).")),
+                    target: objName,
+                    extra: badExtra));
                 return bad.ToString(Newtonsoft.Json.Formatting.None);
             }
 
@@ -1672,7 +1739,7 @@ namespace GxMcp.Worker.Services
             return j.ToString(Newtonsoft.Json.Formatting.None);
         }
 
-        // ── Item 45: Pattern Diagnose ────────────────────────────────────────────
+        // ── Item 45: Pattern Diagnose (DryRun equivalent for genexus_apply_pattern) ─────
         // Read-only preflight: resolve target + pattern, then run every validation
         // gate that ApplyPattern would run, but return structured reasons instead of
         // mutating anything. No SDK apply is called.
@@ -1806,7 +1873,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("PatternApplyService.DiagnosePattern failed: " + ex);
-                return McpResponse.Error(ex.Message, objectName);
+                return McpResponse.Err(code: "DiagnosePatternFailed", message: ex.Message, hint: "Check the worker log for stack trace details.", nextSteps: new JArray(McpResponse.NextStep("genexus_apply_pattern", new JObject { ["name"] = objectName }, "Retry the apply directly if diagnosis is consistently failing.")), target: objectName);
             }
         }
 

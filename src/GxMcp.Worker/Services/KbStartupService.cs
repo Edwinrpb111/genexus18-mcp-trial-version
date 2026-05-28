@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -54,39 +55,48 @@ namespace GxMcp.Worker.Services
                 string startup = _store.Get("StartupObject");
                 string fallback = _store.Get("DefaultObject");
                 string effective = _kbService?.GetLauncherObjectName();
-                return new JObject
-                {
-                    ["startupObject"] = startup ?? string.Empty,
-                    ["defaultObject"] = fallback ?? string.Empty,
-                    ["effective"] = effective ?? string.Empty,
-                    ["hint"] = string.IsNullOrEmpty(startup)
-                        ? "StartupObject not set; effective launcher resolves through DefaultObject / first Main-tagged object."
-                        : null
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    code: "KbStartupRetrieved",
+                    result: new JObject
+                    {
+                        ["startupObject"] = startup ?? string.Empty,
+                        ["defaultObject"] = fallback ?? string.Empty,
+                        ["effective"] = effective ?? string.Empty,
+                        ["hint"] = string.IsNullOrEmpty(startup)
+                            ? "StartupObject not set; effective launcher resolves through DefaultObject / first Main-tagged object."
+                            : null
+                    });
             }
             catch (Exception ex)
             {
-                return new JObject { ["error"] = ex.Message, ["code"] = "GetStartupFailed" }
-                    .ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "GetStartupFailed",
+                    message: ex.Message,
+                    hint: "Verify the active KB is open and the SDK environment is initialized.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_whoami", null, "Check KB and environment state.") });
             }
         }
 
         public string SetStartup(string objectName)
         {
             if (string.IsNullOrWhiteSpace(objectName))
-                return new JObject { ["error"] = "Missing 'name'." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "MissingName",
+                    message: "Missing 'name'.",
+                    hint: "Pass the object name to set as startup.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_list_objects", new JObject { ["type"] = "WebPanel" }, "List available objects.") });
 
             try
             {
                 var obj = _objectService?.FindObject(objectName, null);
                 if (obj == null)
                 {
-                    return new JObject
-                    {
-                        ["error"] = $"Object '{objectName}' not found in KB.",
-                        ["code"] = "NotFound",
-                        ["name"] = objectName
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Err(
+                        code: "NotFound",
+                        message: $"Object '{objectName}' not found in KB.",
+                        hint: "Verify the object name is spelled correctly.",
+                        nextSteps: new JArray { McpResponse.NextStep("genexus_inspect", new JObject { ["name"] = objectName }, "Inspect to confirm the object name.") },
+                        target: objectName);
                 }
 
                 string previous = null;
@@ -95,26 +105,30 @@ namespace GxMcp.Worker.Services
                 bool ok = _store.Set("StartupObject", obj.Name);
                 if (!ok)
                 {
-                    return new JObject
-                    {
-                        ["error"] = "SDK refused to write StartupObject.",
-                        ["code"] = "SetFailed",
-                        ["name"] = obj.Name,
-                        ["hint"] = "Verify the active Environment is loaded and that the SDK shape exposes StartupObject as a writable env property."
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    return McpResponse.Err(
+                        code: "SetFailed",
+                        message: "SDK refused to write StartupObject.",
+                        hint: "Verify the active Environment is loaded and that the SDK shape exposes StartupObject as a writable env property.",
+                        nextSteps: new JArray { McpResponse.NextStep("genexus_whoami", null, "Check environment state.") },
+                        target: obj.Name);
                 }
 
-                return new JObject
-                {
-                    ["status"] = "Success",
-                    ["startupObject"] = obj.Name,
-                    ["previousStartupObject"] = previous ?? string.Empty
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    target: obj.Name,
+                    code: "KbStartupCompleted",
+                    result: new JObject
+                    {
+                        ["startupObject"] = obj.Name,
+                        ["previousStartupObject"] = previous ?? string.Empty
+                    });
             }
             catch (Exception ex)
             {
-                return new JObject { ["error"] = ex.Message, ["code"] = "SetStartupFailed" }
-                    .ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "SetStartupFailed",
+                    message: ex.Message,
+                    hint: "An unexpected error occurred setting the startup object.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_whoami", null, "Check KB state.") });
             }
         }
 

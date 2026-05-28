@@ -275,8 +275,8 @@ namespace GxMcp.Worker.Tests
             var svc = new ApiIntrospectService(null, null, null);
             var json = svc.Run(new JObject());
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
-            Assert.Equal("InvalidAction", obj["code"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
+            Assert.Equal("InvalidAction", obj["error"]?["code"]?.ToString());
         }
 
         [Fact]
@@ -285,7 +285,7 @@ namespace GxMcp.Worker.Tests
             var svc = new ApiIntrospectService(null, null, null);
             var json = svc.Run(new JObject { ["action"] = "bogus" });
             var obj = JObject.Parse(json);
-            Assert.Equal("Error", obj["status"]?.ToString());
+            Assert.Equal("error", obj["status"]?.ToString());
         }
     }
 }

@@ -223,8 +223,8 @@ namespace GxMcp.Worker.Tests
             var svc = new PopupTemplateService(new FakeBackend());
             var json = svc.CreatePopup("", UgSpec());
             var resp = JObject.Parse(json);
-            Assert.Equal("Error", (string)resp["status"]);
-            Assert.Equal("InvalidArgs", (string)resp["code"]);
+            Assert.Equal("error", (string)resp["status"]);
+            Assert.Equal("InvalidArgs", (string)resp["error"]["code"]);
         }
 
         [Fact]
@@ -233,8 +233,8 @@ namespace GxMcp.Worker.Tests
             var svc = new PopupTemplateService(new FakeBackend());
             var json = svc.CreatePopup("Foo", new JObject { ["inputs"] = new JArray() });
             var resp = JObject.Parse(json);
-            Assert.Equal("Error", (string)resp["status"]);
-            Assert.Equal("InvalidSpec", (string)resp["code"]);
+            Assert.Equal("error", (string)resp["status"]);
+            Assert.Equal("InvalidSpec", (string)resp["error"]["code"]);
         }
 
         [Fact]
@@ -246,8 +246,8 @@ namespace GxMcp.Worker.Tests
             var json = svc.CreatePopup("RegProfAlunoUGPopup", UgSpec());
             var resp = JObject.Parse(json);
 
-            Assert.Equal("Success", (string)resp["status"]);
-            Assert.Equal("layout", (string)resp["layoutFormType"]);
+            Assert.Equal("ok", (string)resp["status"]);
+            Assert.Equal("layout", (string)resp["result"]["layoutFormType"]);
 
             // Object created exactly once.
             Assert.Single(backend.Creates);

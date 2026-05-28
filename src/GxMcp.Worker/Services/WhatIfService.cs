@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -47,7 +48,8 @@ namespace GxMcp.Worker.Services
                 }
                 catch (Exception ex)
                 {
-                    impact = new JObject { ["status"] = "Error", ["message"] = ex.Message };
+                    // Impact analysis failed — use empty callers so WhatIf still returns a result.
+                    impact = new JObject { ["_impactError"] = ex.Message };
                 }
 
                 var callers = impact["callers"] as JArray ?? new JArray();
@@ -97,9 +99,8 @@ namespace GxMcp.Worker.Services
                     }
                 }
 
-                return new JObject
+                return McpResponse.Ok(code: "WhatIfComputed", result: new JObject
                 {
-                    ["status"] = "Success",
                     ["change"] = change,
                     ["kind"] = kind ?? "type_change",
                     ["impactedCount"] = callers.Count,
@@ -107,7 +108,7 @@ namespace GxMcp.Worker.Services
                     ["probably_safe"] = probablySafe,
                     ["unknown"] = unknown,
                     ["note"] = "Read-only simulation. No mutation performed. Heuristic: attribute name substring + type-family compatibility."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                });
             }
             catch (Exception ex)
             {
@@ -172,11 +173,6 @@ namespace GxMcp.Worker.Services
         }
 
         private static string Error(string code, string message) =>
-            new JObject
-            {
-                ["status"] = "Error",
-                ["code"] = code,
-                ["message"] = message
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            McpResponse.Err(code: code, message: message);
     }
 }

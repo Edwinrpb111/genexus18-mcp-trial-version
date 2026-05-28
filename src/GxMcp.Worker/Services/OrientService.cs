@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -36,24 +37,24 @@ namespace GxMcp.Worker.Services
             }
             catch { }
 
-            var resp = new JObject
-            {
-                ["status"] = "Success",
-                ["kb"] = new JObject
+            return McpResponse.Ok(
+                code: "OrientReady",
+                result: new JObject
                 {
-                    ["name"] = kbName ?? "(no KB open)",
-                    ["path"] = kbPath ?? ""
-                },
-                ["recentEdits"] = BuildRecentEdits(kbPath),
-                ["gotchas"] = BuildGotchas(),
-                ["topTools"] = new JArray
-                {
-                    "genexus_inspect", "genexus_edit", "genexus_read",
-                    "genexus_lifecycle", "genexus_analyze"
-                },
-                ["topToolsNote"] = "Static default — live per-session stats live in genexus_whoami.stats.tools."
-            };
-            return resp.ToString();
+                    ["kb"] = new JObject
+                    {
+                        ["name"] = kbName ?? "(no KB open)",
+                        ["path"] = kbPath ?? ""
+                    },
+                    ["recentEdits"] = BuildRecentEdits(kbPath),
+                    ["gotchas"] = BuildGotchas(),
+                    ["topTools"] = new JArray
+                    {
+                        "genexus_inspect", "genexus_edit", "genexus_read",
+                        "genexus_lifecycle", "genexus_analyze"
+                    },
+                    ["topToolsNote"] = "Static default — live per-session stats live in genexus_whoami.stats.tools."
+                });
         }
 
         private static JArray BuildRecentEdits(string kbPath)

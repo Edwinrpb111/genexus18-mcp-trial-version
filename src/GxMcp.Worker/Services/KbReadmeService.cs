@@ -32,8 +32,7 @@ namespace GxMcp.Worker.Services
         public string Generate(string action, string outputPath)
         {
             if (!string.Equals(action, "generate", StringComparison.OrdinalIgnoreCase))
-                return Models.McpResponse.Error("InvalidAction", null, null,
-                    "Only action='generate' is supported.");
+                return Models.McpResponse.Err(code: "InvalidAction", message: "Only action='generate' is supported.", hint: "Pass action='generate'.", nextSteps: new JArray(McpResponse.NextStep("genexus_kb_readme", new JObject { ["action"] = "generate" }, "Retry with action='generate'.")));
 
             string kbPath = null;
             string kbName = null;
@@ -48,10 +47,8 @@ namespace GxMcp.Worker.Services
 
             string md = BuildMarkdown(kbName, kbPath, launcher, idx);
 
-            var envelope = new JObject
+            var resultPayload = new JObject
             {
-                ["status"] = "Success",
-                ["action"] = "generate",
                 ["kb"] = new JObject
                 {
                     ["name"] = kbName ?? "(no KB open)",
@@ -66,20 +63,19 @@ namespace GxMcp.Worker.Services
                     string dir = Path.GetDirectoryName(outputPath);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     File.WriteAllText(outputPath, md, new UTF8Encoding(false));
-                    envelope["outputPath"] = outputPath;
-                    envelope["bytesWritten"] = md.Length;
+                    resultPayload["outputPath"] = outputPath;
+                    resultPayload["bytesWritten"] = md.Length;
                 }
                 catch (Exception ex)
                 {
-                    return Models.McpResponse.Error("WriteFailed", null, null,
-                        "Could not write README to " + outputPath + ": " + ex.Message);
+                    return Models.McpResponse.Err(code: "WriteFailed", message: "Could not write README to " + outputPath + ": " + ex.Message, hint: "Check that the output path is writable and the directory exists.", nextSteps: new JArray(McpResponse.NextStep("genexus_kb_readme", new JObject { ["action"] = "generate" }, "Retry without outputPath to get the markdown inline.")));
                 }
             }
             else
             {
-                envelope["markdown"] = md;
+                resultPayload["markdown"] = md;
             }
-            return envelope.ToString(Newtonsoft.Json.Formatting.None);
+            return Models.McpResponse.Ok(code: "ReadmeGenerated", result: resultPayload);
         }
 
         internal static string BuildMarkdown(string kbName, string kbPath, string launcher, SearchIndex idx)

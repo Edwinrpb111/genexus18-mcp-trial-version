@@ -195,10 +195,17 @@ namespace GxMcp.Gateway.Tests
         [Fact]
         public void NormalizeToolPayloadForAxi_ShouldMarkNoChangeOnSuccessfulNoChangeWrite()
         {
+            // v2.8.0 — canonical envelope: status:"ok" with code:"NoChange" (or similar),
+            // payload nested under result. Gateway's noChange detector recognises both
+            // the explicit code AND the legacy details:"No change" fallback.
             var payload = new JObject
             {
-                ["status"] = "Success",
-                ["details"] = "No change"
+                ["status"] = "ok",
+                ["code"] = "NoChange",
+                ["result"] = new JObject
+                {
+                    ["details"] = "No change"
+                }
             };
 
             var method = typeof(Program).GetMethod(

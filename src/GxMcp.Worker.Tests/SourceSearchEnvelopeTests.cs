@@ -19,10 +19,11 @@ namespace GxMcp.Worker.Tests
             var json = svc.SearchAsJson(new SourceSearchCriteria { Pattern = "Clicksign" });
             var obj = JObject.Parse(json);
 
-            Assert.Equal("IndexCold", obj["status"]?.ToString());
-            Assert.NotNull(obj["retryAfterMs"]);
-            Assert.Null(obj["hits"]); // never silent empty
-            Assert.Null(obj["count"]);
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.Equal("IndexCold", obj["code"]?.ToString());
+            Assert.NotNull(obj["result"]?["retryAfterMs"]);
+            Assert.Null(obj["result"]?["hits"]); // never silent empty
+            Assert.Null(obj["result"]?["count"]);
         }
 
         [Fact]
@@ -32,13 +33,14 @@ namespace GxMcp.Worker.Tests
             fixture.Index.MarkIndexComplete(3);
             // ObjectService is null; the per-entry FindObject call will throw and
             // be swallowed, leaving hits empty — but the envelope shape itself
-            // (status=Ready, hits present) is what we assert here.
+            // (status=ok, hits present under result) is what we assert here.
             var svc = new SourceSearchService(fixture.Index, null);
             var json = svc.SearchAsJson(new SourceSearchCriteria { Pattern = "B" });
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Ready", obj["status"]?.ToString());
-            Assert.NotNull(obj["hits"]);
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.Equal("SourceSearchCompleted", obj["code"]?.ToString());
+            Assert.NotNull(obj["result"]?["hits"]);
         }
 
         [Fact]
@@ -73,10 +75,11 @@ namespace GxMcp.Worker.Tests
             });
             var obj = JObject.Parse(json);
 
-            Assert.Equal("Timeout", obj["status"]?.ToString());
-            Assert.NotNull(obj["partialHits"]);
-            Assert.NotNull(obj["totalScanned"]);
-            Assert.NotNull(obj["totalObjects"]);
+            Assert.Equal("ok", obj["status"]?.ToString());
+            Assert.Equal("Timeout", obj["code"]?.ToString());
+            Assert.NotNull(obj["result"]?["partialHits"]);
+            Assert.NotNull(obj["result"]?["totalScanned"]);
+            Assert.NotNull(obj["result"]?["totalObjects"]);
         }
     }
 }

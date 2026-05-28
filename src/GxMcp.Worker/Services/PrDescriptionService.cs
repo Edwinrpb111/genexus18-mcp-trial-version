@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -48,32 +49,29 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "GitInvocationFailed",
-                    ["message"] = ex.Message
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "GitInvocationFailed",
+                    message: ex.Message,
+                    hint: "Ensure git is installed and available in PATH.",
+                    nextSteps: new JArray { McpResponse.NextStep("genexus_github", new JObject { ["action"] = "create_pr" }, "Use the GitHub tool for PR creation.") });
             }
 
             if (exit != 0)
             {
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "GitExitNonZero",
-                    ["exitCode"] = exit,
-                    ["stderr"] = stderr ?? "",
-                    ["cwd"] = cwd
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "GitExitNonZero",
+                    message: "git exited with code " + exit + ": " + (stderr ?? "").Trim(),
+                    hint: "Check that the working directory is inside a git repository.",
+                    extra: new JObject { ["exitCode"] = exit, ["stderr"] = stderr ?? "", ["cwd"] = cwd });
             }
 
             var commits = ParseCommits(raw);
             var envelope = BuildEnvelope(commits);
-            envelope["status"] = "Success";
             envelope["cwd"] = cwd;
             envelope["commitsRead"] = commits.Count;
-            return envelope.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                code: "PrDescriptionGenerated",
+                result: envelope);
         }
 
         internal static List<(string hash, string subject, string body)> ParseCommits(string raw)

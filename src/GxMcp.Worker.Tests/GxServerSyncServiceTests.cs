@@ -22,10 +22,10 @@ namespace GxMcp.Worker.Tests
             try
             {
                 var jo = JObject.Parse(GxServerSyncService.StatusEnvelope(kb, "MyKb"));
-                Assert.Equal("Success", (string)jo["status"]);
-                Assert.False((bool)jo["connected"]);
-                Assert.Equal("MyKb", (string)jo["kbAlias"]);
-                Assert.Contains("not connected", ((string)jo["hint"]) ?? string.Empty);
+                Assert.Equal("ok", (string)jo["status"]);
+                Assert.False((bool)jo["result"]!["connected"]);
+                Assert.Equal("MyKb", (string)jo["result"]!["kbAlias"]);
+                Assert.Contains("not connected", ((string)jo["result"]!["hint"]) ?? string.Empty);
             }
             finally { try { Directory.Delete(kb, true); } catch { } }
         }
@@ -41,11 +41,11 @@ namespace GxMcp.Worker.Tests
                 File.WriteAllText(Path.Combine(repoDir, "Repository.gxs"), "<gxserver/>");
 
                 var jo = JObject.Parse(GxServerSyncService.StatusEnvelope(kb, "MyKb"));
-                Assert.Equal("Success", (string)jo["status"]);
-                Assert.True((bool)jo["connected"]);
-                Assert.NotNull(jo["detectedVia"]);
-                Assert.Contains("Repository.gxs", (string)jo["detectedVia"]);
-                Assert.Contains("parsing pending", (string)jo["note"]);
+                Assert.Equal("ok", (string)jo["status"]);
+                Assert.True((bool)jo["result"]!["connected"]);
+                Assert.NotNull(jo["result"]!["detectedVia"]);
+                Assert.Contains("Repository.gxs", (string)jo["result"]!["detectedVia"]);
+                Assert.Contains("parsing pending", (string)jo["result"]!["note"]);
             }
             finally { try { Directory.Delete(kb, true); } catch { } }
         }
@@ -57,8 +57,8 @@ namespace GxMcp.Worker.Tests
             try
             {
                 var jo = JObject.Parse(GxServerSyncService.PendingEnvelope(kb));
-                Assert.False((bool)jo["connected"]);
-                Assert.Null(jo["objects"]);
+                Assert.False((bool)jo["result"]!["connected"]);
+                Assert.Null(jo["result"]!["objects"]);
             }
             finally { try { Directory.Delete(kb, true); } catch { } }
         }
@@ -74,10 +74,10 @@ namespace GxMcp.Worker.Tests
                 File.WriteAllText(Path.Combine(dot, "gxserver-state.xml"), "<state/>");
 
                 var jo = JObject.Parse(GxServerSyncService.HistoryEnvelope(kb, 25));
-                Assert.True((bool)jo["connected"]);
-                Assert.NotNull(jo["history"]);
-                Assert.Equal(JTokenType.Array, jo["history"].Type);
-                Assert.Equal(25, (int)jo["limit"]);
+                Assert.True((bool)jo["result"]!["connected"]);
+                Assert.NotNull(jo["result"]!["history"]);
+                Assert.Equal(JTokenType.Array, jo["result"]!["history"].Type);
+                Assert.Equal(25, (int)jo["result"]!["limit"]);
             }
             finally { try { Directory.Delete(kb, true); } catch { } }
         }
@@ -87,9 +87,9 @@ namespace GxMcp.Worker.Tests
         {
             var svc = new GxServerSyncService(null);
             var jo = JObject.Parse(svc.Run(new JObject { ["action"] = "bogus" }));
-            Assert.Equal("Error", (string)jo["status"]);
-            Assert.Equal("BadAction", (string)jo["code"]);
-            Assert.Contains("bogus", (string)jo["message"]);
+            Assert.Equal("error", (string)jo["status"]);
+            Assert.Equal("BadAction", (string)jo["error"]?["code"]);
+            Assert.Contains("bogus", (string)jo["error"]?["message"]);
         }
     }
 }

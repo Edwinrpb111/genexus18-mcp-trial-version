@@ -28,13 +28,25 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(targetName);
                 if (obj == null) return HealingService.FormatNotFoundError(targetName, _objectService.GetKbService().GetIndexCache().GetIndex());
                 var trn = obj as Transaction;
-                if (trn == null) return Models.McpResponse.Error("Object is not a Transaction", targetName, "Structure", "Visual structure updates currently support Transaction objects only.", obj.Name, obj.TypeDescriptor?.Name);
+                if (trn == null) return Models.McpResponse.Err(
+                    code: "NotATransaction",
+                    message: "Object is not a Transaction.",
+                    hint: "Visual structure updates currently support Transaction objects only.",
+                    target: targetName,
+                    nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_analyze",
+                        args: new Newtonsoft.Json.Linq.JObject { ["name"] = targetName },
+                        why: "Confirms the object type before attempting a structure update.")));
 
                 using (var sdkTrans = trn.Model.KB.BeginTransaction()) {
                     try {
                         var json = JObject.Parse(payload);
                         var children = json["children"] as JArray;
-                        if (children == null) return Models.McpResponse.Error("Invalid payload", targetName, "Structure", "The payload must contain a 'children' array for visual structure updates.");
+                        if (children == null) return Models.McpResponse.Err(
+                            code: "InvalidStructurePayload",
+                            message: "The payload must contain a 'children' array for visual structure updates.",
+                            hint: "Pass a JSON object with a 'children' array describing the Transaction structure.",
+                            target: targetName);
                         
                         // Chamada otimizada com Batch Save interno
                         _visualStructureService.SyncVisualStructure(trn, children);
@@ -43,13 +55,23 @@ namespace GxMcp.Worker.Services
                         sdkTrans.Commit();
                         
                         _objectService.GetKbService().GetIndexCache().UpdateEntry(trn);
-                        return "{\"status\": \"Success\"}";
+                        return Models.McpResponse.Ok(target: targetName, code: "StructureUpdated");
                     } catch (Exception ex) {
                         sdkTrans.Rollback();
-                        return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                        return Models.McpResponse.Err(
+                            code: "StructureUpdateFailed",
+                            message: ex.Message,
+                            hint: "Check the payload children array for malformed items, then retry.",
+                            target: targetName);
                     }
                 }
-            } catch (Exception ex) { return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
+            } catch (Exception ex) {
+                return Models.McpResponse.Err(
+                    code: "StructureUpdateFailed",
+                    message: ex.Message,
+                    hint: "Ensure the target Transaction exists and the payload is valid JSON.",
+                    target: targetName);
+            }
         }
 
         public string GetVisualStructure(string targetName)
@@ -77,7 +99,15 @@ namespace GxMcp.Worker.Services
                 }
                 else {
                     Logger.Error($"[StructureService] Invalid object type for visual structure: {obj.TypeDescriptor.Name}");
-                    return Models.McpResponse.Error("Invalid object type", targetName, "Structure", "Visual structure is available only for Transaction, Table or SDT objects.", obj.Name, obj.TypeDescriptor?.Name);
+                    return Models.McpResponse.Err(
+                        code: "UnsupportedObjectType",
+                        message: "Visual structure is available only for Transaction, Table, or SDT objects.",
+                        hint: "Use genexus_analyze to inspect this object type.",
+                        target: targetName,
+                        nextSteps: new Newtonsoft.Json.Linq.JArray(Models.McpResponse.NextStep(
+                            tool: "genexus_analyze",
+                            args: new Newtonsoft.Json.Linq.JObject { ["name"] = targetName },
+                            why: "Returns a summary of the object including its type.")));
                 }
 
                 result["_meta"] = new JObject
@@ -90,10 +120,14 @@ namespace GxMcp.Worker.Services
                 };
 
                 Logger.Info($"[StructureService] Successfully serialized structure for {obj.Name}");
-                return result.ToString();
-            } catch (Exception ex) { 
+                return Models.McpResponse.Ok(target: targetName, code: "StructureRead", result: result);
+            } catch (Exception ex) {
                 Logger.Error($"[StructureService] Error loading visual structure: {ex.Message}\n{ex.StackTrace}");
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; 
+                return Models.McpResponse.Err(
+                    code: "StructureReadFailed",
+                    message: ex.Message,
+                    hint: "Ensure the target is a Transaction, Table, or SDT.",
+                    target: targetName);
             }
         }
 
@@ -131,9 +165,15 @@ namespace GxMcp.Worker.Services
                         ["args"] = new JObject { ["name"] = obj.Name, ["type"] = obj.TypeDescriptor.Name }
                     }
                 };
-                return result.ToString();
+                return Models.McpResponse.Ok(target: targetName, code: "LogicStructureRead", result: result);
             }
-            catch (Exception ex) { return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
+            catch (Exception ex) {
+                return Models.McpResponse.Err(
+                    code: "LogicStructureReadFailed",
+                    message: ex.Message,
+                    hint: "Ensure the target object exists and has a Source or Events part.",
+                    target: targetName);
+            }
         }
 
         private void ExtractLogicItems(string source, JArray subs, JArray events)

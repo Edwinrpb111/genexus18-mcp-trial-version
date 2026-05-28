@@ -12,8 +12,8 @@ namespace GxMcp.Worker.Tests
             var svc = new PlaybookService();
             var j = JObject.Parse(svc.Read(topic: null, listOnly: true));
 
-            Assert.Equal("Success", (string)j["status"]);
-            var topics = (JArray)j["topics"];
+            Assert.Equal("ok", (string)j["status"]);
+            var topics = (JArray)j["result"]["topics"];
             Assert.NotNull(topics);
             Assert.Contains("popup_layout", topics.ToObject<string[]>());
             Assert.Contains("wwp_dual_form", topics.ToObject<string[]>());
@@ -26,12 +26,12 @@ namespace GxMcp.Worker.Tests
             var svc = new PlaybookService();
             var j = JObject.Parse(svc.Read(topic: "popup_layout", listOnly: false));
 
-            Assert.Equal("Success", (string)j["status"]);
-            Assert.Equal("popup_layout", (string)j["topic"]);
-            string body = (string)j["content"];
+            Assert.Equal("ok", (string)j["status"]);
+            Assert.Equal("popup_layout", (string)j["result"]["topic"]);
+            string body = (string)j["result"]["content"];
             Assert.False(string.IsNullOrWhiteSpace(body));
             Assert.Contains("PatternInstance", body);
-            Assert.True((int)j["bytes"] > 0);
+            Assert.True((int)j["result"]["bytes"] > 0);
         }
 
         [Fact]
@@ -40,10 +40,9 @@ namespace GxMcp.Worker.Tests
             var svc = new PlaybookService();
             var j = JObject.Parse(svc.Read(topic: "does_not_exist", listOnly: false));
 
-            Assert.Equal("Error", (string)j["status"]);
-            Assert.Equal("PlaybookTopicNotFound", (string)j["code"]);
-            Assert.NotNull(j["availableTopics"]);
-            Assert.True(((JArray)j["availableTopics"]).Count > 0);
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("PlaybookTopicNotFound", (string)j["error"]["code"]);
+            Assert.NotNull(j["error"]["hint"]);
         }
 
         [Fact]
@@ -52,8 +51,8 @@ namespace GxMcp.Worker.Tests
             var svc = new PlaybookService();
             var j = JObject.Parse(svc.Read(topic: "", listOnly: false));
 
-            Assert.Equal("Success", (string)j["status"]);
-            Assert.NotNull(j["topics"]);
+            Assert.Equal("ok", (string)j["status"]);
+            Assert.NotNull(j["result"]["topics"]);
         }
     }
 }

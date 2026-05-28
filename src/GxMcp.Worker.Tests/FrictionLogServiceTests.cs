@@ -17,8 +17,8 @@ namespace GxMcp.Worker.Tests
                 Directory.CreateDirectory(tmpKb);
                 var json = JObject.Parse(FrictionLogService.AppendCore(tmpKb, "genexus_edit", "patch failed", "warn"));
 
-                Assert.Equal("Success", (string)json["status"]!);
-                string path = (string)json["path"]!;
+                Assert.Equal("ok", (string)json["status"]!);
+                string path = (string)json["result"]!["path"]!;
                 Assert.True(File.Exists(path));
                 var lines = File.ReadAllLines(path);
                 Assert.Single(lines);
@@ -47,13 +47,13 @@ namespace GxMcp.Worker.Tests
                 }
                 var json = JObject.Parse(FrictionLogService.TailCore(tmpKb, 3));
 
-                Assert.Equal("Success", (string)json["status"]!);
-                var entries = (JArray)json["entries"]!;
+                Assert.Equal("ok", (string)json["status"]!);
+                var entries = (JArray)json["result"]!["entries"]!;
                 Assert.Equal(3, entries.Count);
                 // Chronological: last 3 should be tool2, tool3, tool4
                 Assert.Equal("tool2", (string)((JObject)entries[0])["tool"]!);
                 Assert.Equal("tool4", (string)((JObject)entries[2])["tool"]!);
-                Assert.Equal(5, (int)json["total"]!);
+                Assert.Equal(5, (int)json["result"]!["total"]!);
             }
             finally
             {
@@ -70,9 +70,9 @@ namespace GxMcp.Worker.Tests
                 Directory.CreateDirectory(tmpKb);
                 var json = JObject.Parse(FrictionLogService.TailCore(tmpKb, 10));
 
-                Assert.Equal("Success", (string)json["status"]!);
-                Assert.Empty((JArray)json["entries"]!);
-                Assert.Equal(0, (int)json["total"]!);
+                Assert.Equal("ok", (string)json["status"]!);
+                Assert.Empty((JArray)json["result"]!["entries"]!);
+                Assert.Equal(0, (int)json["result"]!["total"]!);
             }
             finally
             {
@@ -88,8 +88,8 @@ namespace GxMcp.Worker.Tests
             {
                 Directory.CreateDirectory(tmpKb);
                 var json = JObject.Parse(FrictionLogService.AppendCore(tmpKb, "tool", "", "info"));
-                Assert.Equal("Error", (string)json["status"]!);
-                Assert.Equal("MissingMessage", (string)json["code"]!);
+                Assert.Equal("error", (string)json["status"]!);
+                Assert.Equal("MissingMessage", (string)json["error"]!["code"]!);
             }
             finally
             {

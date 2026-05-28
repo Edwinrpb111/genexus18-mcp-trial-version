@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -78,12 +79,11 @@ namespace GxMcp.Worker.Services
 
             var parsed = PopupLayoutBuilder.ParseSpec(spec);
             if (!parsed.IsValid)
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "InvalidSpec",
-                    ["errors"] = new JArray(parsed.Errors)
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "InvalidSpec",
+                    message: "Popup spec validation failed.",
+                    hint: "Fix the spec errors listed in error.errors and retry.",
+                    extra: new JObject { ["errors"] = new JArray(parsed.Errors) });
 
             var pspec = parsed.Spec;
 
@@ -121,13 +121,11 @@ namespace GxMcp.Worker.Services
                         ["workaround"] = g.Workaround
                     });
                 }
-                return new JObject
-                {
-                    ["status"] = "Error",
-                    ["code"] = "LayoutGotcha",
-                    ["message"] = "Generated layout XML failed LayoutGotchaScanner self-validation. Refusing to write.",
-                    ["gotchas"] = arr
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(
+                    code: "LayoutGotcha",
+                    message: "Generated layout XML failed LayoutGotchaScanner self-validation. Refusing to write.",
+                    hint: "Review the gotchas list and fix the spec before retrying.",
+                    extra: new JObject { ["gotchas"] = arr });
             }
 
             // Item 21 (friction 2026-05-22) — universal dryRun. Spec was parsed +
@@ -139,21 +137,23 @@ namespace GxMcp.Worker.Services
             {
                 string rulesPreview = PopupLayoutBuilder.BuildRulesSource(pspec) ?? string.Empty;
                 string eventsPreview = PopupLayoutBuilder.BuildEventsSource(pspec) ?? string.Empty;
-                return new JObject
-                {
-                    ["status"] = "DryRun",
-                    ["dryRun"] = true,
-                    ["name"] = name,
-                    ["type"] = "WebPanel",
-                    ["layoutFormType"] = "layout",
-                    ["inputs"] = pspec.Inputs.Count,
-                    ["buttons"] = pspec.Buttons.Count,
-                    ["wouldCreateObject"] = !_backend.ObjectExists(name),
-                    ["webFormXml"] = layoutXml,
-                    ["rulesSource"] = rulesPreview,
-                    ["eventsSource"] = eventsPreview,
-                    ["hint"] = "Re-run without dryRun to persist."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Ok(
+                    target: name,
+                    code: "DryRun",
+                    result: new JObject
+                    {
+                        ["dryRun"] = true,
+                        ["name"] = name,
+                        ["type"] = "WebPanel",
+                        ["layoutFormType"] = "layout",
+                        ["inputs"] = pspec.Inputs.Count,
+                        ["buttons"] = pspec.Buttons.Count,
+                        ["wouldCreateObject"] = !_backend.ObjectExists(name),
+                        ["webFormXml"] = layoutXml,
+                        ["rulesSource"] = rulesPreview,
+                        ["eventsSource"] = eventsPreview,
+                        ["hint"] = "Re-run without dryRun to persist."
+                    });
             }
 
             var responseSteps = new JArray();
@@ -173,7 +173,7 @@ namespace GxMcp.Worker.Services
                 responseSteps.Add(new JObject
                 {
                     ["step"] = "create_object",
-                    ["result"] = new JObject { ["status"] = "Skipped", ["reason"] = "already exists" }
+                    ["result"] = new JObject { ["status"] = "ok", ["code"] = "Skipped", ["reason"] = "already exists" }
                 });
             }
 
@@ -218,17 +218,19 @@ namespace GxMcp.Worker.Services
             // agent learns the popup conventions (no Link() in Enter,
             // Cancel.OnClick = Hide(), ReturnTo() for values) at create
             // time — same string analyze mode=parent_context surfaces.
-            return new JObject
-            {
-                ["status"] = "Success",
-                ["name"] = name,
-                ["type"] = "WebPanel",
-                ["layoutFormType"] = "layout",
-                ["inputs"] = pspec.Inputs.Count,
-                ["buttons"] = pspec.Buttons.Count,
-                ["popupHint"] = AnalyzeService.HintForOpenedAs("popup"),
-                ["steps"] = responseSteps
-            }.ToString(Newtonsoft.Json.Formatting.None);
+            return McpResponse.Ok(
+                target: name,
+                code: "PopupCreated",
+                result: new JObject
+                {
+                    ["name"] = name,
+                    ["type"] = "WebPanel",
+                    ["layoutFormType"] = "layout",
+                    ["inputs"] = pspec.Inputs.Count,
+                    ["buttons"] = pspec.Buttons.Count,
+                    ["popupHint"] = AnalyzeService.HintForOpenedAs("popup"),
+                    ["steps"] = responseSteps
+                });
         }
 
         private static (string name, string type) SplitParm(string parm)
@@ -263,11 +265,10 @@ namespace GxMcp.Worker.Services
             catch { return new JValue(json); }
         }
 
-        private static string Err(string message) => new JObject
-        {
-            ["status"] = "Error",
-            ["code"] = "InvalidArgs",
-            ["message"] = message
-        }.ToString(Newtonsoft.Json.Formatting.None);
+        private static string Err(string message) =>
+            McpResponse.Err(
+                code: "InvalidArgs",
+                message: message,
+                hint: "Check the required arguments and retry.");
     }
 }

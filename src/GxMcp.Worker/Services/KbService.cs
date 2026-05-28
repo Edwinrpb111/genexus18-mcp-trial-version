@@ -5,6 +5,7 @@ using System.Threading;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
+using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
 using Artech.Architecture.Common.Objects;
@@ -78,22 +79,40 @@ namespace GxMcp.Worker.Services
         {
             lock (_kbLock)
             {
-                if (_isOpenInProgress) return "{\"status\":\"In Progress\"}";
+                if (_isOpenInProgress)
+                {
+                    return Models.McpResponse.Err(
+                        code: "OpenInProgress",
+                        message: "Another KB open is already in progress on this worker.",
+                        hint: "Wait for the current open to finish; calls to KbService.OpenKB are serialized on this lock.",
+                        retryAfterMs: 1500,
+                        target: path);
+                }
                 _isOpenInProgress = true;
-                
+
                 if (_kb != null)
                 {
-                    try { if (string.Equals(_kb.Location, path, StringComparison.OrdinalIgnoreCase)) { _isOpenInProgress = false; return "{\"status\":\"Success\"}"; } } catch { }
+                    try
+                    {
+                        if (string.Equals(_kb.Location, path, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _isOpenInProgress = false;
+                            return Models.McpResponse.Ok(target: path, code: "KbAlreadyOpen");
+                        }
+                    }
+                    catch { }
                     try { _kb.Close(); } catch { }
                 }
 
                 // PERFORMANCE (instrumentation): time the KB.Open call so cold-start regressions
                 // are visible in logs. Previously this critical SDK call had no timing data.
                 var sw = Stopwatch.StartNew();
-                try {
+                try
+                {
                     Logger.Info($"Opening KB: {path}");
                     string oldDir = Directory.GetCurrentDirectory();
-                    try {
+                    try
+                    {
                         string kbDir = Path.GetDirectoryName(path);
                         Directory.SetCurrentDirectory(kbDir);
 
@@ -103,15 +122,25 @@ namespace GxMcp.Worker.Services
 
                         sw.Stop();
                         Logger.Info($"[KB-OPEN] elapsedMs={sw.ElapsedMilliseconds} path={path}");
-                        return "{\"status\":\"Success\"}";
-                    } finally { Directory.SetCurrentDirectory(oldDir); _isOpenInProgress = false; }
-                } catch (Exception ex) {
+                        return Models.McpResponse.Ok(
+                            target: path,
+                            code: "KbOpened",
+                            result: new JObject { ["elapsedMs"] = sw.ElapsedMilliseconds });
+                    }
+                    finally { Directory.SetCurrentDirectory(oldDir); _isOpenInProgress = false; }
+                }
+                catch (Exception ex)
+                {
                     sw.Stop();
-                    Logger.Error($"[KB-OPEN-FAIL] elapsedMs={sw.ElapsedMilliseconds} path={path} error={ex.Message}"); 
+                    Logger.Error($"[KB-OPEN-FAIL] elapsedMs={sw.ElapsedMilliseconds} path={path} error={ex.Message}");
                     Logger.Error($"ERROR opening KB: {ex.Message}");
                     _kb = null;
                     _isOpenInProgress = false;
-                    return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                    return Models.McpResponse.Err(
+                        code: "KbOpenFailed",
+                        message: ex.Message,
+                        hint: "Verify the path points to a .gx file (or its containing folder), the file is accessible, and the GeneXus install matches the KB version.",
+                        target: path);
                 }
             }
         }

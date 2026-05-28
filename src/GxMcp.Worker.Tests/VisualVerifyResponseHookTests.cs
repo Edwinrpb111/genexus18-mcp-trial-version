@@ -60,7 +60,7 @@ namespace GxMcp.Worker.Tests
             // Contract: omitting visualVerify (or setting it to false) MUST
             // not touch the response — no extra latency, no spurious envelope.
             var svc = BuildSvc(new FakeRunner(), FreshKb());
-            string originalResponse = "{\"status\":\"Success\",\"target\":\"MyPanel\"}";
+            string originalResponse = "{\"status\":\"ok\",\"code\":\"WriteApplied\",\"target\":\"MyPanel\"}";
             var args = new JObject { ["name"] = "MyPanel", ["part"] = "WebForm" };
 
             string outResp = VisualVerifyResponseHook.MaybeAttach(args, originalResponse, svc);
@@ -78,7 +78,7 @@ namespace GxMcp.Worker.Tests
             // base64Truncated, matching the schema documented for the field.
             string kb = FreshKb();
             var svc = BuildSvc(new FakeRunner(), kb);
-            string originalResponse = "{\"status\":\"Success\",\"target\":\"MyPanel\"}";
+            string originalResponse = "{\"status\":\"ok\",\"code\":\"WriteApplied\",\"target\":\"MyPanel\"}";
             var args = new JObject
             {
                 ["name"] = "MyPanel",
@@ -89,7 +89,7 @@ namespace GxMcp.Worker.Tests
             string outResp = VisualVerifyResponseHook.MaybeAttach(args, originalResponse, svc);
 
             var parsed = JObject.Parse(outResp);
-            Assert.Equal("Success", parsed["status"]?.ToString());
+            Assert.Equal("ok", parsed["status"]?.ToString());
             var vv = parsed["visualVerify"] as JObject;
             Assert.NotNull(vv);
             Assert.NotNull(vv!["path"]);
@@ -107,7 +107,7 @@ namespace GxMcp.Worker.Tests
             // envelope so the LLM can degrade gracefully.
             var runner = new FakeRunner { WhichResult = null };
             var svc = BuildSvc(runner, FreshKb());
-            string originalResponse = "{\"status\":\"Success\",\"target\":\"MyPanel\"}";
+            string originalResponse = "{\"status\":\"ok\",\"code\":\"WriteApplied\",\"target\":\"MyPanel\"}";
             var args = new JObject
             {
                 ["name"] = "MyPanel",
@@ -118,7 +118,7 @@ namespace GxMcp.Worker.Tests
             string outResp = VisualVerifyResponseHook.MaybeAttach(args, originalResponse, svc);
 
             var parsed = JObject.Parse(outResp);
-            Assert.Equal("Success", parsed["status"]?.ToString());
+            Assert.Equal("ok", parsed["status"]?.ToString());
             var vv = parsed["visualVerify"] as JObject;
             Assert.NotNull(vv);
             Assert.True(vv!["skipped"]?.ToObject<bool>() ?? false);

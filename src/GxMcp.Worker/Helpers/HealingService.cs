@@ -15,44 +15,107 @@ namespace GxMcp.Worker.Helpers
             public string ActionTaken { get; set; }
         }
 
+        // v2.8.0 — universal lookup-error formatter. Emits the canonical
+        // envelope and BRANCHES on the index probe:
+        //   - 2+ exact-name matches (no type filter)  → AmbiguousName + candidates
+        //   - 1 match but the SDK lookup still missed → ObjectNotFound + 3 closest
+        //   - 0 matches                                → ObjectNotFound + actionable hint
+        //   - index cold (null)                        → ObjectNotFoundIndexWarming + retry
+        // Callers don't have to differentiate — they call this when FindObject
+        // returns null and they get the right canonical shape for free.
         public static string FormatNotFoundError(string target, SearchIndex index)
         {
-            var suggestions = new List<string>();
-            if (index != null && index.Objects != null)
+            // Index cold / unavailable.
+            if (index == null || index.Objects == null)
             {
-                // Find top 3 similar names using a simple distance or contains
-                suggestions = index.Objects.Values
-                    .Where(e => e.Name.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0 || 
-                                target.IndexOf(e.Name, StringComparison.OrdinalIgnoreCase) >= 0)
-                    .OrderBy(e => Math.Abs(e.Name.Length - target.Length))
-                    .Take(3)
-                    .Select(e => $"{e.Type}:{e.Name}")
-                    .ToList();
+                return McpResponse.Err(
+                    code: "ObjectNotFoundIndexWarming",
+                    message: "Object not found and KB name index is still warming.",
+                    hint: "Retry in 2-3 seconds for 'did you mean' suggestions, or list objects to find the exact name.",
+                    nextSteps: new JArray(
+                        McpResponse.NextStep(
+                            tool: "genexus_list_objects",
+                            args: new JObject { ["name_contains"] = target ?? string.Empty },
+                            why: "Lists objects whose names contain the target string.")),
+                    retryAfterMs: 2500,
+                    target: target);
             }
 
-            var result = new JObject();
-            result["error"] = $"Object not found: {target}";
+            // Exact-name matches across the index (case-insensitive). If 2+
+            // come back with different types and no type filter was applied,
+            // that's ambiguity — surface candidates so the LLM picks one.
+            var exactMatches = index.Objects.Values
+                .Where(e => string.Equals(e.Name, target, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (exactMatches.Count >= 2)
+            {
+                var candidates = new JArray();
+                var steps = new JArray();
+                foreach (var m in exactMatches.Take(5))
+                {
+                    candidates.Add(new JObject
+                    {
+                        ["name"] = m.Name,
+                        ["type"] = m.Type,
+                        ["parent"] = m.Parent,
+                        ["module"] = m.Module
+                    });
+                    // Pre-mount a retry-with-type nextStep per candidate so the
+                    // LLM literally copies one of these calls.
+                    steps.Add(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = m.Name, ["type"] = m.Type },
+                        why: $"Retry pinned to type='{m.Type}'."));
+                }
+
+                return McpResponse.Err(
+                    code: "AmbiguousName",
+                    message: $"'{target}' matches {exactMatches.Count} objects of different types.",
+                    hint: "Re-call with 'type' set to one of the candidate types to disambiguate.",
+                    nextSteps: steps,
+                    target: target,
+                    errorExtra: new JObject { ["candidates"] = candidates });
+            }
+
+            // Not ambiguous — fall back to similar-name suggestions.
+            var suggestions = index.Objects.Values
+                .Where(e => target != null
+                    && (e.Name.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0
+                        || target.IndexOf(e.Name, StringComparison.OrdinalIgnoreCase) >= 0))
+                .OrderBy(e => Math.Abs(e.Name.Length - (target?.Length ?? 0)))
+                .Take(3)
+                .ToList();
+
+            var notFoundSteps = new JArray();
             if (suggestions.Count > 0)
             {
-                result["suggestion"] = $"Did you mean one of these? {string.Join(", ", suggestions)}";
-                result["actionable_tip"] = "Use 'genexus_list_objects' with a broad filter to explore the KB if unsure.";
-            }
-            else if (index == null)
-            {
-                // Cold window: the name index isn't loaded yet, so we can't offer
-                // "did you mean" suggestions. The lookup itself was authoritative
-                // (the SDK name lookup ran), so this is a genuine miss — but never
-                // leave the agent at a dead end: tell it the index is warming and
-                // how to recover. A retry in a couple seconds gets full suggestions.
-                result["code"] = "ObjectNotFoundIndexWarming";
-                result["actionable_tip"] = "The KB name index is still loading, so name suggestions aren't available yet. Retry this call in 2-3 seconds to get 'did you mean' suggestions, or call 'genexus_list_objects' with a broad filter to find the exact object name.";
+                foreach (var s in suggestions)
+                {
+                    notFoundSteps.Add(McpResponse.NextStep(
+                        tool: "genexus_read",
+                        args: new JObject { ["name"] = s.Name, ["type"] = s.Type },
+                        why: $"Closest name match in the index ({s.Type})."));
+                }
             }
             else
             {
-                result["actionable_tip"] = "No similar names found. Call 'genexus_list_objects' with a broad filter to discover the exact object name.";
+                notFoundSteps.Add(McpResponse.NextStep(
+                    tool: "genexus_list_objects",
+                    args: new JObject { ["name_contains"] = target ?? string.Empty },
+                    why: "Broad list — finds objects whose names contain the target string."));
             }
 
-            return result.ToString();
+            string suggestionHint = suggestions.Count > 0
+                ? "Did you mean one of these? " + string.Join(", ", suggestions.Select(e => $"{e.Type}:{e.Name}"))
+                : "No similar names found in the index.";
+
+            return McpResponse.Err(
+                code: "ObjectNotFound",
+                message: $"Object not found: {target}",
+                hint: suggestionHint,
+                nextSteps: notFoundSteps,
+                target: target);
         }
 
         public static HealingResult AttemptHealing(string code, JArray messages, SearchIndex index)
