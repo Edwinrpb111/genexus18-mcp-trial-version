@@ -4,10 +4,11 @@
 param(
     [string]$KBPath,
     [string]$GeneXusPath,
-    [switch]$SkipExtensionInstall,
-    [switch]$SkipClaudeConfig,
-    [switch]$SkipCodexConfig,
-    [switch]$SkipVsCodeMcp
+    # Skip AI client MCP registration (delegated to the genexus-mcp CLI).
+    # Replaces the legacy -SkipClaudeConfig / -SkipCodexConfig / -SkipVsCodeMcp
+    # switches, which are still accepted as aliases for backward compatibility.
+    [Alias('SkipClaudeConfig', 'SkipCodexConfig', 'SkipVsCodeMcp', 'SkipExtensionInstall')]
+    [switch]$SkipClientConfig
 )
 
 $progressPreference = "SilentlyContinue"
@@ -15,18 +16,13 @@ $progressPreference = "SilentlyContinue"
 $root = $PSScriptRoot
 $configPath = Join-Path $root "config.json"
 $publishDir = Join-Path $root "publish"
-$extensionDir = Join-Path $root "src\nexus-ide"
-$vsixPath = Join-Path $extensionDir "nexus-ide.vsix"
 $startMcpBatPath = Join-Path $publishDir "start_mcp.bat"
-$claudeConfigPath = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
-$codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
-$antigravityConfigPath = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
-$cursorConfigPath = Join-Path $env:APPDATA "Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json"
-# v2.6.8: VS Code's native MCP profile lives in User\mcp.json (stable + Insiders).
-# Distinct from settings.json (commented JSONC, riskier to mutate) and from the
-# Cursor/Cline path above.
-$vscodeMcpPath = Join-Path $env:APPDATA "Code\User\mcp.json"
-$vscodeInsidersMcpPath = Join-Path $env:APPDATA "Code - Insiders\User\mcp.json"
+$gatewayExePath = Join-Path $publishDir "GxMcp.Gateway.exe"
+$cliRunPath = Join-Path $root "cli\run.js"
+# AI client MCP registration (Claude Desktop/Code, Antigravity, Gemini CLI,
+# Cursor, OpenCode, Codex, VS Code) is delegated to the genexus-mcp CLI, which is
+# the single source of truth for agent paths/detection (see cli/lib/config.js).
+# This installer no longer writes client configs itself.
 
 function Write-Step([string]$message) {
     Write-Host ""
@@ -64,19 +60,19 @@ function Check-Prerequisites {
         Write-Ok ".NET SDK found: $version"
     }
 
-    # Node.js & npm
-    $npm = Get-Command npm -ErrorAction SilentlyContinue
-    if (-not $npm) {
-        if (-not $SkipExtensionInstall) {
-            Write-Warn "npm not found. Extension packaging requires Node.js."
+    # Node.js (needed for AI client MCP registration via the genexus-mcp CLI)
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        if (-not $SkipClientConfig) {
+            Write-Warn "Node.js not found. AI client registration requires Node.js 18+."
             Write-Host "    Download from: https://nodejs.org/" -ForegroundColor Gray
-            $missing.Add("Node.js/npm")
+            Write-Warn "Build will still proceed; pass -SkipClientConfig to register clients manually later."
         } else {
-            Write-Warn "npm not found, but extension installation is being skipped."
+            Write-Warn "Node.js not found, but client registration is being skipped."
         }
     } else {
-        $version = npm --version
-        Write-Ok "npm found: $version"
+        $version = node --version
+        Write-Ok "Node.js found: $version"
     }
 
     # MSBuild (optional but good for Worker)
@@ -105,17 +101,27 @@ function Get-ExistingPathOrPrompt([string]$label, [string]$currentValue) {
         return $currentValue
     }
 
-    # Auto-detect GeneXus 18 from registry if label is "GeneXus installation path"
+    # Auto-detect GeneXus 18 from registry if label is "GeneXus installation path".
+    # Probes BOTH known key/value shapes (kept in sync with cli/lib/config.js
+    # discoverGeneXusFromRegistry): the modern `Artech\GeneXus 18` +
+    # `InstallationDirectory`, and the legacy `Artech\GeneXus\18.0` + `InstallPath`.
+    # Only accepts a hit whose folder actually contains genexus.exe.
     if ($label -eq "GeneXus installation path") {
-        $regRoots = @("HKLM:\SOFTWARE\WOW6432Node\Artech\GeneXus", "HKLM:\SOFTWARE\Artech\GeneXus", "HKCU:\SOFTWARE\Artech\GeneXus")
-
-        foreach ($rootPath in $regRoots) {
-            $path = Join-Path $rootPath "18.0"
-            if (Test-Path $path) {
-                $detected = Get-ItemProperty -Path $path -Name "InstallPath" -ErrorAction SilentlyContinue
-                if ($detected -and (Test-Path $detected.InstallPath)) {
-                    Write-Ok "Auto-detected GeneXus 18 at: $($detected.InstallPath)"
-                    return $detected.InstallPath
+        $hives = @("HKLM:\SOFTWARE\WOW6432Node\Artech", "HKLM:\SOFTWARE\Artech", "HKCU:\SOFTWARE\Artech")
+        $probes = @(
+            @{ Sub = "GeneXus 18";   Value = "InstallationDirectory" },
+            @{ Sub = "GeneXus\18.0"; Value = "InstallPath" }
+        )
+        foreach ($hive in $hives) {
+            foreach ($probe in $probes) {
+                $keyPath = Join-Path $hive $probe.Sub
+                if (-not (Test-Path $keyPath)) { continue }
+                $detected = Get-ItemProperty -Path $keyPath -Name $probe.Value -ErrorAction SilentlyContinue
+                if (-not $detected) { continue }
+                $dir = $detected.$($probe.Value)
+                if ($dir -and (Test-Path (Join-Path $dir "genexus.exe"))) {
+                    Write-Ok "Auto-detected GeneXus 18 at: $dir"
+                    return $dir
                 }
             }
         }
@@ -157,179 +163,6 @@ function Save-JsonFile([string]$path, [object]$value) {
     [System.IO.File]::WriteAllText($path, $json, [System.Text.Encoding]::UTF8)
 }
 
-function Set-ClaudeConfig([string]$path, [string]$commandPath) {
-    $configDir = Split-Path $path
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir | Out-Null
-    }
-
-    if (Test-Path $path) {
-        Backup-File $path
-        $config = Get-Content $path -Raw | ConvertFrom-Json
-    } else {
-        $config = [pscustomobject]@{}
-    }
-
-    if ($null -eq $config.mcpServers) {
-        $config | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
-    }
-
-    if ($null -eq $config.mcpServers.genexus18) {
-        $config.mcpServers | Add-Member -MemberType NoteProperty -Name "genexus18" -Value ([pscustomobject]@{
-            command = $commandPath
-            args = @()
-        })
-    } else {
-        $config.mcpServers.genexus18.command = $commandPath
-        $config.mcpServers.genexus18.args = @()
-    }
-
-    Save-JsonFile $path $config
-}
-
-function Set-AntigravityConfig([string]$path, [string]$commandPath) {
-    $configDir = Split-Path $path
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir | Out-Null
-    }
-
-    if (Test-Path $path) {
-        Backup-File $path
-        $config = Get-Content $path -Raw | ConvertFrom-Json
-    } else {
-        $config = [pscustomobject]@{}
-    }
-
-    if ($null -eq $config.mcpServers) {
-        $config | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
-    }
-
-    if ($null -eq $config.mcpServers.genexus) {
-        $config.mcpServers | Add-Member -MemberType NoteProperty -Name "genexus" -Value ([pscustomobject]@{
-            command = $commandPath
-            args = @()
-            env = [pscustomobject]@{}
-        })
-    }
-
-    $config.mcpServers.genexus.command = $commandPath
-    $config.mcpServers.genexus.args = @()
-    if ($null -eq $config.mcpServers.genexus.env) {
-        $config.mcpServers.genexus | Add-Member -MemberType NoteProperty -Name "env" -Value ([pscustomobject]@{}) -Force
-    }
-
-    Save-JsonFile $path $config
-}
-
-function Set-VsCodeMcpConfig([string]$path, [string]$commandPath, [string]$label) {
-    # v2.6.8: writes/merges the genexus18 entry into VS Code's User\mcp.json.
-    # Skipped silently when the VS Code variant isn't installed (no User dir).
-    $configDir = Split-Path $path
-    $vsCodeUserDir = Split-Path $configDir -ErrorAction SilentlyContinue
-    if (-not (Test-Path $vsCodeUserDir)) {
-        return $false # VS Code variant not installed
-    }
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-    }
-
-    if (Test-Path $path) {
-        Backup-File $path
-        try {
-            $config = Get-Content $path -Raw | ConvertFrom-Json
-        } catch {
-            Write-Warn "$label mcp.json exists but is invalid JSON. Overwriting."
-            $config = [pscustomobject]@{}
-        }
-    } else {
-        $config = [pscustomobject]@{}
-    }
-
-    if ($null -eq $config.servers) {
-        $config | Add-Member -MemberType NoteProperty -Name "servers" -Value ([pscustomobject]@{})
-    }
-
-    $entry = [pscustomobject]@{
-        command = $commandPath
-        args = @()
-    }
-    if ($null -eq $config.servers.genexus18) {
-        $config.servers | Add-Member -MemberType NoteProperty -Name "genexus18" -Value $entry
-    } else {
-        $config.servers.genexus18 = $entry
-    }
-
-    Save-JsonFile $path $config
-    return $true
-}
-
-function Set-CursorClineConfig([string]$path, [string]$commandPath) {
-    $configDir = Split-Path $path
-    if (-not (Test-Path $configDir)) {
-        return $false
-    }
-
-    if (Test-Path $path) {
-        Backup-File $path
-        $config = Get-Content $path -Raw | ConvertFrom-Json
-    } else {
-        $config = [pscustomobject]@{}
-    }
-
-    if ($null -eq $config.mcpServers) {
-        $config | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
-    }
-
-    if ($null -eq $config.mcpServers.genexus18) {
-        $config.mcpServers | Add-Member -MemberType NoteProperty -Name "genexus18" -Value ([pscustomobject]@{
-            command = $commandPath
-            args = @()
-            disabled = $false
-            autoApprove = @()
-        })
-    }
-
-    $config.mcpServers.genexus18.command = $commandPath
-    $config.mcpServers.genexus18.args = @()
-    if ($null -eq $config.mcpServers.genexus18.disabled) {
-        $config.mcpServers.genexus18 | Add-Member -MemberType NoteProperty -Name "disabled" -Value $false -Force
-    } else {
-        $config.mcpServers.genexus18.disabled = $false
-    }
-    if ($null -eq $config.mcpServers.genexus18.autoApprove) {
-        $config.mcpServers.genexus18 | Add-Member -MemberType NoteProperty -Name "autoApprove" -Value @() -Force
-    }
-
-    Save-JsonFile $path $config
-    return $true
-}
-
-function Set-CodexConfig([string]$path, [string]$url) {
-    $configDir = Split-Path $path
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir | Out-Null
-    }
-
-    if (Test-Path $path) {
-        Backup-File $path
-        $content = Get-Content $path -Raw
-    } else {
-        $content = ""
-    }
-
-    $sectionPattern = '(?ms)^\[mcp_servers\.genexus\]\s*.*?(?=^\[|\z)'
-    $replacement = "[mcp_servers.genexus]`r`nurl = `"$url`"`r`n"
-
-    if ($content -match $sectionPattern) {
-        $updated = [System.Text.RegularExpressions.Regex]::Replace($content, $sectionPattern, $replacement)
-    } else {
-        $separator = if ([string]::IsNullOrWhiteSpace($content)) { "" } else { "`r`n`r`n" }
-        $updated = $content.TrimEnd() + $separator + $replacement
-    }
-
-    [System.IO.File]::WriteAllText($path, $updated, [System.Text.Encoding]::UTF8)
-}
-
 function Resolve-CommandPath([string[]]$names) {
     foreach ($name in $names) {
         $command = Get-Command $name -ErrorAction SilentlyContinue
@@ -339,38 +172,6 @@ function Resolve-CommandPath([string[]]$names) {
     }
 
     return $null
-}
-
-function Invoke-NativeCommand([string]$commandPath, [string[]]$arguments) {
-    & $commandPath @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed: $commandPath $($arguments -join ' ')"
-    }
-}
-
-function Get-EditorCommands() {
-    $candidates = @(
-        "code.cmd",
-        "code",
-        "code-insiders.cmd",
-        "code-insiders",
-        "cursor.cmd",
-        "cursor",
-        "codium.cmd",
-        "codium",
-        "antigravity.cmd",
-        "antigravity"
-    )
-    $resolved = New-Object System.Collections.Generic.List[string]
-
-    foreach ($candidate in $candidates) {
-        $path = Resolve-CommandPath @($candidate)
-        if ($path -and -not $resolved.Contains($path)) {
-            $resolved.Add($path)
-        }
-    }
-
-    return $resolved.ToArray()
 }
 
 Check-Prerequisites
@@ -413,15 +214,7 @@ Backup-File $configPath
 Save-JsonFile $configPath $config
 Write-Ok "config.json updated."
 
-$httpPort = 5000
-if ($config.Server -and $config.Server.HttpPort) {
-    try {
-        $httpPort = [int]$config.Server.HttpPort
-    } catch {}
-}
-$codexMcpUrl = "http://127.0.0.1:$httpPort/mcp"
-
-Write-Step "[1/5] Building gateway, worker, and extension backend"
+Write-Step "[1/2] Building gateway and worker"
 & (Join-Path $root "build.ps1")
 if ($LASTEXITCODE -ne 0) {
     Fail "Build failed."
@@ -431,161 +224,60 @@ if (-not (Test-Path $startMcpBatPath)) {
 }
 Write-Ok "Build completed."
 
-if (-not $SkipExtensionInstall) {
-    Write-Step "[2/5] Packaging and installing the VS Code extension"
-    Push-Location $extensionDir
-    try {
-        $npmCommand = Resolve-CommandPath @("npm.cmd", "npm")
-        $npxCommand = Resolve-CommandPath @("npx.cmd", "npx")
-        if (-not $npmCommand) {
-            throw "npm was not found in PATH."
-        }
-        if (-not $npxCommand) {
-            throw "npx was not found in PATH."
-        }
-
-        if (Test-Path (Join-Path $extensionDir "package-lock.json")) {
-            Invoke-NativeCommand $npmCommand @("ci", "--silent")
-        } else {
-            Invoke-NativeCommand $npmCommand @("install", "--silent")
-        }
-
-        Invoke-NativeCommand $npmCommand @("run", "compile")
-        
-        Write-Host "Packaging extension..." -ForegroundColor Cyan
-        & $npxCommand --yes @vscode/vsce package --out nexus-ide.vsix
-        if ($LASTEXITCODE -ne 0) {
-            $vsceLog = Join-Path $extensionDir "vsce-package.log"
-            Write-Error "vsce package failed. Checking for common issues..."
-            $extensionLicensePath = Join-Path $extensionDir "LICENSE.txt"
-            if (-not (Test-Path $extensionLicensePath)) {
-                $licenseCandidates = @("LICENSE.txt", "LICENSE.md", "LICENSE")
-                $sourceLicensePath = $null
-                foreach ($candidate in $licenseCandidates) {
-                    $candidatePath = Join-Path $root $candidate
-                    if (Test-Path $candidatePath) {
-                        $sourceLicensePath = $candidatePath
-                        break
-                    }
-                }
-
-                if ($sourceLicensePath) {
-                    Write-Warn "LICENSE.txt is missing in $extensionDir. Copying from $sourceLicensePath..."
-                    Copy-Item $sourceLicensePath $extensionLicensePath -Force
-                    & $npxCommand --yes @vscode/vsce package --out nexus-ide.vsix
-                } else {
-                    Write-Warn "No license file found at repository root (LICENSE, LICENSE.md, LICENSE.txt)."
-                }
-            }
-
-            if ($LASTEXITCODE -ne 0) {
-                throw "vsce package failed again. Please check license include patterns and package.json."
-            }
-        }
-
-        $editorCommands = Get-EditorCommands
-        if ($editorCommands.Length -gt 0) {
-            foreach ($editorCommand in $editorCommands) {
-                Invoke-NativeCommand $editorCommand @("--install-extension", $vsixPath, "--force")
-                Write-Ok "Extension installed via $editorCommand"
-            }
-        } else {
-            Write-Warn "No supported editor CLI was found. Install $vsixPath manually."
-        }
-    } catch {
-        Write-Warn "Automatic VS Code extension installation failed: $($_.Exception.Message)"
-        Write-Warn "You can still install $vsixPath manually."
-    } finally {
-        Pop-Location
-    }
+if ($SkipClientConfig) {
+    Write-Step "[2/2] Skipping AI client MCP registration (-SkipClientConfig)"
 } else {
-    Write-Step "[2/5] Skipping VS Code extension installation"
-}
-
-if (-not $SkipClaudeConfig) {
-    Write-Step "[3/5] Configuring Claude Desktop"
-    try {
-        Set-ClaudeConfig -path $claudeConfigPath -commandPath $startMcpBatPath
-        Write-Ok "Claude Desktop configured at $claudeConfigPath"
-    } catch {
-        Write-Warn "Failed to update Claude Desktop config: $($_.Exception.Message)"
-    }
-} else {
-    Write-Step "[3/5] Skipping Claude Desktop configuration"
-}
-
-if (-not $SkipCodexConfig) {
-    Write-Step "[4/5] Configuring Codex Desktop"
-    try {
-        Set-CodexConfig -path $codexConfigPath -url $codexMcpUrl
-        Write-Ok "Codex configured at $codexConfigPath"
-    } catch {
-        Write-Warn "Failed to update Codex config: $($_.Exception.Message)"
-    }
-} else {
-    Write-Step "[4/5] Skipping Codex Desktop configuration"
-}
-
-Write-Step "[5/5] Configuring Antigravity & IDEs"
-try {
-    Set-AntigravityConfig -path $antigravityConfigPath -commandPath $startMcpBatPath
-    Write-Ok "Antigravity configured at $antigravityConfigPath"
-} catch {
-    Write-Warn "Failed to update Antigravity config: $($_.Exception.Message)"
-}
-try {
-    $clineConfigured = Set-CursorClineConfig -path $cursorConfigPath -commandPath $startMcpBatPath
-    if ($clineConfigured) {
-        Write-Ok "Cursor (Cline) configured at $cursorConfigPath"
+    Write-Step "[2/2] Registering MCP with detected AI clients (via genexus-mcp CLI)"
+    $node = Resolve-CommandPath @("node.exe", "node")
+    if (-not $node) {
+        Write-Warn "node was not found in PATH - cannot register AI clients automatically."
+        Write-Warn "Install Node.js 18+ and run: node `"$cliRunPath`" init --write-clients --gx `"$($config.GeneXus.InstallationPath)`" --kb `"$($config.Environment.KBPath)`""
+    } elseif (-not (Test-Path $gatewayExePath)) {
+        Write-Warn "Gateway exe not found at $gatewayExePath - skipping client registration."
     } else {
-        Write-Warn "Cursor (Cline) was not found. Skipping integration."
+        # Point the CLI at the freshly-built gateway exe so the client launcher is a
+        # direct exe path (not npx). getLauncher() in cli/lib/config.js honors this.
+        $prevGatewayExe = $env:GENEXUS_MCP_GATEWAY_EXE
+        $env:GENEXUS_MCP_GATEWAY_EXE = $gatewayExePath
+        try {
+            $initArgs = @(
+                "`"$cliRunPath`"", "init", "--write-clients", "--no-smoke", "--format", "json",
+                "--gx", "`"$($config.GeneXus.InstallationPath)`"",
+                "--kb", "`"$($config.Environment.KBPath)`""
+            )
+            & $node @initArgs | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "AI clients registered (Claude Desktop/Code, Antigravity, Gemini CLI, Cursor, OpenCode, Codex, VS Code - whichever are installed)."
+            } else {
+                Write-Warn "genexus-mcp init exited with code $LASTEXITCODE. Re-run manually to see details."
+            }
+        } catch {
+            Write-Warn "AI client registration failed: $($_.Exception.Message)"
+        } finally {
+            if ($null -ne $prevGatewayExe) { $env:GENEXUS_MCP_GATEWAY_EXE = $prevGatewayExe }
+            else { Remove-Item env:GENEXUS_MCP_GATEWAY_EXE -ErrorAction SilentlyContinue }
+        }
     }
-} catch {
-    Write-Warn "Failed to update Cursor (Cline) config: $($_.Exception.Message)"
-}
-
-# v2.6.8: VS Code native MCP (User\mcp.json) — both stable and Insiders.
-# Each variant is independent; silently skipped when the install isn't present.
-if ($SkipVsCodeMcp) {
-    Write-Step "Skipping VS Code native MCP registration"
-} else {
-try {
-    $vscodeConfigured = Set-VsCodeMcpConfig -path $vscodeMcpPath -commandPath $startMcpBatPath -label "VS Code"
-    if ($vscodeConfigured) {
-        Write-Ok "VS Code (native MCP) configured at $vscodeMcpPath"
-    } else {
-        Write-Warn "VS Code was not detected. Skipping native MCP registration."
-    }
-} catch {
-    Write-Warn "Failed to update VS Code MCP config: $($_.Exception.Message)"
-}
-try {
-    $vscodeInsidersConfigured = Set-VsCodeMcpConfig -path $vscodeInsidersMcpPath -commandPath $startMcpBatPath -label "VS Code Insiders"
-    if ($vscodeInsidersConfigured) {
-        Write-Ok "VS Code Insiders (native MCP) configured at $vscodeInsidersMcpPath"
-    } else {
-        Write-Warn "VS Code Insiders was not detected. Skipping native MCP registration."
-    }
-} catch {
-    Write-Warn "Failed to update VS Code Insiders MCP config: $($_.Exception.Message)"
-}
 }
 
 Write-Host ""
 Write-Ok "Installation complete."
 Write-Host ""
 Write-Host "Artifacts:" -ForegroundColor Cyan
-Write-Host "  Backend launcher: $startMcpBatPath"
-Write-Host "  VS Code extension: $vsixPath"
+Write-Host "  Gateway exe:       $gatewayExePath"
+Write-Host "  Backend launcher:  $startMcpBatPath"
 Write-Host ""
-Write-Host "Cursor/Cline MCP snippet:" -ForegroundColor Cyan
+Write-Host "Manual MCP snippet (for any client not auto-registered):" -ForegroundColor Cyan
 Write-Host '{'
 Write-Host '  "mcpServers": {'
-Write-Host '    "genexus18": {'
-Write-Host "      ""command"": ""$($startMcpBatPath -replace '\\', '\\')"","
+Write-Host '    "genexus": {'
+Write-Host "      ""command"": ""$($gatewayExePath -replace '\\', '\\')"","
 Write-Host '      "args": []'
 Write-Host '    }'
 Write-Host '  }'
 Write-Host '}'
 Write-Host ""
-Write-Host "If Claude, Codex, or Antigravity was open, restart the app to pick up the new MCP configuration."
+Write-Host "Re-run client registration anytime with:" -ForegroundColor Cyan
+Write-Host "  `$env:GENEXUS_MCP_GATEWAY_EXE='$gatewayExePath'; node `"$cliRunPath`" init --write-clients --gx `"$($config.GeneXus.InstallationPath)`" --kb `"$($config.Environment.KBPath)`""
+Write-Host ""
+Write-Host "If any AI client was open, restart it to pick up the new MCP configuration."

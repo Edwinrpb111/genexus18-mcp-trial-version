@@ -6,6 +6,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const { renderOutput } = require('./lib/output');
 const { compareSemver } = require('./lib/update-check');
+const { detectClientInstalled, readJsonFileSafe } = require('./lib/config');
 
 const cliPath = path.join(__dirname, 'run.js');
 
@@ -597,6 +598,227 @@ test('update --help returns usage entry', () => {
     assert.equal(parsed.meta.command, 'help');
     assert.equal(parsed.ok.command, 'update');
     assert.ok(parsed.ok.usage.includes('genexus-mcp update'));
+});
+
+test('detectClientInstalled flags an agent installed via marker even with no MCP config', () => {
+    // Regression for the field report where Antigravity showed "not detected":
+    // an agent whose install dir exists but which hasn't created our MCP config
+    // file yet must still be detected as installed.
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-detect-'));
+    const installDir = path.join(tempRoot, 'Programs', 'Antigravity');
+    fs.mkdirSync(installDir, { recursive: true });
+
+    const client = {
+        name: 'Antigravity',
+        path: path.join(tempRoot, 'never-created', 'mcp_config.json'),
+        installMarkers: [installDir]
+    };
+
+    const det = detectClientInstalled(client);
+    assert.equal(det.installed, true, 'marker dir present => installed');
+    assert.equal(det.hasConfig, false, 'config file does not exist yet');
+    assert.equal(det.markerHit, installDir);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('detectClientInstalled reports not-installed and lists checked paths', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-detect-'));
+    const client = {
+        name: 'Antigravity',
+        path: path.join(tempRoot, 'nope.json'),
+        installMarkers: [path.join(tempRoot, 'absent-a'), path.join(tempRoot, 'absent-b')]
+    };
+
+    const det = detectClientInstalled(client);
+    assert.equal(det.installed, false);
+    assert.equal(det.markerHit, null);
+    assert.deepEqual(det.markersChecked, client.installMarkers);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('detectClientInstalled treats an existing config file as installed', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-detect-'));
+    const cfg = path.join(tempRoot, 'settings.json');
+    fs.writeFileSync(cfg, '{}');
+    const client = { name: 'Gemini CLI', path: cfg, installMarkers: [] };
+
+    const det = detectClientInstalled(client);
+    assert.equal(det.installed, true);
+    assert.equal(det.hasConfig, true);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+// Build a throwaway HOME so client-config writes never touch the real machine.
+function sandboxHomeEnv(root) {
+    return {
+        HOME: root,
+        USERPROFILE: root,
+        APPDATA: path.join(root, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(root, 'AppData', 'Local'),
+        XDG_CONFIG_HOME: path.join(root, '.config')
+    };
+}
+
+test('clients list returns structured status with summary', () => {
+    const result = runCli(['clients', '--format', 'json']);
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'clients.list');
+    assert.ok(Array.isArray(parsed.ok.clients));
+    assert.ok(parsed.ok.clients.length >= 8);
+    assert.equal(typeof parsed.ok.summary.installed, 'number');
+    assert.equal(typeof parsed.ok.summary.registered, 'number');
+    const row = parsed.ok.clients.find((c) => c.id === 'antigravity');
+    assert.ok(row, 'antigravity should be listed');
+    assert.equal(typeof row.installed, 'boolean');
+    assert.equal(typeof row.registered, 'boolean');
+});
+
+test('clients add registers a client into a sandbox home with backup + atomic write', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-clients-'));
+    const env = sandboxHomeEnv(tempRoot);
+    const cfgPath = path.join(tempRoot, 'config.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({ Environment: { KBPath: tempRoot } }));
+
+    // Pre-existing cursor config so we can assert a backup is taken.
+    const cursorCfg = path.join(tempRoot, '.cursor', 'mcp.json');
+    fs.mkdirSync(path.dirname(cursorCfg), { recursive: true });
+    fs.writeFileSync(cursorCfg, JSON.stringify({ mcpServers: { other: { command: 'x' } } }, null, 2));
+
+    const res = runCli(['clients', 'add', '--clients', 'cursor', '--format', 'json'], {
+        env: { ...env, GX_CONFIG_PATH: cfgPath }
+    });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.meta.command, 'clients.add');
+    assert.ok(parsed.ok.patchedClients.includes('Cursor'));
+
+    const written = JSON.parse(fs.readFileSync(cursorCfg, 'utf8'));
+    assert.ok(written.mcpServers.genexus, 'genexus entry should be written');
+    assert.ok(written.mcpServers.other, 'pre-existing entries preserved');
+
+    const baks = fs.readdirSync(path.dirname(cursorCfg)).filter((f) => f.includes('.bak'));
+    assert.ok(baks.length >= 1, 'a .bak backup should be created before mutating');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('clients add tolerates a JSONC (commented) VS Code mcp.json', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-jsonc-'));
+    const env = sandboxHomeEnv(tempRoot);
+    const cfgPath = path.join(tempRoot, 'config.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({ Environment: { KBPath: tempRoot } }));
+
+    const vscodeCfg = path.join(env.APPDATA, 'Code', 'User', 'mcp.json');
+    fs.mkdirSync(path.dirname(vscodeCfg), { recursive: true });
+    fs.writeFileSync(vscodeCfg, '{\n  // user comment\n  "servers": {\n    "foo": { "command": "bar" },\n  }\n}\n');
+
+    const res = runCli(['clients', 'add', '--clients', 'vscode', '--format', 'json'], {
+        env: { ...env, GX_CONFIG_PATH: cfgPath }
+    });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.ok(parsed.ok.patchedClients.includes('VS Code'), 'VS Code should be patched despite comments');
+
+    const written = JSON.parse(fs.readFileSync(vscodeCfg, 'utf8'));
+    assert.ok(written.servers.genexus, 'genexus server entry written');
+    assert.ok(written.servers.foo, 'pre-existing server preserved');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('clients add replaces a legacy genexus18 entry instead of duplicating it', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-legacy-'));
+    const env = sandboxHomeEnv(tempRoot);
+    const cfgPath = path.join(tempRoot, 'config.json');
+    fs.writeFileSync(cfgPath, JSON.stringify({ Environment: { KBPath: tempRoot } }));
+
+    const cursorCfg = path.join(tempRoot, '.cursor', 'mcp.json');
+    fs.mkdirSync(path.dirname(cursorCfg), { recursive: true });
+    fs.writeFileSync(cursorCfg, JSON.stringify({ mcpServers: { genexus18: { command: 'C:\\old\\start_mcp.bat' } } }, null, 2));
+
+    const res = runCli(['clients', 'add', '--clients', 'cursor', '--format', 'json'], {
+        env: { ...env, GX_CONFIG_PATH: cfgPath }
+    });
+    assert.equal(res.status, 0);
+
+    const written = JSON.parse(fs.readFileSync(cursorCfg, 'utf8'));
+    assert.ok(written.mcpServers.genexus, 'new genexus entry present');
+    assert.equal(written.mcpServers.genexus18, undefined, 'legacy genexus18 removed (no duplicate)');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('clients list flags a registered command pointing at a missing launcher as stale (.bat too)', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-stale-'));
+    const env = sandboxHomeEnv(tempRoot);
+    const cursorCfg = path.join(tempRoot, '.cursor', 'mcp.json');
+    fs.mkdirSync(path.dirname(cursorCfg), { recursive: true });
+    // A non-.exe launcher (.bat) that no longer exists must also be flagged stale.
+    const missing = path.join(tempRoot, 'gone', 'start_mcp.bat');
+    fs.writeFileSync(cursorCfg, JSON.stringify({ mcpServers: { genexus: { command: missing, args: [] } } }, null, 2));
+
+    const res = runCli(['clients', '--format', 'json'], { env });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    const cursor = parsed.ok.clients.find((c) => c.id === 'cursor');
+    assert.ok(cursor.registered, 'cursor should read as registered');
+    assert.equal(cursor.commandStale, true, 'missing launcher => stale');
+    assert.ok(parsed.help.some((h) => h.includes('missing gateway exe')), 'help should call out the stale client');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('readJsonFileSafe parses JSONC without corrupting string values containing commas', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-jsonc2-'));
+    const f = path.join(tempRoot, 'mcp.json');
+    // Leading comment forces the JSONC fallback; the string value contains ", ]"
+    // and the object has a legitimate trailing comma that SHOULD be stripped.
+    fs.writeFileSync(f, '{\n  // comment\n  "servers": { "x": { "command": "a, ]b", "args": ["c,]"] } },\n}\n');
+    const parsed = readJsonFileSafe(f);
+    assert.ok(parsed, 'should parse');
+    assert.equal(parsed.servers.x.command, 'a, ]b', 'comma inside string value preserved');
+    assert.deepEqual(parsed.servers.x.args, ['c,]'], 'comma inside array string preserved');
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('readJsonFileSafe strips a genuine trailing comma', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-jsonc3-'));
+    const f = path.join(tempRoot, 'mcp.json');
+    fs.writeFileSync(f, '{\n  // c\n  "a": [1, 2, 3,],\n  "b": { "x": 1, },\n}\n');
+    const parsed = readJsonFileSafe(f);
+    assert.deepEqual(parsed.a, [1, 2, 3]);
+    assert.deepEqual(parsed.b, { x: 1 });
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('clients add without --clients is a usage error', () => {
+    const res = runCli(['clients', 'add', '--format', 'json']);
+    assert.equal(res.status, 2);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.error.code, 'usage_error');
+});
+
+test('clients remove drops the genexus entry (sandbox home)', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-rm-'));
+    const env = sandboxHomeEnv(tempRoot);
+    const cursorCfg = path.join(tempRoot, '.cursor', 'mcp.json');
+    fs.mkdirSync(path.dirname(cursorCfg), { recursive: true });
+    fs.writeFileSync(cursorCfg, JSON.stringify({ mcpServers: { genexus: { command: 'npx' }, genexus18: { command: 'old' } } }, null, 2));
+
+    const res = runCli(['clients', 'remove', '--clients', 'cursor', '--format', 'json'], { env });
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.ok(parsed.ok.removedClients.includes('Cursor'));
+
+    const written = JSON.parse(fs.readFileSync(cursorCfg, 'utf8'));
+    assert.equal(written.mcpServers.genexus, undefined, 'genexus removed');
+    assert.equal(written.mcpServers.genexus18, undefined, 'legacy genexus18 also removed');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
 test('compareSemver detects newer, older, equal versions', () => {

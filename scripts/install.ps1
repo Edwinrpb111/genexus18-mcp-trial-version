@@ -206,13 +206,15 @@ function Resolve-GeneXusPath {
 }
 
 # Detect known AI client processes so we can offer to restart them after init.
-# Restart is required for clients that read mcpServers.* once at startup.
+# Restart is required for clients that read their MCP config once at startup.
+# Kept in sync with the agent list in cli/lib/config.js (getClientConfigTargets).
 function Get-RunningAiClients {
     $known = @(
         @{ Name = 'Claude'; Process = 'claude'; Display = 'Claude Desktop' },
         @{ Name = 'Cursor'; Process = 'Cursor'; Display = 'Cursor' },
-        @{ Name = 'Antigravity'; Process = 'antigravity'; Display = 'Antigravity' },
-        @{ Name = 'Code'; Process = 'Code'; Display = 'VS Code (Continue/Claude Code extension)' }
+        @{ Name = 'Antigravity'; Process = 'Antigravity'; Display = 'Antigravity' },
+        @{ Name = 'Code'; Process = 'Code'; Display = 'VS Code (native MCP)' },
+        @{ Name = 'CodeInsiders'; Process = 'Code - Insiders'; Display = 'VS Code Insiders (native MCP)' }
     )
     $running = @()
     foreach ($c in $known) {
@@ -229,37 +231,82 @@ function Get-RunningAiClients {
     return $running
 }
 
-# Read genexus mcpServers entries out of AI client config files and remove them.
-# Used by -Uninstall. Best-effort; missing files are skipped silently.
+# Remove genexus MCP entries from AI client configs.
+#
+# Primary path: delegate to `genexus-mcp uninstall` via npx so the agent list,
+# paths, and config shapes come from the single source of truth in
+# cli/lib/config.js. Returns $true when the CLI handled it.
+#
+# NOTE: this uses `genexus-mcp@latest`, so the uninstall step reaches the network
+# (npm). The corporate publish.zip ships only the gateway/worker exes, not the
+# `cli/` folder, so there's no bundled CLI to run offline. `@latest`'s client
+# list is a superset of any prior version's, so it removes at least as much. If
+# the machine is offline, the inline fallback (Remove-GenexusFromClientConfigs)
+# runs instead.
+function Invoke-CliUninstall {
+    $npx = Get-Command npx.cmd -ErrorAction SilentlyContinue
+    if (-not $npx) { $npx = Get-Command npx -ErrorAction SilentlyContinue }
+    if (-not $npx) { return $false }
+    Write-Step 'Removing AI client entries via genexus-mcp uninstall (uses npx @latest; needs network)...'
+    try {
+        & $npx.Source -y 'genexus-mcp@latest' uninstall --yes --format json 2>&1 | Out-Null
+        return $true
+    } catch {
+        Write-Warn "genexus-mcp uninstall failed: $($_.Exception.Message). Falling back to inline cleanup."
+        return $false
+    }
+}
+
+# Fallback when npx/Node is unavailable. Best-effort sweep of the JSON-shaped
+# client configs (mcpServers + VS Code `servers`), removing both the current
+# `genexus` key and the legacy `genexus18` key. Mirrors cli/lib/config.js paths;
+# TOML (Codex) and OpenCode's `mcp.*` shape are left for manual cleanup and a
+# warning is emitted.
 function Remove-GenexusFromClientConfigs {
-    $candidates = @()
+    $mcpServersConfigs = @()
+    $vscodeServersConfigs = @()
     if ($env:APPDATA) {
-        $candidates += (Join-Path $env:APPDATA 'Claude\claude_desktop_config.json')
-        $candidates += (Join-Path $env:APPDATA 'Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json')
+        $mcpServersConfigs += (Join-Path $env:APPDATA 'Claude\claude_desktop_config.json')
+        $vscodeServersConfigs += (Join-Path $env:APPDATA 'Code\User\mcp.json')
+        $vscodeServersConfigs += (Join-Path $env:APPDATA 'Code - Insiders\User\mcp.json')
     }
     if ($env:USERPROFILE) {
-        $candidates += (Join-Path $env:USERPROFILE '.codex\config.json')
-        $candidates += (Join-Path $env:USERPROFILE '.config\opencode\config.json')
+        $mcpServersConfigs += (Join-Path $env:USERPROFILE '.claude.json')
+        $mcpServersConfigs += (Join-Path $env:USERPROFILE '.gemini\settings.json')
+        $mcpServersConfigs += (Join-Path $env:USERPROFILE '.gemini\antigravity\mcp_config.json')
+        $mcpServersConfigs += (Join-Path $env:USERPROFILE '.gemini\config\mcp_config.json')
+        $mcpServersConfigs += (Join-Path $env:USERPROFILE '.cursor\mcp.json')
     }
+
     $removed = @()
-    foreach ($cfg in $candidates) {
-        if (-not (Test-Path -LiteralPath $cfg)) { continue }
-        try {
-            $raw = Get-Content -LiteralPath $cfg -Raw
-            $obj = $raw | ConvertFrom-Json
-            $hadIt = $false
-            if ($obj.PSObject.Properties.Name -contains 'mcpServers' -and $obj.mcpServers.PSObject.Properties.Name -contains 'genexus') {
-                $obj.mcpServers.PSObject.Properties.Remove('genexus')
-                $hadIt = $true
+    $editMap = @(
+        @{ Files = $mcpServersConfigs;    Container = 'mcpServers' },
+        @{ Files = $vscodeServersConfigs; Container = 'servers' }
+    )
+    foreach ($group in $editMap) {
+        foreach ($cfg in $group.Files) {
+            if (-not (Test-Path -LiteralPath $cfg)) { continue }
+            try {
+                $obj = (Get-Content -LiteralPath $cfg -Raw) | ConvertFrom-Json
+                $container = $group.Container
+                if (-not ($obj.PSObject.Properties.Name -contains $container)) { continue }
+                $hadIt = $false
+                foreach ($key in @('genexus', 'genexus18')) {
+                    if ($obj.$container.PSObject.Properties.Name -contains $key) {
+                        $obj.$container.PSObject.Properties.Remove($key)
+                        $hadIt = $true
+                    }
+                }
+                if ($hadIt) {
+                    ($obj | ConvertTo-Json -Depth 100) | Set-Content -LiteralPath $cfg -Encoding utf8
+                    $removed += $cfg
+                }
+            } catch {
+                Write-Warn "Could not edit client config $cfg : $($_.Exception.Message)"
             }
-            if ($hadIt) {
-                ($obj | ConvertTo-Json -Depth 100) | Set-Content -LiteralPath $cfg -Encoding utf8
-                $removed += $cfg
-            }
-        } catch {
-            Write-Warn "Could not edit client config $cfg : $($_.Exception.Message)"
         }
     }
+    Write-Warn 'Inline cleanup does not touch Codex (.codex\config.toml) or OpenCode (.config\opencode) - remove the genexus entry there manually if present.'
     return $removed
 }
 
@@ -272,12 +319,18 @@ if ($Uninstall) {
         else              { $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\GenexusMCP' }
     }
     Write-Step "Uninstall: target install dir $InstallDir"
-    $removedConfigs = Remove-GenexusFromClientConfigs
-    if ($removedConfigs.Count -gt 0) {
-        Write-Ok "Removed mcpServers.genexus from $($removedConfigs.Count) client config(s):"
-        $removedConfigs | ForEach-Object { Write-Host "    $_" }
+    $cliHandled = Invoke-CliUninstall
+    if ($cliHandled) {
+        Write-Ok 'AI client entries removed via genexus-mcp uninstall.'
     } else {
-        Write-Step 'No AI client configs referenced genexus - nothing to unpatch.'
+        Write-Warn 'npx not found - using inline client-config cleanup.'
+        $removedConfigs = Remove-GenexusFromClientConfigs
+        if ($removedConfigs.Count -gt 0) {
+            Write-Ok "Removed genexus entry from $($removedConfigs.Count) client config(s):"
+            $removedConfigs | ForEach-Object { Write-Host "    $_" }
+        } else {
+            Write-Step 'No AI client configs referenced genexus - nothing to unpatch.'
+        }
     }
     if (Test-Path -LiteralPath $InstallDir) {
         if ($Force -or (Confirm-Action "Delete '$InstallDir' and all contents?" $false)) {

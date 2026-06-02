@@ -12,6 +12,8 @@ const {
     patchClientConfig,
     unpatchClientConfig,
     getClientConfigTargets,
+    detectClientInstalled,
+    clientsStatus,
     filterClientTargets,
     listSupportedClientIds,
     getLocalAppDataCacheDir,
@@ -701,6 +703,25 @@ async function handleDoctor(options, ctx) {
     const inProcessLoad = buildInProcessBuildAssemblyLoadCheck(gxPath);
     checks.push({ id: 'in_process_build_assembly_load', status: inProcessLoad.status, detail: inProcessLoad.detail });
 
+    // Client registration summary — one line answering "are my AI agents wired up?".
+    const clientRows = clientsStatus();
+    const installedRows = clientRows.filter((r) => r.installed);
+    const staleRows = clientRows.filter((r) => r.commandStale);
+    const installedUnregistered = installedRows.filter((r) => !r.registered && r.writeSupported);
+    let clientsStatusLevel = 'pass';
+    let clientsDetail;
+    if (staleRows.length > 0) {
+        clientsStatusLevel = 'warn';
+        clientsDetail = `${staleRows.map((r) => r.name).join(', ')} point at a missing gateway exe. Re-register: genexus-mcp clients add --clients ${staleRows.map((r) => r.id).join(',')}.`;
+    } else if (installedUnregistered.length > 0) {
+        clientsStatusLevel = 'warn';
+        clientsDetail = `${installedUnregistered.length} installed agent(s) not registered (${installedUnregistered.map((r) => r.name).join(', ')}). Run: genexus-mcp clients add --clients ${installedUnregistered.map((r) => r.id).join(',')}.`;
+    } else {
+        const reg = clientRows.filter((r) => r.registered).length;
+        clientsDetail = `${reg} agent(s) registered; ${installedRows.length} installed. Run \`genexus-mcp clients\` for the full table.`;
+    }
+    checks.push({ id: 'clients_registered', status: clientsStatusLevel, detail: clientsDetail });
+
     if (data.gatewayExeFound) {
         const probe = await probeGatewaySpawn();
         checks.push({ id: 'gateway_spawn_probe', status: probe.status, detail: probe.detail });
@@ -1191,10 +1212,16 @@ async function runInteractiveInit(ctx) {
         ctx.stderr.write('\n3) Select AI agents to register (y/N per agent; Enter accepts default):\n');
         const selectedIds = [];
         for (const target of platformTargets) {
-            const installed = fs.existsSync(target.path);
-            const defaultYes = installed;
-            const tag = installed ? 'detected' : 'not detected';
-            const prompt = `   - ${target.name} [${tag}] (${defaultYes ? 'Y/n' : 'y/N'}): `;
+            const detection = detectClientInstalled(target);
+            const defaultYes = detection.installed;
+            const tag = detection.installed ? 'detected' : 'not detected';
+            // When not detected, show where we looked so the user understands why
+            // (and can still type `y` to register a freshly-installed agent).
+            let hint = '';
+            if (!detection.installed && detection.markersChecked.length) {
+                hint = ` — looked in ${detection.markersChecked[0]}`;
+            }
+            const prompt = `   - ${target.name} [${tag}${hint}] (${defaultYes ? 'Y/n' : 'y/N'}): `;
             const ans = (await question(prompt)).trim().toLowerCase();
             const yes = ans === '' ? defaultYes : (ans === 'y' || ans === 'yes');
             if (yes) selectedIds.push(target.id);
@@ -1715,6 +1742,107 @@ async function handleUninstall(options, ctx) {
     };
 }
 
+async function handleClients(subcommand, options, ctx) {
+    const sub = subcommand || 'list';
+
+    if (sub === 'list') {
+        const rows = clientsStatus();
+        const installedCount = rows.filter((r) => r.installed).length;
+        const registeredCount = rows.filter((r) => r.registered).length;
+        const help = [];
+        const installedUnregistered = rows.filter((r) => r.installed && !r.registered && r.writeSupported);
+        if (installedUnregistered.length > 0) {
+            help.push(`Register installed-but-unregistered agents: genexus-mcp clients add --clients ${installedUnregistered.map((r) => r.id).join(',')}`);
+        }
+        const stale = rows.filter((r) => r.commandStale);
+        if (stale.length > 0) {
+            help.push(`These clients point at a missing gateway exe (will fail to connect) — re-register: genexus-mcp clients add --clients ${stale.map((r) => r.id).join(',')}`);
+        }
+        for (const r of rows) {
+            if (r.installed && !r.writeSupported && r.note) help.push(`${r.name}: ${r.note}`);
+        }
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    clients: rows,
+                    summary: { total: rows.length, installed: installedCount, registered: registeredCount }
+                },
+                help
+            }
+        };
+    }
+
+    if (sub === 'add' || sub === 'remove') {
+        const ids = resolveClientIds(options);
+        if (sub === 'add' && (!ids || ids.length === 0)) {
+            return {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope('`clients add` requires --clients <csv> (e.g. --clients antigravity,vscode).', ctx.EXIT_CODES.USAGE)
+            };
+        }
+        const validation = validateClientIds(ids);
+        if (!validation.ok) {
+            return { exitCode: ctx.EXIT_CODES.USAGE, envelope: usageEnvelope(validation.message, ctx.EXIT_CODES.USAGE) };
+        }
+
+        if (sub === 'add') {
+            const configPath = resolveConfigPathNoMutate(ctx.cwd);
+            if (!configPath) {
+                return {
+                    exitCode: ctx.EXIT_CODES.ERROR,
+                    envelope: operationalErrorEnvelope(
+                        'No config.json found to point the clients at. Run `genexus-mcp init` first (or run from a KB folder).',
+                        ctx.EXIT_CODES.ERROR
+                    )
+                };
+            }
+            let patch;
+            try {
+                // Explicit add: write even if install markers are absent (the user asked for it).
+                patch = patchClientConfig(configPath, { ids, onlyExisting: false });
+            } catch (err) {
+                return {
+                    exitCode: ctx.EXIT_CODES.ERROR,
+                    envelope: operationalErrorEnvelope(
+                        sanitizeOperationalMessage(`Client registration failed: ${err && err.message ? err.message : 'unknown error'}`),
+                        ctx.EXIT_CODES.ERROR
+                    )
+                };
+            }
+            const help = [];
+            if (patch.patched.length > 0) help.push('Restart the affected AI client(s) to load the new MCP config.');
+            if (patch.failed.length > 0) help.push('Some clients failed (see meta.failedClients).');
+            return {
+                exitCode: ctx.EXIT_CODES.OK,
+                envelope: {
+                    ok: { action: 'clients.add', configPath, patchedClients: patch.patched, patchedCount: patch.patched.length },
+                    help,
+                    meta: { failedClients: patch.failed, skippedClients: patch.skipped }
+                }
+            };
+        }
+
+        // remove
+        const unpatch = unpatchClientConfig(ids ? { ids } : {});
+        const help = [];
+        if (unpatch.removed.length > 0) help.push('Restart the affected AI client(s) to drop the stale MCP connection.');
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: { action: 'clients.remove', removedClients: unpatch.removed, removedCount: unpatch.removed.length },
+                help,
+                meta: { skippedClients: unpatch.skipped, failedClients: unpatch.failed }
+            }
+        };
+    }
+
+    return {
+        exitCode: ctx.EXIT_CODES.USAGE,
+        envelope: usageEnvelope('clients supports subcommands `list`, `add`, `remove`.', ctx.EXIT_CODES.USAGE)
+    };
+}
+
 async function handleKb(subcommand, options, ctx) {
     const data = buildStatusData(ctx.cwd);
     if (!data.configPath) {
@@ -1900,6 +2028,15 @@ function commandHelpMap() {
                 'genexus-mcp kb remove --name sales'
             ]
         },
+        clients: {
+            usage: 'genexus-mcp clients [list] [--format ...] OR genexus-mcp clients add --clients <csv> OR genexus-mcp clients remove [--clients <csv>]',
+            examples: [
+                'genexus-mcp clients              # show every AI agent: installed? registered? where?',
+                'genexus-mcp clients --format json',
+                'genexus-mcp clients add --clients antigravity,vscode',
+                'genexus-mcp clients remove --clients cursor'
+            ]
+        },
         llm: {
             usage: 'genexus-mcp llm help [--full] [--fields f1,f2] [--format toon|json|text]',
             examples: ['genexus-mcp llm help --format json', 'genexus-mcp llm help --full --format json']
@@ -1935,8 +2072,8 @@ async function handleHome(_options, ctx) {
                 description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
                 ready: data.ready,
                 next: data.ready
-                    ? ['genexus-mcp status', 'genexus-mcp doctor --mcp-smoke', 'genexus-mcp tools list --limit 10', 'genexus-mcp layout status', 'genexus-mcp layout inspect --tab Layout']
-                    : ['genexus-mcp status', 'genexus-mcp doctor --full', 'genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>"']
+                    ? ['genexus-mcp status', 'genexus-mcp clients', 'genexus-mcp doctor --mcp-smoke', 'genexus-mcp tools list --limit 10', 'genexus-mcp layout status']
+                    : ['genexus-mcp status', 'genexus-mcp clients', 'genexus-mcp doctor --full', 'genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>"']
             },
             help: []
         }
@@ -2078,6 +2215,7 @@ module.exports = {
     handleWhoami,
     handleUninstall,
     handleKb,
+    handleClients,
     handleHome,
     handleLlmHelp,
     handleLayout,

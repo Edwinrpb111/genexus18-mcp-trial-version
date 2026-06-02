@@ -175,12 +175,21 @@ Auto-detected and auto-configured by the installer:
 | Claude Desktop | ✅ | Restart required after install |
 | Claude Code (CLI) | ✅ | Reload session |
 | Cursor | ✅ | Restart required |
-| Antigravity | ✅ | Restart required |
+| Antigravity | ✅ | Restart required; detected even before its MCP config exists |
+| Gemini CLI | ✅ | — |
+| OpenCode (CLI) | ✅ | Reads `opencode.json` / `opencode.jsonc` |
+| Codex CLI | ✅ | Writes `~/.codex/config.toml` |
+| VS Code / VS Code Insiders | ✅ | Native MCP (`User/mcp.json`); restart required |
+| OpenCode Desktop | Detect-only | Reported as installed; add the server from the app's settings |
 | Any MCP client | Manual | Use the JSON snippet printed by `init` |
+
+Run **`npx genexus-mcp clients`** at any time to see which agents are installed, which have `genexus` registered, and whether any point at a stale gateway exe. To (re)register specific ones: `npx genexus-mcp clients add --clients antigravity,vscode`.
 
 ---
 
 ## Troubleshooting
+
+First stop for any "the agent doesn't see GeneXus" problem: **`npx genexus-mcp clients`** (is it registered? does it point at a gateway exe that still exists?) and **`npx genexus-mcp doctor --mcp-smoke`**.
 
 Most install issues fall into a handful of buckets — see **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** for fixes:
 
@@ -375,12 +384,17 @@ This repo ships a set of **agent skills** under `.gemini/skills/` that any MCP-c
 
 Third-party skills are Apache 2.0 (see [`.gemini/skills/NOTICE.md`](.gemini/skills/NOTICE.md)). To refresh against upstream, follow the steps in `NOTICE.md`.
 
-### Nexus-IDE (VS Code extension)
+### Nexus-IDE (VS Code extension — optional, not auto-installed)
 
-`src/nexus-ide` is a lightweight VS Code extension that ships with the repo:
-- Virtual filesystem using the `genexus://` scheme
-- Dynamic KB explorer with multi-part editing (Source, Rules, Events, Variables)
-- Built-in MCP discovery commands (tools, resources, prompts)
+`src/nexus-ide` is a lightweight, experimental VS Code extension in the repo. The installer **no longer packages or installs it** — VS Code is wired up as a native MCP client instead (see [Supported AI clients](#supported-ai-clients)). If you want the extension, build and install it manually:
+
+```powershell
+cd src/nexus-ide; npm ci; npm run compile
+npx --yes @vscode/vsce package --out nexus-ide.vsix
+code --install-extension nexus-ide.vsix --force
+```
+
+It provides a virtual filesystem (`genexus://` scheme), a KB explorer with multi-part editing, and MCP discovery commands.
 
 ### Automated release
 

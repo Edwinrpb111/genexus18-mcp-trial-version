@@ -27,6 +27,7 @@ Entry points:
 - `genexus-mcp llm help`
 - `genexus-mcp status`
 - `genexus-mcp doctor --mcp-smoke`
+- `genexus-mcp clients` (which AI agents are installed/registered; `clients add|remove --clients <csv>`)
 - `genexus-mcp tools list`
 - `genexus-mcp config show`
 

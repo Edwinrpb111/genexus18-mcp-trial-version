@@ -1,5 +1,31 @@
 # Changelog
 
+## v2.8.3 — 2026-06-02
+
+### Added
+
+- **`genexus-mcp clients` — see every AI agent at a glance.** A read-only report of each supported agent: whether it's installed, whether `genexus` is registered, the config path, and the launcher command it points at. It flags a **stale** registration whose command points at a launcher (`.exe`, `.bat`, `.cmd`, …) that no longer exists on disk — the classic "Failed to connect / still on old version" cause — with a one-line fix. `genexus-mcp clients add --clients antigravity,vscode` registers specific agents and `genexus-mcp clients remove --clients cursor` unregisters them, without re-running the whole `init`.
+- **`genexus-mcp doctor` now reports client registration.** A new `clients_registered` check summarizes how many agents are installed vs registered and warns (with the exact `clients add` command) when an installed agent is unregistered or points at a missing exe.
+- **VS Code and VS Code Insiders are first-class registration targets** (Windows, macOS, and Linux). `init` now writes the native MCP entry to `Code/User/mcp.json` (and the Insiders variant) using the `servers` schema VS Code expects. Previously only the standalone build-from-source installer touched VS Code, so corporate/npm installs never wired it up.
+- **OpenCode Desktop is detected and surfaced.** It's reported as installed with a one-line note on how to add the server from the app (its config schema differs from the OpenCode CLI, so it's never written blindly). The OpenCode CLI target is now labeled "OpenCode (CLI)" and an existing `opencode.jsonc` is honored.
+- **Antigravity's unified config location is supported.** When `~/.gemini/config/mcp_config.json` already exists (the newer shared Antigravity location), the entry is written there; otherwise the IDE-specific `~/.gemini/antigravity/mcp_config.json` path is used.
+
+### Fixed
+
+- **The init wizard now detects installed AI agents that haven't created an MCP config yet.** Agents were marked "not detected" whenever their MCP config file was absent — but Antigravity doesn't create `mcp_config.json` until you add a server, so a freshly installed Antigravity always showed as not detected and was skipped. Detection now keys off the agent's own install footprint (e.g. `…\Programs\Antigravity`, `~\.antigravity`), so the wizard offers to register it and creates the config for you. When an agent really isn't found, the prompt now shows where it looked.
+- **Client configs are backed up and written atomically.** Before modifying any AI client config the installer now writes a timestamped `.bak`, and the new content is staged to a temp file and renamed into place — so a crash mid-write can no longer leave a client's config truncated. After writing, the entry is read back to confirm it landed; a silently-corrupted write is now reported as a failure instead of a success.
+- **Commented (JSONC) client configs are no longer treated as corrupt.** VS Code's `mcp.json`/`settings.json` and OpenCode's `opencode.jsonc` allow `//` and `/* */` comments; registration now parses these instead of failing. (Comments are not preserved when the file is rewritten.)
+
+### Changed
+
+- **One installer flow, one source of truth.** Both PowerShell installers now delegate all AI-client registration and removal to the `genexus-mcp` CLI, so the agent list, paths, config shapes, and detection live in one place. This removes long-standing drift where the build-from-source installer wrote a different server key, pointed Codex at a dead HTTP endpoint, and registered Cursor through the wrong extension — none of which the uninstall could later clean up.
+- **Registering a client now replaces any legacy `genexus18` entry instead of leaving a duplicate.** Upgrading from an older build-from-source install previously left both `genexus` and `genexus18` servers wired up, causing duplicate/colliding tools. Both the write and `genexus-mcp uninstall` now clean up the legacy key across `mcpServers`-, `servers`-, and OpenCode-style configs.
+- **GeneXus auto-detection in the build-from-source installer probes both registry layouts** (`Artech\GeneXus 18` + `InstallationDirectory` and the legacy `Artech\GeneXus\18.0` + `InstallPath`) and only accepts a folder that actually contains `genexus.exe`, matching the CLI's discovery logic.
+
+### Removed
+
+- **The build-from-source installer no longer packages/installs the VS Code extension.** That extension was unmaintained; the installer now focuses on building the gateway/worker and registering AI clients. (VS Code is still wired up as a native MCP client via the step above.)
+
 ## v2.8.2 — 2026-05-30
 
 ### Added

@@ -237,14 +237,130 @@ function directoryLooksLikeKnowledgeBase(dir) {
     }
 }
 
+// Strip // and /* */ comments and trailing commas while respecting string
+// literals, so we can parse JSONC configs (VS Code's mcp.json/settings.json and
+// OpenCode's opencode.jsonc are JSONC). Comments are NOT preserved on rewrite.
+//
+// Trailing-comma removal is done INSIDE the scanner (a comma is deferred and only
+// emitted once we know the next significant char isn't a closing brace/bracket),
+// not by a post-hoc regex — a regex over the whole text would also strip commas
+// that live inside string values (e.g. "see foo, ]" -> "see foo ]"). Only `"`
+// opens a string: JSON/JSONC has no single-quoted strings.
+function stripJsonComments(text) {
+    let out = '';
+    let inString = false;
+    let inLine = false;
+    let inBlock = false;
+    let pendingComma = false;
+    // Resolve a deferred comma: keep it unless the next significant char closes a
+    // container (then it was a trailing comma and gets dropped).
+    const flushComma = (nextSignificant) => {
+        if (pendingComma) {
+            if (nextSignificant !== '}' && nextSignificant !== ']') out += ',';
+            pendingComma = false;
+        }
+    };
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (inLine) {
+            if (ch === '\n') inLine = false;
+            continue;
+        }
+        if (inBlock) {
+            if (ch === '*' && next === '/') { inBlock = false; i += 1; }
+            continue;
+        }
+        if (inString) {
+            out += ch;
+            if (ch === '\\') { out += next; i += 1; continue; }
+            if (ch === '"') inString = false;
+            continue;
+        }
+        // Outside any string/comment.
+        if (ch === '/' && next === '/') { inLine = true; i += 1; continue; }
+        if (ch === '/' && next === '*') { inBlock = true; i += 1; continue; }
+        if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') {
+            // Whitespace between a deferred comma and the next token is collapsed
+            // (JSON.parse ignores it); otherwise emit it verbatim.
+            if (!pendingComma) out += ch;
+            continue;
+        }
+        if (ch === ',') {
+            flushComma(',');       // a prior comma followed by another comma is kept as-is
+            pendingComma = true;   // defer this one until we see what follows
+            continue;
+        }
+        flushComma(ch);
+        out += ch;
+        if (ch === '"') inString = true;
+    }
+    flushComma('');
+    return out;
+}
+
 function readJsonFileSafe(filePath) {
     try {
         const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
         if (!raw.trim()) return {};
-        return JSON.parse(raw);
+        try {
+            return JSON.parse(raw);
+        } catch {
+            // Fall back to a JSONC-tolerant parse before giving up, so a commented
+            // VS Code / OpenCode config isn't treated as corrupt.
+            return JSON.parse(stripJsonComments(raw));
+        }
     } catch {
         return null;
     }
+}
+
+// Atomic write: stage to a temp file then rename over the target, so a crash
+// mid-write can never leave a client's config truncated.
+function writeFileAtomic(filePath, content) {
+    const tmp = `${filePath}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, content);
+    try {
+        fs.renameSync(tmp, filePath);
+    } catch (err) {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+        throw err;
+    }
+}
+
+// Back up a client config once per process run before the first mutation, so the
+// user has a restore point (the old build-from-source install.ps1 did this; the
+// CLI now owns it). Best-effort \u2014 a failed backup never blocks the write.
+const _backedUpThisRun = new Set();
+function backupClientConfigOnce(filePath) {
+    if (!fs.existsSync(filePath)) return null;
+    // Case-fold the dedupe key only on Windows; lowercasing on a case-sensitive
+    // filesystem could merge two genuinely distinct paths.
+    const resolved = path.resolve(filePath);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (_backedUpThisRun.has(key)) return null;
+    try {
+        const d = new Date();
+        const stamp = d.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+        const bak = `${filePath}.${stamp}.bak`;
+        fs.copyFileSync(filePath, bak);
+        _backedUpThisRun.add(key);
+        return bak;
+    } catch {
+        return null;
+    }
+}
+
+// Write JSON to a client config: back up, serialize, write atomically.
+function writeClientJson(filePath, obj) {
+    backupClientConfigOnce(filePath);
+    writeFileAtomic(filePath, JSON.stringify(obj, null, 2));
+}
+
+// Write raw text to a client config (e.g. Codex TOML): back up + write atomically.
+function writeClientText(filePath, content) {
+    backupClientConfigOnce(filePath);
+    writeFileAtomic(filePath, content);
 }
 
 function resolveConfigPathNoMutate(cwd) {
@@ -298,65 +414,239 @@ function getLauncher() {
         : { command: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', 'genexus-mcp@latest'] };
 }
 
+// Antigravity (Google's agentic IDE) ships its MCP config under ~/.gemini.
+// The newer unified location (shared across Antigravity CLI / IDE / SDK) is
+// ~/.gemini/config/mcp_config.json; the older IDE-specific one is
+// ~/.gemini/antigravity/mcp_config.json. We write to the unified path when its
+// parent dir already exists, else fall back to the IDE-specific path.
+function resolveAntigravityConfigPath(home) {
+    // Only target the unified location when its file already exists (the user has
+    // adopted it); otherwise write the IDE-specific path, which is the location
+    // Antigravity reliably reads and was confirmed working in the field.
+    const unified = path.join(home, '.gemini', 'config', 'mcp_config.json');
+    if (fs.existsSync(unified)) return unified;
+    return path.join(home, '.gemini', 'antigravity', 'mcp_config.json');
+}
+
+// OpenCode CLI accepts either opencode.jsonc or opencode.json. Prefer an
+// existing .jsonc so we don't strand the user's commented config, else .json.
+function resolveOpenCodeConfigPath(xdgConfig) {
+    const jsonc = path.join(xdgConfig, 'opencode', 'opencode.jsonc');
+    if (fs.existsSync(jsonc)) return jsonc;
+    return path.join(xdgConfig, 'opencode', 'opencode.json');
+}
+
+// VS Code stores its user profile (and native MCP mcp.json) in a per-platform
+// location. `variant` is 'Code' (stable) or 'Code - Insiders'.
+function vscodeUserDir(variant, { appData, macAppSupport, xdgConfig }) {
+    if (process.platform === 'win32') return path.join(appData, variant, 'User');
+    if (process.platform === 'darwin') return path.join(macAppSupport, variant, 'User');
+    return path.join(xdgConfig, variant, 'User');
+}
+
 function getClientConfigTargets() {
     const home = os.homedir();
     const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const macAppSupport = path.join(home, 'Library', 'Application Support');
+    const vscodeStableUser = vscodeUserDir('Code', { appData, macAppSupport, xdgConfig });
+    const vscodeInsidersUser = vscodeUserDir('Code - Insiders', { appData, macAppSupport, xdgConfig });
+
+    // `installMarkers` prove the AGENT is installed, independent of whether our
+    // MCP config file exists yet. This is the fix for the field report where the
+    // wizard showed Antigravity as "not detected": Antigravity does not create
+    // ~/.gemini/antigravity/mcp_config.json until the user adds an MCP server, so
+    // detecting by config-file presence alone was chicken-and-egg.
     return [
         {
             id: 'claude-desktop-win',
             name: 'Claude Desktop (Windows)',
             format: 'mcpServers',
             path: path.join(home, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json'),
-            platforms: ['win32']
+            platforms: ['win32'],
+            installMarkers: [
+                path.join(localAppData, 'AnthropicClaude'),
+                path.join(appData, 'Claude')
+            ]
         },
         {
             id: 'claude-desktop-mac',
             name: 'Claude Desktop (macOS)',
             format: 'mcpServers',
             path: path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
-            platforms: ['darwin']
+            platforms: ['darwin'],
+            installMarkers: [
+                path.join(macAppSupport, 'Claude'),
+                '/Applications/Claude.app'
+            ]
         },
         {
             id: 'antigravity',
             name: 'Antigravity',
             format: 'mcpServers',
-            path: path.join(home, '.gemini', 'antigravity', 'mcp_config.json')
+            path: resolveAntigravityConfigPath(home),
+            // Unambiguous Antigravity markers only. ~/.gemini/config is NOT a
+            // marker — gemini-cli can create ~/.gemini, and we'd false-positive;
+            // it's still used as the write path (resolveAntigravityConfigPath)
+            // once a real Antigravity install is confirmed by these markers.
+            installMarkers: [
+                path.join(localAppData, 'Programs', 'Antigravity'),
+                path.join(appData, 'Antigravity'),
+                path.join(home, '.antigravity'),
+                path.join(home, '.gemini', 'antigravity')
+            ]
         },
         {
             id: 'claude-code',
             name: 'Claude Code',
             format: 'mcpServers',
-            path: path.join(home, '.claude.json')
+            path: path.join(home, '.claude.json'),
+            installMarkers: [
+                path.join(home, '.claude.json'),
+                path.join(home, '.claude')
+            ]
         },
         {
             id: 'gemini-cli',
             name: 'Gemini CLI',
             format: 'mcpServers',
-            path: path.join(home, '.gemini', 'settings.json')
+            path: path.join(home, '.gemini', 'settings.json'),
+            installMarkers: [
+                path.join(home, '.gemini', 'settings.json')
+            ]
         },
         {
             id: 'cursor',
             name: 'Cursor',
             format: 'mcpServers',
-            path: path.join(home, '.cursor', 'mcp.json')
+            path: path.join(home, '.cursor', 'mcp.json'),
+            installMarkers: [
+                path.join(home, '.cursor'),
+                path.join(localAppData, 'Programs', 'cursor'),
+                '/Applications/Cursor.app'
+            ]
         },
         {
             id: 'opencode',
-            name: 'OpenCode',
+            name: 'OpenCode (CLI)',
             format: 'opencode',
-            path: path.join(xdgConfig, 'opencode', 'opencode.json')
+            path: resolveOpenCodeConfigPath(xdgConfig),
+            installMarkers: [
+                path.join(xdgConfig, 'opencode'),
+                path.join(home, '.local', 'share', 'opencode')
+            ]
         },
         {
             id: 'codex-cli',
             name: 'Codex CLI',
             format: 'codex-toml',
-            path: path.join(home, '.codex', 'config.toml')
+            path: path.join(home, '.codex', 'config.toml'),
+            installMarkers: [
+                path.join(home, '.codex')
+            ]
+        },
+        {
+            id: 'opencode-desktop',
+            name: 'OpenCode Desktop',
+            // Detect-only: the Desktop app's MCP config schema differs from the CLI
+            // and isn't auto-written yet. We report it so the user knows it's there
+            // and how to wire it up, but never mutate its config blindly.
+            format: 'manual',
+            writeSupported: false,
+            manualNote: 'OpenCode Desktop: add the genexus MCP server from the app\'s settings (automatic registration not supported yet).',
+            path: path.join(appData, 'ai.opencode.desktop', 'mcp.json'),
+            installMarkers: [
+                path.join(localAppData, 'Programs', '@opencode-aidesktop'),
+                path.join(appData, 'ai.opencode.desktop'),
+                '/Applications/OpenCode.app'
+            ]
+        },
+        {
+            id: 'vscode',
+            name: 'VS Code',
+            format: 'vscode-servers',
+            path: path.join(vscodeStableUser, 'mcp.json'),
+            installMarkers: [vscodeStableUser]
+        },
+        {
+            id: 'vscode-insiders',
+            name: 'VS Code Insiders',
+            format: 'vscode-servers',
+            path: path.join(vscodeInsidersUser, 'mcp.json'),
+            installMarkers: [vscodeInsidersUser]
         }
     ];
 }
 
+// Decide whether an agent is installed (independent of whether OUR config file
+// exists). Returns the installed flag plus diagnostics so the wizard can show
+// the user exactly where it looked when an agent is reported "not detected".
+function detectClientInstalled(client) {
+    const markers = Array.isArray(client.installMarkers) ? client.installMarkers : [];
+    const hasConfig = fs.existsSync(client.path);
+    let markerHit = null;
+    for (const m of markers) {
+        if (fs.existsSync(m)) {
+            markerHit = m;
+            break;
+        }
+    }
+    return {
+        installed: hasConfig || markerHit !== null,
+        hasConfig,
+        markerHit,
+        markersChecked: markers
+    };
+}
+
 function listSupportedClientIds() {
     return getClientConfigTargets().map((c) => c.id);
+}
+
+// Judge whether a registered launcher command is healthy. npx/node/genexus-mcp
+// shims resolve at runtime so we can't fault them; any other launcher referenced
+// by an explicit path (a separator in the command) that no longer exists on disk
+// is the classic "Failed to connect / still on old version" cause after an
+// install dir moved or was cleaned — covers .exe, .bat, .cmd, .sh, extensionless.
+function clientCommandHealth(entry) {
+    if (!entry || !entry.command) return { stale: false, reason: null };
+    const cmd = String(entry.command);
+    if (/(^|[\\/])(npx|npx\.cmd|node|node\.exe|genexus-mcp|genexus-mcp\.cmd)$/i.test(cmd)) {
+        return { stale: false, reason: null };
+    }
+    if (/[\\/]/.test(cmd) && !fs.existsSync(cmd)) {
+        return { stale: true, reason: 'configured launcher does not exist on disk' };
+    }
+    return { stale: false, reason: null };
+}
+
+// Read-only report of every supported agent on this platform: is it installed,
+// is genexus registered, where, what launcher command it points at, and whether
+// that command is stale. Backs the `genexus-mcp clients` command.
+function clientsStatus(opts = {}) {
+    const targets = filterClientTargets(getClientConfigTargets(), {
+        ids: opts.ids,
+        platform: process.platform
+    });
+    return targets.map((client) => {
+        const det = detectClientInstalled(client);
+        const entry = readClientCommandEntry(client);
+        const health = clientCommandHealth(entry);
+        return {
+            id: client.id,
+            name: client.name,
+            installed: det.installed,
+            registered: entry !== null,
+            writeSupported: client.writeSupported !== false,
+            configPath: client.path,
+            command: entry && entry.command ? entry.command : null,
+            commandStale: health.stale,
+            commandStaleReason: health.reason,
+            detectedAt: det.markerHit || (det.hasConfig ? client.path : null),
+            note: client.writeSupported === false ? (client.manualNote || null) : null
+        };
+    });
 }
 
 function filterClientTargets(targets, opts = {}) {
@@ -396,13 +686,29 @@ function patchClientConfig(targetConfigPath, opts = {}) {
     const skipped = [];
 
     for (const client of candidates) {
-        if (onlyExisting && !fs.existsSync(client.path)) {
+        // Detect-only agents (e.g. OpenCode Desktop) can't be auto-written; surface
+        // the manual step instead of pretending we registered them.
+        if (client.writeSupported === false) {
+            if (detectClientInstalled(client).installed) {
+                skipped.push({ client: client.name, reason: client.manualNote || 'manual setup required' });
+            }
+            continue;
+        }
+        // "Installed" keys off install markers (the agent itself is present), not
+        // just our config file — otherwise agents that don't pre-create their MCP
+        // config (e.g. Antigravity) are wrongly skipped as "not installed".
+        if (onlyExisting && !detectClientInstalled(client).installed) {
             skipped.push({ client: client.name, reason: 'not installed' });
             continue;
         }
         try {
             fs.mkdirSync(path.dirname(client.path), { recursive: true });
             applyClientEntry(client, launcher, targetConfigPath);
+            // Read-back: confirm the entry is actually present and the file still
+            // parses, so a silently-corrupted write is reported as a failure.
+            if (!readClientCommandEntry(client)) {
+                throw new Error('post-write verification failed (genexus entry not found after write)');
+            }
             patched.push(client.name);
         } catch (err) {
             failed.push({ client: client.name, reason: err && err.message ? err.message : 'Unknown error' });
@@ -423,6 +729,11 @@ function unpatchClientConfig(opts = {}) {
     const failed = [];
 
     for (const client of targets) {
+        // Detect-only agents were never written by us — nothing to remove.
+        if (client.writeSupported === false) {
+            skipped.push({ client: client.name, reason: 'manual setup (not managed by genexus-mcp)' });
+            continue;
+        }
         try {
             const wasRemoved = removeClientEntry(client);
             if (wasRemoved) removed.push(client.name);
@@ -443,6 +754,8 @@ function applyClientEntry(client, launcher, targetConfigPath) {
             return applyOpenCodeJson(client.path, launcher, targetConfigPath);
         case 'codex-toml':
             return applyCodexToml(client.path, launcher, targetConfigPath);
+        case 'vscode-servers':
+            return applyVsCodeServersJson(client.path, launcher, targetConfigPath);
         default:
             throw new Error(`Unknown client format: ${client.format}`);
     }
@@ -456,6 +769,8 @@ function removeClientEntry(client) {
             return removeOpenCodeJson(client.path);
         case 'codex-toml':
             return removeCodexToml(client.path);
+        case 'vscode-servers':
+            return removeVsCodeServersJson(client.path);
         default:
             throw new Error(`Unknown client format: ${client.format}`);
     }
@@ -467,16 +782,63 @@ function applyMcpServersJson(filePath, launcher, targetConfigPath) {
     const cfgObj = parsed || {};
     cfgObj.mcpServers = cfgObj.mcpServers || {};
     cfgObj.mcpServers.genexus = { ...launcher, env: { GX_CONFIG_PATH: targetConfigPath } };
-    fs.writeFileSync(filePath, JSON.stringify(cfgObj, null, 2));
+    // Drop the legacy `genexus18` key from older build-from-source installs so the
+    // user isn't left with two duplicate servers (and colliding tool names).
+    if (cfgObj.mcpServers.genexus18) delete cfgObj.mcpServers.genexus18;
+    writeClientJson(filePath, cfgObj);
 }
 
 function removeMcpServersJson(filePath) {
     const parsed = readJsonFileSafe(filePath);
     if (parsed === null) throw new Error('Invalid JSON');
     const cfgObj = parsed || {};
-    if (!cfgObj.mcpServers || !cfgObj.mcpServers.genexus) return false;
-    delete cfgObj.mcpServers.genexus;
-    fs.writeFileSync(filePath, JSON.stringify(cfgObj, null, 2));
+    if (!cfgObj.mcpServers) return false;
+    // Remove the current key plus the legacy `genexus18` key written by older
+    // versions of the build-from-source install.ps1, so uninstall fully cleans up
+    // regardless of which installer wrote the entry.
+    let removedAny = false;
+    for (const key of ['genexus', 'genexus18']) {
+        if (cfgObj.mcpServers[key]) {
+            delete cfgObj.mcpServers[key];
+            removedAny = true;
+        }
+    }
+    if (!removedAny) return false;
+    writeClientJson(filePath, cfgObj);
+    return true;
+}
+
+// VS Code native MCP lives in User\mcp.json and uses a top-level `servers` map
+// with `type: "stdio"` (distinct from the `mcpServers` shape Claude/Cursor use).
+function applyVsCodeServersJson(filePath, launcher, targetConfigPath) {
+    const parsed = fs.existsSync(filePath) ? readJsonFileSafe(filePath) : {};
+    if (parsed === null) throw new Error('Invalid JSON');
+    const cfgObj = parsed || {};
+    cfgObj.servers = cfgObj.servers || {};
+    cfgObj.servers.genexus = {
+        type: 'stdio',
+        ...launcher,
+        env: { GX_CONFIG_PATH: targetConfigPath }
+    };
+    // Drop the legacy `genexus18` key written by older build-from-source installs.
+    if (cfgObj.servers.genexus18) delete cfgObj.servers.genexus18;
+    writeClientJson(filePath, cfgObj);
+}
+
+function removeVsCodeServersJson(filePath) {
+    const parsed = readJsonFileSafe(filePath);
+    if (parsed === null) throw new Error('Invalid JSON');
+    const cfgObj = parsed || {};
+    if (!cfgObj.servers) return false;
+    let removedAny = false;
+    for (const key of ['genexus', 'genexus18']) {
+        if (cfgObj.servers[key]) {
+            delete cfgObj.servers[key];
+            removedAny = true;
+        }
+    }
+    if (!removedAny) return false;
+    writeClientJson(filePath, cfgObj);
     return true;
 }
 
@@ -485,6 +847,9 @@ function applyOpenCodeJson(filePath, launcher, targetConfigPath) {
     const parsed = fs.existsSync(filePath) ? readJsonFileSafe(filePath) : {};
     if (parsed === null) throw new Error('Invalid JSON');
     const cfgObj = parsed || {};
+    // OpenCode configs carry a top-level $schema for editor validation; set it when
+    // absent (new file or a config that never had one) without clobbering a custom one.
+    if (!cfgObj.$schema) cfgObj.$schema = 'https://opencode.ai/config.json';
     cfgObj.mcp = cfgObj.mcp || {};
     cfgObj.mcp.genexus = {
         type: 'local',
@@ -492,7 +857,8 @@ function applyOpenCodeJson(filePath, launcher, targetConfigPath) {
         environment: { GX_CONFIG_PATH: targetConfigPath },
         enabled: true
     };
-    fs.writeFileSync(filePath, JSON.stringify(cfgObj, null, 2));
+    if (cfgObj.mcp.genexus18) delete cfgObj.mcp.genexus18;
+    writeClientJson(filePath, cfgObj);
 }
 
 function removeOpenCodeJson(filePath) {
@@ -501,7 +867,7 @@ function removeOpenCodeJson(filePath) {
     const cfgObj = parsed || {};
     if (!cfgObj.mcp || !cfgObj.mcp.genexus) return false;
     delete cfgObj.mcp.genexus;
-    fs.writeFileSync(filePath, JSON.stringify(cfgObj, null, 2));
+    writeClientJson(filePath, cfgObj);
     return true;
 }
 
@@ -524,7 +890,7 @@ function applyCodexToml(filePath, launcher, targetConfigPath) {
     lines.push('[mcp_servers.genexus.env]');
     lines.push(`GX_CONFIG_PATH = ${tomlString(targetConfigPath)}`);
     lines.push('');
-    fs.writeFileSync(filePath, stripped + lines.join('\n'));
+    writeClientText(filePath, stripped + lines.join('\n'));
 }
 
 function removeCodexToml(filePath) {
@@ -532,7 +898,7 @@ function removeCodexToml(filePath) {
     const existing = fs.readFileSync(filePath, 'utf8');
     const stripped = stripCodexGenexusBlocks(existing);
     if (stripped === existing) return false;
-    fs.writeFileSync(filePath, stripped);
+    writeClientText(filePath, stripped);
     return true;
 }
 
@@ -588,6 +954,7 @@ function normalizeExePath(p) {
 }
 
 function readClientCommandEntry(client) {
+    if (client.writeSupported === false) return null;
     if (!fs.existsSync(client.path)) return null;
     try {
         if (client.format === 'mcpServers') {
@@ -603,6 +970,13 @@ function readClientCommandEntry(client) {
             const entry = parsed.mcp && parsed.mcp.genexus;
             if (!entry || !Array.isArray(entry.command) || entry.command.length === 0) return null;
             return { command: entry.command[0], args: entry.command.slice(1) };
+        }
+        if (client.format === 'vscode-servers') {
+            const parsed = readJsonFileSafe(client.path);
+            if (!parsed || typeof parsed !== 'object') return null;
+            const entry = parsed.servers && parsed.servers.genexus;
+            if (!entry) return null;
+            return { command: entry.command || null, args: Array.isArray(entry.args) ? entry.args : [] };
         }
         if (client.format === 'codex-toml') {
             const raw = fs.readFileSync(client.path, 'utf8');
@@ -786,6 +1160,8 @@ module.exports = {
     patchClientConfig,
     unpatchClientConfig,
     getClientConfigTargets,
+    detectClientInstalled,
+    clientsStatus,
     listSupportedClientIds,
     filterClientTargets,
     getLocalAppDataCacheDir,

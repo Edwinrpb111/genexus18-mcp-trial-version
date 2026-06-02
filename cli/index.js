@@ -19,6 +19,7 @@ const {
     handleWhoami,
     handleUninstall,
     handleKb,
+    handleClients,
     handleHome,
     handleLlmHelp,
     handleLayout,
@@ -55,7 +56,7 @@ const GLOBAL_DEFAULTS = {
     help: false
 };
 
-const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'whoami', 'uninstall', 'kb', 'help', 'home', 'axi', 'llm', 'layout', 'update']);
+const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'whoami', 'uninstall', 'kb', 'clients', 'help', 'home', 'axi', 'llm', 'layout', 'update']);
 
 function parseArgs(argv) {
     const result = {
@@ -111,6 +112,11 @@ function parseArgs(argv) {
     }
 
     if (result.command === 'kb' && ['list', 'add', 'remove', 'switch'].includes(tokens[0])) {
+        result.subcommand = tokens[0];
+        tokens.shift();
+    }
+
+    if (result.command === 'clients' && ['list', 'add', 'remove'].includes(tokens[0])) {
         result.subcommand = tokens[0];
         tokens.shift();
     }
@@ -395,6 +401,9 @@ function resolveMetaCommand(parsed, targetHelp) {
     if (parsed.command === 'kb') {
         return parsed.subcommand ? `kb.${parsed.subcommand}` : 'kb';
     }
+    if (parsed.command === 'clients') {
+        return parsed.subcommand ? `clients.${parsed.subcommand}` : 'clients.list';
+    }
     if (parsed.command === 'update') return 'update';
     return parsed.command || 'unknown';
 }
@@ -522,6 +531,9 @@ async function main(argv) {
                 return EXIT_CODES.USAGE;
             }
             result = await handleKb(parsed.subcommand, parsed.options, ctx);
+            break;
+        case 'clients':
+            result = await handleClients(parsed.subcommand, parsed.options, ctx);
             break;
         case 'update':
             result = await handleUpdate(parsed.options, ctx);
