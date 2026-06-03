@@ -40,6 +40,28 @@ namespace GxMcp.Worker.Services
         public static int ConsecutiveFlushFailures => System.Threading.Volatile.Read(ref _consecutiveFlushFailures);
         public static DateTime LastFlushSuccessUtc => _lastFlushSuccessUtc;
         public static string LastFlushErrorMessage => _lastFlushErrorMessage;
+
+        // Fase 0 instrumentation: per-sub-step enrichment timing accumulators (raw
+        // Stopwatch ticks, Interlocked because the ref/textual scans run on the
+        // background dispatcher thread). These decide whether Fase 3 parallelization
+        // is worth it: typeExtract+embedding are CPU-only (parallelizable), refScan is
+        // STA-bound (GetReferences). Snapshot via GetEnrichTimingSummary() at drain end.
+        // NOTE: refScan/textualScan are enqueued on Program.EnqueueBackground and may
+        // still be accumulating when [ENRICH-DONE] is logged — read as "work so far".
+        private static long _enrichTypeExtractTicks = 0;
+        private static long _enrichEmbeddingTicks = 0;
+        private static long _enrichRefScanTicks = 0;
+        private static long _enrichTextualScanTicks = 0;
+        public static string GetEnrichTimingSummary()
+        {
+            double tickToMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            long te = System.Threading.Interlocked.Read(ref _enrichTypeExtractTicks);
+            long em = System.Threading.Interlocked.Read(ref _enrichEmbeddingTicks);
+            long rs = System.Threading.Interlocked.Read(ref _enrichRefScanTicks);
+            long ts = System.Threading.Interlocked.Read(ref _enrichTextualScanTicks);
+            return $"typeExtractMs={(long)(te * tickToMs)} embeddingMs={(long)(em * tickToMs)} refScanMs={(long)(rs * tickToMs)} textualScanMs={(long)(ts * tickToMs)}";
+        }
+
         private readonly VectorService _vectorService = new VectorService();
 
         // PERFORMANCE (W-M5): cache resolved hierarchy by object Guid to avoid re-walking
@@ -81,6 +103,16 @@ namespace GxMcp.Worker.Services
                 _state.LastIndexedAt = null;
                 _state.TotalObjects = totalEstimated;
             }
+            // Fase 0: re-arm the once-per-build [TIME-TO-USABLE] guards so a repeated
+            // force-reindex in the same process logs the milestones again.
+            System.Threading.Interlocked.Exchange(ref _loggedUltraLiteUsable, 0);
+            System.Threading.Interlocked.Exchange(ref _loggedLiteUsable, 0);
+            // Reset the enrichment-timing accumulators so [INDEX-SAVE]/[ENRICH-DONE] report
+            // per-build cost, not a process-global cumulative total across multiple builds.
+            System.Threading.Interlocked.Exchange(ref _enrichTypeExtractTicks, 0);
+            System.Threading.Interlocked.Exchange(ref _enrichEmbeddingTicks, 0);
+            System.Threading.Interlocked.Exchange(ref _enrichRefScanTicks, 0);
+            System.Threading.Interlocked.Exchange(ref _enrichTextualScanTicks, 0);
         }
 
         public void MarkReindexProgress(double progress, int etaMs)
@@ -114,6 +146,12 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // Fase 0: log [TIME-TO-USABLE] once per usable milestone so the SM warmup
+        // (captured in sdkReadyMs) is cleanly separated from the object walk
+        // (sinceSdkReadyMs). processMs is absolute since process start.
+        private static int _loggedUltraLiteUsable = 0;
+        private static int _loggedLiteUsable = 0;
+
         public void MarkLitePassComplete(int totalObjects)
         {
             lock (_stateLock)
@@ -123,6 +161,11 @@ namespace GxMcp.Worker.Services
                 _state.LitePassCompletedUtc = DateTime.UtcNow;
                 _state.Progress = 1.0;
                 _state.EtaMs = 0;
+            }
+            if (System.Threading.Interlocked.Exchange(ref _loggedLiteUsable, 1) == 0)
+            {
+                long p = Program.ProcessElapsedMs;
+                Logger.Info($"[TIME-TO-USABLE] event=liteReady processMs={p} sdkReadyMs={Program.SdkReadyAtMs} sinceSdkReadyMs={Math.Max(0, p - Program.SdkReadyAtMs)} objects={totalObjects}");
             }
         }
 
@@ -143,6 +186,11 @@ namespace GxMcp.Worker.Services
                 _state.TotalObjects = objectsSoFar;
                 _state.Progress = null;
                 _state.EtaMs = null;
+            }
+            if (System.Threading.Interlocked.Exchange(ref _loggedUltraLiteUsable, 1) == 0)
+            {
+                long p = Program.ProcessElapsedMs;
+                Logger.Info($"[TIME-TO-USABLE] event=ultraLiteReady processMs={p} sdkReadyMs={Program.SdkReadyAtMs} sinceSdkReadyMs={Math.Max(0, p - Program.SdkReadyAtMs)} objects={objectsSoFar}");
             }
         }
 
@@ -281,18 +329,29 @@ namespace GxMcp.Worker.Services
 
          public bool IsInitialized => _initialized;
 
-        private void EnsureInitialized()
+        // Public so the index build (KbService.BulkIndex) can force the on-disk cache path
+        // to be resolved BEFORE any read/write. Otherwise force=true (which never touches
+        // GetIndex/IsIndexMissing) writes to the constructor's <BaseDir>\cache\search_index.*
+        // fallback while the warm-start read path resolves the %LOCALAPPDATA%\…\index_{hash}.*
+        // path — so the sidecar written by one is never found by the other (metaPresent=False,
+        // delta never engages).
+        // proactiveLoad=false resolves the on-disk cache path WITHOUT kicking the background
+        // GetIndex() warm load. BulkIndex(force=true) needs the path resolved (so the right
+        // %LOCALAPPDATA%\…\index_{hash}.* files get deleted) but must NOT start a background
+        // load that would race Clear()/DeleteOnDiskSnapshot() and briefly republish the stale
+        // snapshot as Ready.
+        public void EnsureInitialized(bool proactiveLoad = true)
         {
             if (_initialized) return;
             try
             {
                 string kbPath = _buildService.GetKBPath();
-                if (!string.IsNullOrEmpty(kbPath)) Initialize(kbPath);
+                if (!string.IsNullOrEmpty(kbPath)) Initialize(kbPath, proactiveLoad);
             }
             catch { }
         }
 
-        public void Initialize(string kbPath)
+        public void Initialize(string kbPath, bool proactiveLoad = true)
         {
             if (string.IsNullOrEmpty(kbPath)) return;
             if (kbPath.EndsWith(".gxw", StringComparison.OrdinalIgnoreCase)) kbPath = Path.GetDirectoryName(kbPath);
@@ -306,19 +365,29 @@ namespace GxMcp.Worker.Services
                 string hash = GetHash(kbPath);
                 _indexPath = Path.Combine(cacheDir, string.Format("index_{0}.json", hash));
                 _initialized = true;
-                Logger.Info(string.Format("IndexCache initialized: {0}", _indexPath));
+                // Fase 1 diagnostic: log the resolved cache paths so a sidecar-not-found on warm
+                // start (metaPresent=False) can be traced to a hash/path mismatch between runs.
+                Logger.Info(string.Format("[INDEX-CACHE-PATHS] kbPathIn={0} hash={1} gz={2} meta={3}", kbPath, hash, _indexPathGz, _metaPath));
 
-                // PERFORMANCE: Pro-active loading in background
-                Task.Run(() => GetIndex());
+                // PERFORMANCE: Pro-active loading in background. Skipped when proactiveLoad=false
+                // (force reindex) so it doesn't race the imminent Clear()/DeleteOnDiskSnapshot().
+                if (proactiveLoad) Task.Run(() => GetIndex());
             }
             catch (Exception ex) { Logger.Error("IndexCache Init Error: " + ex.Message); }
         }
 
         private string GetHash(string input)
         {
+            // Fase 1: canonicalize the KB path so the same KB always maps to the same cache
+            // hash across worker runs — otherwise a sidecar written under one path-spelling
+            // (trailing slash, casing, forward vs back slashes) isn't found under another and
+            // the warm-start delta never engages (metaPresent=False).
+            string canonical = input ?? string.Empty;
+            try { canonical = Path.GetFullPath(canonical); } catch { /* keep raw on malformed paths */ }
+            canonical = canonical.TrimEnd('\\', '/').ToLowerInvariant();
             using (var sha = System.Security.Cryptography.SHA256.Create())
             {
-                var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input.ToLower().Trim()));
+                var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical));
                 return BitConverter.ToString(bytes).Replace("-", "").Substring(0, 16);
             }
         }
@@ -326,21 +395,28 @@ namespace GxMcp.Worker.Services
         private void BuildParentIndex(SearchIndex index)
         {
             var byParent = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.List<SearchIndex.IndexEntry>>(StringComparer.OrdinalIgnoreCase);
-            
-            foreach (var entry in index.Objects.Values)
+            // Fase 2: (re)build the Guid → storage-key map alongside the parent index — both
+            // derive from a single full pass over Objects, so do them together.
+            var guidToKey = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var kv in index.Objects)
             {
+                var entry = kv.Value;
                 string parent = entry.ParentPath ?? entry.Parent ?? "";
                 if (!byParent.TryGetValue(parent, out var list))
                 {
                     list = new System.Collections.Generic.List<SearchIndex.IndexEntry>();
                     byParent[parent] = list;
                 }
-                
-                // PERFORMANCE: Since we are iterating dictionary values, there are NO duplicates. 
+
+                // PERFORMANCE: Since we are iterating dictionary values, there are NO duplicates.
                 // Using .Add() directly changes this from an O(N^2) operation to O(N).
                 list.Add(entry);
+
+                if (!string.IsNullOrEmpty(entry.Guid)) guidToKey[entry.Guid] = kv.Key;
             }
             index.ChildrenByParent = byParent;
+            index.GuidToKey = guidToKey;
         }
 
         private string GetEntryStorageKey(SearchIndex.IndexEntry entry)
@@ -456,6 +532,39 @@ namespace GxMcp.Worker.Services
                 {
                     list.Add(entry);
                 }
+            }
+        }
+
+        // Fase 2: drop an entry from its parent-children list (used by rename collapse and
+        // RemoveEntryByGuid). Matches by storage key under the same per-list lock the add path uses.
+        private void RemoveEntryFromParentIndex(System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.List<SearchIndex.IndexEntry>> byParent, SearchIndex.IndexEntry entry)
+        {
+            if (byParent == null || entry == null) return;
+            string parent = entry.ParentPath ?? entry.Parent ?? "";
+            if (!byParent.TryGetValue(parent, out var list)) return;
+            string entryKey = GetEntryStorageKey(entry);
+            lock (list)
+            {
+                list.RemoveAll(e => string.Equals(GetEntryStorageKey(e), entryKey, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        // Fase 2: remove an object by its (stable) Guid — used by the warm-start deletion
+        // sweep when an object that was in the persisted index no longer exists in the KB.
+        // Resolves the storage key via GuidToKey so renames don't strand it.
+        public void RemoveEntryByGuid(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return;
+            var index = GetIndex();
+            lock (_lock)
+            {
+                if (index.GuidToKey == null || !index.GuidToKey.TryGetValue(guid, out var key)) return;
+                if (index.Objects.TryRemove(key, out var removed))
+                {
+                    if (index.ChildrenByParent != null) RemoveEntryFromParentIndex(index.ChildrenByParent, removed);
+                    if (Guid.TryParse(guid, out var g)) _hierarchyCache.TryRemove(g, out _);
+                }
+                index.GuidToKey.TryRemove(guid, out _);
             }
         }
 
@@ -662,10 +771,171 @@ namespace GxMcp.Worker.Services
                 _index = index;
             }
             // Fire and forget save to disk with throttling (W-A3: 10s → 30s)
+            ScheduleThrottledFlush();
+        }
+
+        // Fase 0.5: route per-object enrichment flushes through the 30s throttle so a
+        // bulk enrichment pass doesn't re-serialize the whole (growing) index on every
+        // object — measured 261 full-index serializations in one pass on a 38.6k KB,
+        // serializeMs climbing 300→1800ms as the index swelled 12→45MB. The direct
+        // Task.Run(FlushToDisk) calls bypassed the throttle that UpdateIndex already had.
+        private void ScheduleThrottledFlush()
+        {
             if (!_savingInProgress && (DateTime.Now - _lastFlushTime).TotalSeconds > FlushThrottleSeconds)
             {
                 Task.Run(() => FlushToDisk());
             }
+        }
+
+        // Force an immediate flush regardless of the throttle window. Call at the end of
+        // a bulk enrichment drain / delta refresh so the final, fully-enriched index reaches
+        // disk even if the last changes landed inside the 30s throttle window.
+        // FlushToDisk early-returns while a throttled flush is mid-flight, so a bare call could
+        // silently no-op and leave the meta sidecar stamped against a one-flush-stale body.
+        // Wait out any in-flight flush first, then flush the latest snapshot.
+        public void FlushNow()
+        {
+            for (int i = 0; i < 150 && _savingInProgress; i++) System.Threading.Thread.Sleep(20); // up to ~3s
+            FlushToDisk();
+        }
+
+        // ===== Fase 1: persistible incremental index (version stamp + high-water-mark + delta-on-open) =====
+
+        // Bump whenever IndexEntry's serialized shape changes. A mismatch on warm start
+        // forces a full cold rebuild (IntelliJ stub-index pattern) instead of silently
+        // deserialising a 38k index into a different layout.
+        public const int CurrentSchemaVersion = 1;
+
+        // Sidecar holding the validation header (schema version, worker-DLL hash, high-water-mark).
+        // Written ONLY when enrichment fully completes (PersistEnrichedComplete) or after a delta
+        // refresh — never on the throttled mid-enrichment body flushes. So the sidecar's presence
+        // means "the body on disk is fully enriched and this hwm is trustworthy"; a worker that
+        // dies mid-enrichment leaves a body but no sidecar → next warm start does a full rebuild.
+        private string _metaPath => string.IsNullOrEmpty(_indexPath) ? null : _indexPath.Replace(".json", ".meta.json");
+
+        // High-water-mark: max KBObject.LastUpdate observed. Stored as ticks for lock-free CAS.
+        // Instance field (per index / per KB) — not process-global.
+        private long _hwmTicks = 0;
+
+        /// <summary>Advance the high-water-mark if <paramref name="lastUpdate"/> is newer. Lock-free.</summary>
+        public void ObserveLastUpdate(DateTime lastUpdate)
+        {
+            long t = lastUpdate.Ticks;
+            long cur;
+            while (true)
+            {
+                cur = System.Threading.Interlocked.Read(ref _hwmTicks);
+                if (t <= cur) return;
+                if (System.Threading.Interlocked.CompareExchange(ref _hwmTicks, t, cur) == cur) return;
+            }
+        }
+
+        /// <summary>Reset the high-water-mark (called on a full reindex so a stale max doesn't persist).</summary>
+        public void ResetHighWaterMark() => System.Threading.Interlocked.Exchange(ref _hwmTicks, 0);
+
+        /// <summary>
+        /// Snapshot of entries that were never fully enriched (no embedding) — used by the
+        /// warm-start delta path to resume enrichment when the persisted body was lite-only
+        /// or partially enriched (e.g. a worker idle-evicted before completing).
+        /// Embedding==null/empty is the reliable signal: UpdateEntry always sets a 128-float
+        /// embedding, lite stubs never carry one.
+        /// </summary>
+        public List<SearchIndex.IndexEntry> GetUnenrichedEntries()
+        {
+            var idx = GetIndex();
+            var result = new List<SearchIndex.IndexEntry>();
+            if (idx?.Objects == null) return result;
+            foreach (var e in idx.Objects.Values)
+            {
+                if (e == null) continue;
+                if (e.Embedding == null || e.Embedding.Length == 0) result.Add(e);
+            }
+            return result;
+        }
+
+        /// <summary>Current high-water-mark as a DateTime (MinValue if none observed).</summary>
+        public DateTime CurrentHighWaterMark
+        {
+            // UTC: the ticks come from KBObject.LastUpdate, which the watcher and GetKeys()
+            // treat as UTC (compared against DateTime.UtcNow). Labelling it Utc keeps the
+            // persisted *Utc field honest and makes any future cross-comparison safe.
+            get { long t = System.Threading.Interlocked.Read(ref _hwmTicks); return t == 0 ? DateTime.MinValue : new DateTime(t, DateTimeKind.Utc); }
+        }
+
+        /// <summary>
+        /// Persist the validation sidecar. Call AFTER a body flush, only when the body is in a
+        /// trustworthy (fully-enriched or delta-merged) state. Atomic temp-then-move.
+        /// </summary>
+        public void WriteMetaSidecar(int objectCount)
+        {
+            string metaPath = _metaPath;
+            if (string.IsNullOrEmpty(metaPath)) return;
+            try
+            {
+                var meta = new WarmIndexSnapshotMetadata
+                {
+                    WorkerDllSha256 = WarmIndexSnapshot.ComputeWorkerDllSha256(),
+                    KbPath = _buildService?.GetKBPath(),
+                    CapturedAtUtc = DateTime.UtcNow.ToString("o"),
+                    ObjectCount = objectCount,
+                    SchemaVersion = CurrentSchemaVersion,
+                    HighWaterMarkUtc = CurrentHighWaterMark == DateTime.MinValue ? null : CurrentHighWaterMark.ToString("o")
+                };
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(meta);
+                string dir = Path.GetDirectoryName(metaPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string tmp = metaPath + ".tmp";
+                File.WriteAllText(tmp, json, new UTF8Encoding(false));
+                if (File.Exists(metaPath)) File.Delete(metaPath);
+                File.Move(tmp, metaPath);
+                Logger.Info($"[INDEX-META] sidecar written: schema={CurrentSchemaVersion} hwm={meta.HighWaterMarkUtc ?? "<none>"} objects={objectCount}");
+            }
+            catch (Exception ex) { Logger.Warn("WriteMetaSidecar failed: " + ex.Message); }
+        }
+
+        /// <summary>Result of validating the on-disk cache against the current worker + schema.</summary>
+        public sealed class OnDiskCacheValidation
+        {
+            public bool BodyPresent;
+            public bool MetaPresent;
+            public bool SchemaMatch;
+            public bool DllMatch;
+            public DateTime HighWaterMark = DateTime.MinValue;
+            // Delta-on-open is only safe when the body is present AND a trustworthy sidecar
+            // (matching schema + worker DLL) accompanies it. Anything else → full rebuild.
+            public bool CanDelta => BodyPresent && MetaPresent && SchemaMatch && DllMatch && HighWaterMark != DateTime.MinValue;
+        }
+
+        /// <summary>
+        /// Inspect the on-disk cache (cheap — reads the small sidecar, not the body) to decide
+        /// whether a warm start can do a bounded delta refresh or must full-rebuild.
+        /// </summary>
+        public OnDiskCacheValidation ValidateOnDiskCache()
+        {
+            var v = new OnDiskCacheValidation();
+            try
+            {
+                EnsureInitialized();
+                v.BodyPresent = (!string.IsNullOrEmpty(_indexPathGz) && File.Exists(_indexPathGz))
+                                 || (!string.IsNullOrEmpty(_indexPath) && File.Exists(_indexPath));
+                string metaPath = _metaPath;
+                v.MetaPresent = !string.IsNullOrEmpty(metaPath) && File.Exists(metaPath);
+                Logger.Info(string.Format("[INDEX-CACHE-PATHS] validate: bodyPresent={0} metaPresent={1} gz={2} meta={3}", v.BodyPresent, v.MetaPresent, _indexPathGz, metaPath));
+                if (v.MetaPresent)
+                {
+                    var meta = Newtonsoft.Json.JsonConvert.DeserializeObject<WarmIndexSnapshotMetadata>(File.ReadAllText(metaPath));
+                    v.SchemaMatch = meta != null && meta.SchemaVersion == CurrentSchemaVersion;
+                    string currentDll = WarmIndexSnapshot.ComputeWorkerDllSha256();
+                    v.DllMatch = meta != null && string.Equals(meta.WorkerDllSha256, currentDll, StringComparison.OrdinalIgnoreCase);
+                    if (meta != null && !string.IsNullOrEmpty(meta.HighWaterMarkUtc)
+                        && DateTime.TryParse(meta.HighWaterMarkUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out var hwm))
+                    {
+                        v.HighWaterMark = hwm;
+                    }
+                }
+            }
+            catch (Exception ex) { Logger.Warn("ValidateOnDiskCache failed (treating as full-rebuild): " + ex.Message); }
+            return v;
         }
 
         private void FlushToDisk()
@@ -695,28 +965,44 @@ namespace GxMcp.Worker.Services
                     Formatting = Newtonsoft.Json.Formatting.None
                 };
 
+                // Fase 0 instrumentation: split flush cost into serialize / gzip+write /
+                // move so we know whether the throttled 30s flush competes with the STA
+                // walk for CPU, and which sub-step dominates as the index grows.
+                var flushSw = System.Diagnostics.Stopwatch.StartNew();
+
                 // Perform heavy serialization OUTSIDE the lock
                 string json = Newtonsoft.Json.JsonConvert.SerializeObject(snapshot, settings);
+                long serializeMs = flushSw.ElapsedMilliseconds;
 
                 // PERFORMANCE (W-A3): write gzipped via a temp file + atomic move so partial
                 // writes never leave a corrupt snapshot on disk.
                 string tmpPath = _indexPathGz + ".tmp";
                 // CompressionLevel.Fastest: file isn't transmitted, the ~5% ratio improvement
                 // from Optimal isn't worth the extra CPU on every flush.
+                flushSw.Restart();
                 using (var fs = File.Create(tmpPath))
                 using (var gz = new GZipStream(fs, CompressionLevel.Fastest))
                 using (var writer = new StreamWriter(gz, new UTF8Encoding(false)))
                 {
                     writer.Write(json);
                 }
+                long gzipWriteMs = flushSw.ElapsedMilliseconds;
+
+                flushSw.Restart();
                 if (File.Exists(_indexPathGz)) File.Delete(_indexPathGz);
                 File.Move(tmpPath, _indexPathGz);
+                long moveMs = flushSw.ElapsedMilliseconds;
 
                 // Clean up the legacy plain-JSON file once we have a valid gzipped snapshot.
                 try { if (File.Exists(_indexPath)) File.Delete(_indexPath); } catch { }
 
                 long sizeKb = new FileInfo(_indexPathGz).Length / 1024;
-                Logger.Info($"[INDEX-SAVE] Index flushed (gz): {sizeKb} KB on disk, {json.Length / 1024} KB raw.");
+                int entryCount = snapshot.Objects?.Count ?? 0;
+                // Fase 3 measurement: piggyback the running enrichment sub-step split on the
+                // throttled flush so the SDK-bound (refScan/typeExtract) vs CPU-only
+                // (embedding/textualScan) proportion is observable without waiting for the
+                // (pathologically slow) full drain to reach [ENRICH-DONE].
+                Logger.Info($"[INDEX-SAVE] gzKB={sizeKb} rawKB={json.Length / 1024} serializeMs={serializeMs} gzipWriteMs={gzipWriteMs} moveMs={moveMs} totalMs={serializeMs + gzipWriteMs + moveMs} entries={entryCount} | {GetEnrichTimingSummary()}");
                 System.Threading.Interlocked.Exchange(ref _consecutiveFlushFailures, 0);
                 _lastFlushSuccessUtc = DateTime.UtcNow;
                 _lastFlushErrorMessage = null;
@@ -772,9 +1058,19 @@ namespace GxMcp.Worker.Services
                 Module = hierarchy.ModuleName,
                 LastUpdate = SafeReadDate(() => obj.LastUpdate),
                 CreatedAt = SafeReadDate(() => obj.VersionDate),
-                LastModifiedBy = SafeReadString(() => obj.UserName)
+                LastModifiedBy = SafeReadString(() => obj.UserName),
+                // This entry IS being enriched (type/embedding synchronously here; edges async
+                // via EnrichEdges). Mark it so the LIVE index entry reflects enriched state —
+                // otherwise AnalyzeService re-reads IsEnriched=false and re-promotes on every
+                // call (the enricher only flips the orphaned lite stub, not this replacement).
+                IsEnriched = true
             };
 
+            // Fase 1: advance the high-water-mark so incremental updates keep the
+            // persisted delta baseline current.
+            ObserveLastUpdate(entry.LastUpdate);
+
+            long teStart = System.Diagnostics.Stopwatch.GetTimestamp();
             if (obj is global::Artech.Genexus.Common.Objects.Attribute attr)
             {
                 entry.DataType = attr.Type.ToString();
@@ -822,11 +1118,26 @@ namespace GxMcp.Worker.Services
                 } catch { }
             }
 
+            System.Threading.Interlocked.Add(ref _enrichTypeExtractTicks, System.Diagnostics.Stopwatch.GetTimestamp() - teStart);
+
             string key = GetEntryStorageKey(entry);
-            
+
             // Compute Embedding
             string semanticText = $"{entry.Name} {entry.Type} {entry.Description} {entry.RootTable} {entry.ParmRule}";
+            long emStart = System.Diagnostics.Stopwatch.GetTimestamp();
             entry.Embedding = _vectorService.ComputeEmbedding(semanticText);
+            System.Threading.Interlocked.Add(ref _enrichEmbeddingTicks, System.Diagnostics.Stopwatch.GetTimestamp() - emStart);
+
+            // Fase 2: rename collapse. The Guid is stable across a rename but the Type:Name
+            // storage key changes — without this the old key lingers as a duplicate/stale
+            // entry. If this Guid was previously stored under a different key, drop the old one.
+            if (index.GuidToKey != null && !string.IsNullOrEmpty(entry.Guid)
+                && index.GuidToKey.TryGetValue(entry.Guid, out var oldKey)
+                && !string.Equals(oldKey, key, StringComparison.OrdinalIgnoreCase))
+            {
+                if (index.Objects.TryRemove(oldKey, out var stale) && index.ChildrenByParent != null)
+                    RemoveEntryFromParentIndex(index.ChildrenByParent, stale);
+            }
 
             // Atomic update using ConcurrentDictionary
             index.Objects.AddOrUpdate(key, entry, (k, existing) => entry);
@@ -834,8 +1145,17 @@ namespace GxMcp.Worker.Services
             {
                 AddOrUpdateEntryInParentIndex(index.ChildrenByParent, entry);
             }
+            if (index.GuidToKey != null && !string.IsNullOrEmpty(entry.Guid))
+            {
+                index.GuidToKey[entry.Guid] = key;
+            }
 
-            // ENRICHMENT: Dependencies (Calls and Tables) - ASYNCHRONOUS BACKGROUND
+            // ENRICHMENT: Dependencies (Calls/Tables/CalledBy) via GetReferences + textual scan,
+            // fire-and-forget on the background STA dispatcher. NOTE: this populates the target's
+            // OUTGOING edges (Calls) and adds the target to its callees' CalledBy lists — it does
+            // NOT populate the target's own CalledBy (incoming/callers), which only fill in as the
+            // CALLERS get enriched. So in lazy mode impact analysis (callers) correctly relies on
+            // the live SDK cross-check rather than the index — see AnalyzeService.
             Guid objGuid = obj.Guid;
             Program.EnqueueBackground(() => {
                 try {
@@ -843,69 +1163,78 @@ namespace GxMcp.Worker.Services
                     if (kb == null) return;
                     var bgObj = kb.DesignModel.Objects.Get(objGuid);
                     if (bgObj == null) return;
-
-                    var references = bgObj.GetReferences();
-                    bool changed = false;
-                    if (references != null)
-                    {
-                        foreach (dynamic reference in references)
-                        {
-                            try
-                            {
-                                dynamic targetKey = reference.To;
-                                if (targetKey == null) continue;
-                                string targetName = targetKey.Name;
-                                if (string.IsNullOrEmpty(targetName)) {
-                                    string keyStr = targetKey.ToString();
-                                    int colon = keyStr.IndexOf(':');
-                                    if (colon >= 0 && colon < keyStr.Length - 1)
-                                        targetName = keyStr.Substring(colon + 1);
-                                    else
-                                        targetName = keyStr;
-                                }
-                                if (string.IsNullOrEmpty(targetName)) continue;
-
-                                string targetType = targetKey.TypeDescriptor.Name;
-                                if (targetType == "Attribute" || targetType == "Table") {
-                                    if (!entry.Tables.Contains(targetName)) { entry.Tables.Add(targetName); changed = true; }
-                                } else {
-                                    if (!entry.Calls.Contains(targetName)) { entry.Calls.Add(targetName); changed = true; }
-                                }
-
-                                // Phase 1: Inverted Index (CalledBy)
-                                string targetIndexKey = $"{targetType}:{targetName}";
-                                if (index.Objects.TryGetValue(targetIndexKey, out var targetEntry)) {
-                                    lock (targetEntry.CalledBy) {
-                                        if (!targetEntry.CalledBy.Contains(entry.Name)) {
-                                            targetEntry.CalledBy.Add(entry.Name);
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                            } catch { }
-                        }
-                    }
-
-                    // FR#3 (friction-report 2026-05-14): GetReferences misses call sites in
-                    // Event Start blocks on some KB shapes (the impact analysis returned
-                    // totalAffected=0 with literal callers in the source). Augment with a
-                    // textual scan over Source/Events/Rules: any identifier that already
-                    // exists as a non-Attribute object in the index is treated as a call.
-                    // The hard "must exist in index" filter eliminates false positives from
-                    // keywords / language built-ins.
-                    try
-                    {
-                        bool textualChanged = EnrichCallsFromTextualScan(bgObj, entry, index);
-                        if (textualChanged) changed = true;
-                    }
-                    catch (Exception scanEx) { Logger.Debug("[FR#3] Textual call scan failed: " + scanEx.Message); }
-
-                    if (changed) Task.Run(() => FlushToDisk());
+                    EnrichEdges((global::Artech.Architecture.Common.Objects.KBObject)bgObj, entry, index);
                 } catch (Exception ex) { Logger.Error("Background Indexing Error: " + ex.Message); }
             });
-            
-            // Fire and forget save to disk
-            Task.Run(() => FlushToDisk());
+
+            // Fire and forget save to disk (throttled — see ScheduleThrottledFlush)
+            ScheduleThrottledFlush();
+        }
+
+        // Dependency enrichment (extracted so the call path is readable): populate this entry's
+        // Calls/Tables and the inverted CalledBy edges via the SDK reference graph + the FR#3
+        // textual call-site scan. Runs on the background STA dispatcher.
+        private void EnrichEdges(global::Artech.Architecture.Common.Objects.KBObject bgObj, SearchIndex.IndexEntry entry, SearchIndex index)
+        {
+            long rsStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            var references = ((dynamic)bgObj).GetReferences();
+            bool changed = false;
+            if (references != null)
+            {
+                foreach (dynamic reference in references)
+                {
+                    try
+                    {
+                        dynamic targetKey = reference.To;
+                        if (targetKey == null) continue;
+                        string targetName = targetKey.Name;
+                        if (string.IsNullOrEmpty(targetName)) {
+                            string keyStr = targetKey.ToString();
+                            int colon = keyStr.IndexOf(':');
+                            if (colon >= 0 && colon < keyStr.Length - 1)
+                                targetName = keyStr.Substring(colon + 1);
+                            else
+                                targetName = keyStr;
+                        }
+                        if (string.IsNullOrEmpty(targetName)) continue;
+
+                        string targetType = targetKey.TypeDescriptor.Name;
+                        if (targetType == "Attribute" || targetType == "Table") {
+                            if (!entry.Tables.Contains(targetName)) { entry.Tables.Add(targetName); changed = true; }
+                        } else {
+                            if (!entry.Calls.Contains(targetName)) { entry.Calls.Add(targetName); changed = true; }
+                        }
+
+                        // Inverted Index (CalledBy)
+                        string targetIndexKey = $"{targetType}:{targetName}";
+                        if (index.Objects.TryGetValue(targetIndexKey, out var targetEntry)) {
+                            lock (targetEntry.CalledBy) {
+                                if (!targetEntry.CalledBy.Contains(entry.Name)) {
+                                    targetEntry.CalledBy.Add(entry.Name);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    } catch { }
+                }
+            }
+            System.Threading.Interlocked.Add(ref _enrichRefScanTicks, System.Diagnostics.Stopwatch.GetTimestamp() - rsStart);
+
+            // FR#3 (friction-report 2026-05-14): GetReferences misses call sites in Event Start
+            // blocks on some KB shapes. Augment with a textual scan over Source/Events/Rules:
+            // any identifier that already exists as a non-Attribute object in the index is
+            // treated as a call. The hard "must exist in index" filter eliminates false
+            // positives from keywords / language built-ins.
+            long tsStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                bool textualChanged = EnrichCallsFromTextualScan(bgObj, entry, index);
+                if (textualChanged) changed = true;
+            }
+            catch (Exception scanEx) { Logger.Debug("[FR#3] Textual call scan failed: " + scanEx.Message); }
+            System.Threading.Interlocked.Add(ref _enrichTextualScanTicks, System.Diagnostics.Stopwatch.GetTimestamp() - tsStart);
+
+            if (changed) ScheduleThrottledFlush();
         }
 
         // FR#3 (friction-report 2026-05-14): textual call-site scan that augments the SDK
@@ -1006,6 +1335,9 @@ namespace GxMcp.Worker.Services
                         {
                             _hierarchyCache.TryRemove(g, out _);
                         }
+                        // Fase 2: keep the Guid→key map in sync.
+                        if (index.GuidToKey != null && !string.IsNullOrEmpty(removedEntry?.Guid))
+                            index.GuidToKey.TryRemove(removedEntry.Guid, out _);
                     }
                 }
 
@@ -1076,6 +1408,9 @@ namespace GxMcp.Worker.Services
             {
                 try { if (!string.IsNullOrEmpty(_indexPathGz) && File.Exists(_indexPathGz)) File.Delete(_indexPathGz); } catch (Exception ex) { Logger.Warn("Delete gz snapshot failed: " + ex.Message); }
                 try { if (!string.IsNullOrEmpty(_indexPath) && File.Exists(_indexPath)) File.Delete(_indexPath); } catch (Exception ex) { Logger.Warn("Delete plain snapshot failed: " + ex.Message); }
+                // Fase 1: drop the validation sidecar + hwm so a forced rebuild starts clean.
+                try { if (!string.IsNullOrEmpty(_metaPath) && File.Exists(_metaPath)) File.Delete(_metaPath); } catch (Exception ex) { Logger.Warn("Delete meta sidecar failed: " + ex.Message); }
+                ResetHighWaterMark();
             }
         }
     }

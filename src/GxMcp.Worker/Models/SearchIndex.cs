@@ -13,6 +13,12 @@ namespace GxMcp.Worker.Models
         [JsonIgnore]
         public ConcurrentDictionary<string, List<IndexEntry>> ChildrenByParent { get; set; }
 
+        // Fase 2: Guid → storage-key reverse map. A rename keeps the Guid stable but changes
+        // the Type:Name storage key, so without this a rename leaves a stale entry under the
+        // old key. Rebuilt from Objects on load/replace; not serialized (derivable).
+        [JsonIgnore]
+        public ConcurrentDictionary<string, string> GuidToKey { get; set; }
+
         public class IndexEntry
         {
             public string Guid { get; set; }

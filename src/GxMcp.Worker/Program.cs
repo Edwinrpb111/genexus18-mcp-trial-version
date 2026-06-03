@@ -227,7 +227,18 @@ namespace GxMcp.Worker
                 }
 
                 coldStartSw.Stop();
+                _sdkReadyAtMs = _processSw.ElapsedMilliseconds;
                 Logger.Info($"[COLD-START] totalMs={coldStartSw.ElapsedMilliseconds} (SM-warmup + SDK-init + KB-open until ready) kb={(string.IsNullOrEmpty(kbPath) ? "<none>" : kbPath)}");
+                // Fase 0: one consolidated line attributing the cold start so "where did the
+                // N seconds go" is answerable from a single grep. Percentages computed inline.
+                {
+                    long total = coldStartSw.ElapsedMilliseconds;
+                    long kbOpenMs = KbService.LastOpenElapsedMs;
+                    long dsMs = KbService.LastDatastoreProbeMs;
+                    long accounted = _warmupMs + _sdkInitMs + kbOpenMs;
+                    double pct(long part) => total > 0 ? Math.Round(part * 100.0 / total, 1) : 0;
+                    Logger.Info($"[COLD-START-BREAKDOWN] totalMs={total} smWarmupMs={_warmupMs} sdkInitMs={_sdkInitMs} kbOpenMs={kbOpenMs} kbOpenDatastoreMs={dsMs} unaccountedMs={Math.Max(0, total - accounted)} | smWarmupPct={pct(_warmupMs)} sdkInitPct={pct(_sdkInitMs)} kbOpenPct={pct(kbOpenMs)}");
+                }
                 Logger.Info("Worker SDK ready.");
                 // Tell the gateway the SDK is up so it can start the per-tool timeout
                 // clock only AFTER cold-start finishes (KB open + SDK init can take ~50s).
@@ -259,6 +270,9 @@ namespace GxMcp.Worker
 
 
                 // Start External KB Watcher
+                // Fase 2: pass the IndexCacheService so detected changes update the in-memory
+                // index live (keeps it warm during a session); the notification callback is
+                // unchanged.
                 var watcher = new KbWatcherService(_dispatcher.GetKbService(), (name, type, time) => {
                     SendNotification("notifications/resources/updated", new {
                         name = name,
@@ -266,7 +280,7 @@ namespace GxMcp.Worker
                         updatedAt = time,
                         external = true
                     });
-                });
+                }, _dispatcher.GetIndexCacheService());
                 watcher.Start();
 
                 var readerThread = new Thread(() => {
@@ -439,6 +453,18 @@ namespace GxMcp.Worker
         // that otherwise throws "O Service Manager já foi ativado".
         private static bool _serviceManagerActivatedByWarmup;
 
+        // Fase 0 instrumentation: per-phase cold-start elapsed captured into statics so
+        // the consolidated [COLD-START-BREAKDOWN] line can attribute totalMs across
+        // SM-warmup / SDK-init / KB-open without re-parsing separate log lines. _processSw
+        // anchors process start so [TIME-TO-USABLE] can separate the ~90s SM warmup from
+        // the object-walk (lite pass runs after sdk_ready, outside coldStartSw).
+        private static long _warmupMs = 0;
+        private static long _sdkInitMs = 0;
+        private static long _sdkReadyAtMs = 0;
+        internal static readonly System.Diagnostics.Stopwatch _processSw = System.Diagnostics.Stopwatch.StartNew();
+        internal static long ProcessElapsedMs => _processSw.ElapsedMilliseconds;
+        internal static long SdkReadyAtMs => _sdkReadyAtMs;
+
         private static void TryWarmupArtechTaskCctor(string gxPath)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -477,6 +503,7 @@ namespace GxMcp.Worker
                                  + e.GetType().FullName + ": " + e.Message);
                 }
             }
+            finally { sw.Stop(); _warmupMs = sw.ElapsedMilliseconds; }
         }
 
         private static void InitializeSdk(string gxPath)
@@ -564,6 +591,7 @@ namespace GxMcp.Worker
                     Logger.Error($"[SDK-INIT] ex[{depth}] {e.GetType().FullName}: {e.Message}");
                 }
             }
+            finally { swTotal.Stop(); _sdkInitMs = swTotal.ElapsedMilliseconds; }
         }
 
         private static void ProcessCommand(string line)

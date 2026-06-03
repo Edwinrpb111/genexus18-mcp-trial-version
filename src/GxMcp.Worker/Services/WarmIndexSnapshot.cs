@@ -37,6 +37,21 @@ namespace GxMcp.Worker.Services
 
         /// <summary>Number of objects in the captured index. Diagnostic only.</summary>
         public int ObjectCount { get; set; }
+
+        /// <summary>
+        /// Index payload schema version. Bumped whenever the IndexEntry shape changes.
+        /// A mismatch forces a full cold rebuild (IntelliJ stub-index pattern): silently
+        /// deserialising a 38k index into a different layout would corrupt it. 0 = legacy
+        /// snapshot written before versioning existed.
+        /// </summary>
+        public int SchemaVersion { get; set; }
+
+        /// <summary>
+        /// High-water-mark: the maximum KBObject.LastUpdate observed when the index was
+        /// captured (ISO-8601 UTC). On warm start, only objects changed after this are
+        /// re-indexed (delta-on-open). Null/empty = unknown → treat as epoch (full delta).
+        /// </summary>
+        public string HighWaterMarkUtc { get; set; }
     }
 
     public interface IWarmSnapshotStore
@@ -148,8 +163,16 @@ namespace GxMcp.Worker.Services
         /// Compute SHA-256 of the worker DLL. Returns empty string on I/O failure;
         /// callers should NOT treat empty as a match.
         /// </summary>
+        // Cache for the default (executing-assembly) hash — the worker DLL can't change during
+        // a process lifetime, so the multi-MB read + SHA-256 only needs to run once even though
+        // the index hot path (WriteMetaSidecar / ValidateOnDiskCache) asks for it repeatedly.
+        // An explicit workerDllPath (tests) bypasses the cache.
+        private static volatile string _cachedDefaultDllSha;
+
         public static string ComputeWorkerDllSha256(string workerDllPath = null)
         {
+            bool useDefault = string.IsNullOrEmpty(workerDllPath);
+            if (useDefault && _cachedDefaultDllSha != null) return _cachedDefaultDllSha;
             try
             {
                 workerDllPath = workerDllPath ?? Assembly.GetExecutingAssembly().Location;
@@ -160,7 +183,9 @@ namespace GxMcp.Worker.Services
                     byte[] hash = sha.ComputeHash(fs);
                     var sb = new StringBuilder(hash.Length * 2);
                     foreach (var b in hash) sb.Append(b.ToString("x2"));
-                    return sb.ToString();
+                    var result = sb.ToString();
+                    if (useDefault) _cachedDefaultDllSha = result;
+                    return result;
                 }
             }
             catch

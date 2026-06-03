@@ -34,6 +34,7 @@ namespace GxMcp.Worker.Services
         public static bool IsWriteInProgress => Volatile.Read(ref _activeWriteCount) > 0;
 
         private readonly KbService _kbService;
+        private readonly IndexCacheService _indexCache;
         private DateTime _lastCheckTime;
         private bool _isRunning = false;
         private Thread _watcherThread;
@@ -51,10 +52,11 @@ namespace GxMcp.Worker.Services
         private string _lastObservedEnvVersion;
         private bool _hasObservedEnv;
 
-        public KbWatcherService(KbService kbService, Action<string, string, DateTime> onObjectChanged)
+        public KbWatcherService(KbService kbService, Action<string, string, DateTime> onObjectChanged, IndexCacheService indexCache = null)
         {
             _kbService = kbService;
             _onObjectChanged = onObjectChanged;
+            _indexCache = indexCache;
             _lastCheckTime = DateTime.UtcNow; // Changed to UtcNow because KBObject.LastUpdate uses UTC. This prevents an initial flood of notifications.
         }
 
@@ -217,6 +219,13 @@ namespace GxMcp.Worker.Services
                         }
 
                         Logger.Info($"External change detected: {obj.Name} ({obj.TypeDescriptor.Name}) at {obj.LastUpdate}");
+                        // Fase 2: keep the in-memory index warm on live edits. The watcher
+                        // thread is STA and already holds the KBObject, so UpdateEntry runs in
+                        // the right context. This re-enriches the changed object (and collapses
+                        // renames via Guid — see UpdateEntry) without waiting for a reindex.
+                        // Skipped during write transactions by the IsWriteInProgress gate above.
+                        try { _indexCache?.UpdateEntry((global::Artech.Architecture.Common.Objects.KBObject)obj); }
+                        catch (Exception ixe) { Logger.Debug($"Watcher index update failed for {obj.Name}: {ixe.Message}"); }
                         _onObjectChanged?.Invoke(obj.Name, obj.TypeDescriptor.Name, obj.LastUpdate);
                     }
 

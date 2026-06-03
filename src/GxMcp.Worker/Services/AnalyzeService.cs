@@ -353,7 +353,7 @@ namespace GxMcp.Worker.Services
                         {
                             ["callers"] = sdkCallers,
                             ["callees"] = sdkCallees,
-                            ["note"] = "Index call-graph was empty for this object; these edges come from the live SDK reference graph. Run genexus_lifecycle(action='index', force=true) to make impact analysis authoritative."
+                            ["note"] = "Index call-graph edges weren't populated for this object yet; these edges come from the live SDK reference graph, which is authoritative. With lazy enrichment (default) the index edges fill in on demand — re-running impact for the same target shortly will use them. (force=true does NOT eagerly enrich in lazy mode.)"
                         };
                     }
                     else

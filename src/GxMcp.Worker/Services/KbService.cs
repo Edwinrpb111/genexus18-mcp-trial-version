@@ -24,6 +24,12 @@ namespace GxMcp.Worker.Services
         private static volatile bool _isIndexing = false;
         private static volatile string _currentStatus = "";
 
+        // Fase 0 instrumentation: last KB-open / datastore-probe elapsed, so Program.cs
+        // can attribute them in the consolidated [COLD-START-BREAKDOWN] line without
+        // re-parsing the per-phase log lines.
+        public static long LastOpenElapsedMs = 0;
+        public static long LastDatastoreProbeMs = 0;
+
         private dynamic _kb;
         private bool _isOpenInProgress = false;
         private readonly object _kbLock = new object();
@@ -121,14 +127,20 @@ namespace GxMcp.Worker.Services
                         NormalizeGxwVersionMetadata(path);
 
                         sw.Stop();
+                        LastOpenElapsedMs = sw.ElapsedMilliseconds;
                         Logger.Info($"[KB-OPEN] elapsedMs={sw.ElapsedMilliseconds} path={path}");
                         // Diagnostic (read-only, no DB connect): record which data store the
                         // active environment points at. The GeneXus SDK may try to reach this
                         // server during open; when it's unreachable, KB-OPEN above balloons or
                         // hangs. This line lets a slow/hung open be correlated with the target
                         // DB from worker_debug.log alone. Best-effort — never gates readiness.
+                        // Fase 0: time the probe separately — it does SDK metadata reads and can
+                        // balloon if the DB server is unreachable, masquerading as slow KB-open.
+                        var dsSw = Stopwatch.StartNew();
                         try { Logger.Info($"[KB-OPEN-DATASTORE] {DescribeActiveDataStore(_kb)}"); }
                         catch (Exception dsEx) { Logger.Debug($"[KB-OPEN-DATASTORE] probe failed: {dsEx.Message}"); }
+                        dsSw.Stop();
+                        LastDatastoreProbeMs = dsSw.ElapsedMilliseconds;
                         return Models.McpResponse.Ok(
                             target: path,
                             code: "KbOpened",
@@ -386,6 +398,15 @@ namespace GxMcp.Worker.Services
                 int waitMs = 0;
                 while (waitMs < 15000 && !_indexCacheService.IsInitialized)
                 {
+                    // Fase 1: resolve the on-disk cache path NOW (post-OpenKB GetKBPath is valid)
+                    // so force=true and the warm-start read path agree on a single location —
+                    // both must hit %LOCALAPPDATA%\…\index_{hash}.*, never the constructor's
+                    // <BaseDir>\cache\search_index.* fallback. Without this the delta sidecar
+                    // written under one path is invisible to the other (metaPresent=False).
+                    // proactiveLoad:!force — on force we're about to Clear()/DeleteOnDiskSnapshot(),
+                    // so don't kick a background GetIndex() that would race and republish stale data.
+                    _indexCacheService.EnsureInitialized(proactiveLoad: !force);
+                    if (_indexCacheService.IsInitialized) break;
                     Thread.Sleep(200);
                     waitMs += 200;
                 }
@@ -405,9 +426,22 @@ namespace GxMcp.Worker.Services
                     var loaded = _indexCacheService.GetIndex();
                     if (loaded != null && loaded.Objects.Count > 0)
                     {
-                        try { _indexCacheService.MarkIndexComplete(loaded.Objects.Count); } catch { }
-                        Logger.Info($"BulkIndex(fast) skipped — cache already populated ({loaded.Objects.Count} objects).");
-                        return "{\"status\":\"AlreadyIndexed\",\"objects\":" + loaded.Objects.Count + ",\"path\":\"fast\"}";
+                        // Fase 1: instead of trusting the cache forever, validate it and run a
+                        // bounded delta refresh (only objects changed since the persisted
+                        // high-water-mark). The loaded index serves reads immediately; the
+                        // delta runs in the background. Falls through to a full rebuild when the
+                        // cache isn't delta-eligible (legacy/no-sidecar, schema or worker-DLL
+                        // change, or a body left partially enriched by a crashed worker).
+                        var validation = _indexCacheService.ValidateOnDiskCache();
+                        if (Configuration.UseDeltaOnOpen && validation.CanDelta)
+                        {
+                            try { _indexCacheService.MarkIndexComplete(loaded.Objects.Count); } catch { }
+                            _isIndexing = true;
+                            StartDeltaRefreshThread(validation.HighWaterMark, loaded.Objects.Count);
+                            Logger.Info($"BulkIndex(fast): warm cache delta-eligible ({loaded.Objects.Count} objects, hwm={validation.HighWaterMark:o}) — delta refresh started.");
+                            return "{\"status\":\"DeltaStarted\",\"objects\":" + loaded.Objects.Count + ",\"hint\":\"Index is usable now from the warm cache; objects changed since last index are being refreshed in the background.\"}";
+                        }
+                        Logger.Info($"BulkIndex(fast): cache present but not delta-eligible (canDelta={validation.CanDelta} metaPresent={validation.MetaPresent} schemaMatch={validation.SchemaMatch} dllMatch={validation.DllMatch}) — full rebuild to re-establish the delta baseline.");
                     }
                 }
             }
@@ -436,11 +470,25 @@ namespace GxMcp.Worker.Services
                     _currentStatus = "Lite-index pass: walking KB objects...";
                     Logger.Info(_currentStatus);
 
+                    // Fase 0 instrumentation: split the lite-pass wall-clock into
+                    // enumerator-materialization vs per-object COM property reads vs
+                    // in-loop snapshot flush, plus per-object-type counts and time.
+                    // Uses Stopwatch.GetTimestamp() tick accumulators (no per-object
+                    // Stopwatch object) so the overhead is negligible against the
+                    // ~30ms-per-object COM marshalling cost.
+                    var enumSw = Stopwatch.StartNew();
                     var objectList = (System.Collections.IEnumerable)kb.DesignModel.Objects;
+                    enumSw.Stop();
+                    Logger.Info($"[LITE-ENUM] elapsedMs={enumSw.ElapsedMilliseconds}");
+
                     var liteEntries = new List<SearchIndex.IndexEntry>();
+                    long readTicks = 0, flushTicks = 0;
+                    // value: [0]=accumulated read ticks, [1]=object count
+                    var typeBuckets = new Dictionary<string, long[]>(StringComparer.Ordinal);
 
                     foreach (global::Artech.Architecture.Common.Objects.KBObject obj in objectList)
                     {
+                        long objStart = Stopwatch.GetTimestamp();
                         _totalCount++;
                         string typeName = null;
                         try { typeName = obj.TypeDescriptor?.Name; } catch { }
@@ -458,6 +506,8 @@ namespace GxMcp.Worker.Services
                         try { lu = obj.LastUpdate; } catch { }
                         try { ca = obj.VersionDate; } catch { }
                         try { lub = obj.UserName; } catch { }
+                        // Fase 1: track the delta baseline (max LastUpdate) during the walk.
+                        if (lu != DateTime.MinValue) _indexCacheService.ObserveLastUpdate(lu);
 
                         liteEntries.Add(new SearchIndex.IndexEntry
                         {
@@ -471,6 +521,16 @@ namespace GxMcp.Worker.Services
                             IsEnriched = false
                         });
 
+                        long objTicks = Stopwatch.GetTimestamp() - objStart;
+                        readTicks += objTicks;
+                        if (!typeBuckets.TryGetValue(typeName, out var bucket))
+                        {
+                            bucket = new long[2];
+                            typeBuckets[typeName] = bucket;
+                        }
+                        bucket[0] += objTicks;
+                        bucket[1]++;
+
                         // v2.6.9 perf: stream partial snapshots during the lite walk
                         // so list_objects / query / inspect become usable while the
                         // walk is still in progress. SDK property reads run ~30ms
@@ -479,12 +539,14 @@ namespace GxMcp.Worker.Services
                         // 5k-object KB vs ~108s for the full lite pass.
                         if (_totalCount == 100 || (_totalCount > 100 && _totalCount % 500 == 0))
                         {
+                            long flushStart = Stopwatch.GetTimestamp();
                             try
                             {
                                 _indexCacheService.ReplaceAll(new List<SearchIndex.IndexEntry>(liteEntries));
                                 _indexCacheService.MarkUltraLiteReady(_totalCount);
                             }
                             catch { /* best-effort; full ReplaceAll at end is authoritative */ }
+                            flushTicks += Stopwatch.GetTimestamp() - flushStart;
                         }
 
                         if (_totalCount % 500 == 0) Thread.Sleep(1);
@@ -505,41 +567,92 @@ namespace GxMcp.Worker.Services
                     _indexCacheService.ReplaceAll(liteEntries);
                     _indexCacheService.MarkLitePassComplete(_totalCount);
 
+                    // Fase 1 (robustness): persist the lite catalogue + a delta-eligible sidecar
+                    // NOW, not only at full-enrichment completion. On a large KB the enrichment
+                    // drain can run for many minutes and the worker may be idle-evicted before it
+                    // finishes — in which case a completion-only sidecar would never be written and
+                    // every warm start would full-rebuild. Writing it here makes warm start
+                    // delta-eligible immediately; DeltaRefreshOnOpen resumes enrichment for any
+                    // entries still flagged IsEnriched=false.
+                    try { _indexCacheService.FlushNow(); _indexCacheService.WriteMetaSidecar(_totalCount); }
+                    catch (Exception fx) { Logger.Warn("Lite-complete flush/sidecar failed: " + fx.Message); }
+
                     // Wire the enrichment queue BEFORE starting the background drain, so callers
                     // that hit ImpactAnalysis the moment LiteReady is published can promote
                     // their target on demand without a race window.
-                    var enricher = new IndexEntryEnricher(e =>
-                    {
-                        try
-                        {
-                            if (string.IsNullOrEmpty(e?.Guid)) return;
-                            if (!Guid.TryParse(e.Guid, out var g)) return;
-                            var fullObj = kb.DesignModel.Objects.Get(g);
-                            if (fullObj == null) return;
-                            _indexCacheService.UpdateEntry(fullObj);
-                        }
-                        catch (Exception ex) { Logger.Warn("Enrich " + (e != null ? e.Name : "?") + " failed: " + ex.Message); }
-                    });
-
-                    var queue = new EnrichmentQueue(enricher);
-                    foreach (var entry in liteEntries) queue.Enqueue(entry);
+                    var queue = new EnrichmentQueue(BuildEnricher(kb, "Enrich"));
+                    // Wire the queue regardless of mode so AnalyzeService etc. can PromoteAsync a
+                    // specific target on demand. Only the EAGER mode pre-enqueues all 38k for the
+                    // background drain; lazy mode leaves enrichment fully on-demand.
+                    if (!Configuration.LazyEnrichment)
+                        foreach (var entry in liteEntries) queue.Enqueue(entry);
                     _indexCacheService.SetEnrichmentQueue(queue);
 
                     liteSw.Stop();
-                    _currentStatus = $"Lite pass complete: {_totalCount} objects. Enriching in background...";
-                    Logger.Info($"[BULK-INDEX-LITE] elapsedMs={liteSw.ElapsedMilliseconds} objects={_totalCount}");
+                    _currentStatus = $"Lite pass complete: {_totalCount} objects.";
+
+                    // Fase 0: attribute the lite-pass wall-clock. readMs is the headline —
+                    // if it ~= elapsedMs the COM property reads dominate (and the walk is
+                    // STA-bound, not parallelizable); flushMs is the in-loop snapshot cost.
+                    double tickToMs = 1000.0 / Stopwatch.Frequency;
+                    Logger.Info($"[LITE-WALK] readMs={(long)(readTicks * tickToMs)} flushMs={(long)(flushTicks * tickToMs)} objects={_totalCount}");
+                    // Per-type counts + time, sorted desc by total read time, so we can see
+                    // which object type dominates (e.g. Attributes on a large KB).
+                    string typeBreakdown = string.Join(" ", typeBuckets
+                        .OrderByDescending(kv => kv.Value[0])
+                        .Select(kv => $"{kv.Key}={kv.Value[1]}/{(long)(kv.Value[0] * tickToMs)}ms"));
+                    Logger.Info($"[LITE-TYPE-BREAKDOWN] {typeBreakdown}");
+                    Logger.Info($"[BULK-INDEX-LITE] elapsedMs={liteSw.ElapsedMilliseconds} objects={_totalCount} typesDistinct={typeBuckets.Count}");
+
+                    if (Configuration.LazyEnrichment)
+                    {
+                        // Fase 3 (lazy enrichment): the eager drain of all 38k objects was the
+                        // dominant cost (~20min, ~91% of it STA-bound SDK reads per the measured
+                        // split: textualScan ~51% + typeExtract ~40%). Most objects are never
+                        // queried in a session, so enriching them all up front is mostly wasted.
+                        // Instead the full catalogue (LiteReady) is published as Ready now, and
+                        // edges/snippets/embeddings are filled in on demand via
+                        // EnrichmentQueue.PromoteAsync when a tool (e.g. analyze/impact) needs a
+                        // specific target. The lite-complete sidecar already persisted above keeps
+                        // warm start delta-eligible.
+                        _processedCount = _totalCount;
+                        _indexCacheService.MarkIndexComplete(_totalCount);
+                        bulkSw.Stop();
+                        _currentStatus = "Complete";
+                        _isIndexing = false;
+                        Logger.Info($"[ENRICH-LAZY] eager drain skipped — {_totalCount} objects catalogued, enrichment on-demand. litePassMs={liteSw.ElapsedMilliseconds}");
+                        return;
+                    }
 
                     var enrichThread = new Thread(() =>
                     {
                         try
                         {
                             _indexCacheService.MarkEnrichmentStarted();
+                            var enrichSw = Stopwatch.StartNew();
+                            Logger.Info($"[ENRICH-START] pending={_totalCount} litePassMs={liteSw.ElapsedMilliseconds}");
 
                             queue.DrainAsync().GetAwaiter().GetResult();
                             _processedCount = _totalCount;
                             _indexCacheService.MarkIndexComplete(_totalCount);
+                            // Fase 0.5: coalesced final flush — the per-object enrichment
+                            // flushes are now throttled (30s), so force one write here to
+                            // guarantee the fully-enriched index reaches disk.
+                            // Fase 1: only NOW (enrichment fully drained) write the validation
+                            // sidecar — its presence marks the on-disk body as delta-eligible.
+                            try
+                            {
+                                _indexCacheService.FlushNow();
+                                _indexCacheService.WriteMetaSidecar(_totalCount);
+                            }
+                            catch (Exception fx) { Logger.Warn("Final enrich flush/sidecar failed: " + fx.Message); }
+                            enrichSw.Stop();
                             bulkSw.Stop();
                             _currentStatus = "Complete";
+                            // Per-sub-step split: typeExtract+embedding are synchronous in the
+                            // drain; refScan+textualScan run on the background dispatcher and
+                            // may still be accumulating here (see GetEnrichTimingSummary note).
+                            Logger.Info($"[ENRICH-DONE] elapsedMs={enrichSw.ElapsedMilliseconds} processed={_totalCount} {IndexCacheService.GetEnrichTimingSummary()}");
                             Logger.Info($"[BULK-INDEX-FULL] elapsedMs={bulkSw.ElapsedMilliseconds} processed={_totalCount}");
                         }
                         catch (Exception ex)
@@ -573,6 +686,145 @@ namespace GxMcp.Worker.Services
             liteThread.Start();
 
             return "{\"status\":\"LiteStarted\",\"hint\":\"list_objects is usable after a few seconds; analyze impact uses on-demand enrichment.\"}";
+        }
+
+        // Shared enrich-one-entry closure used by the lite-pass queue, the delta resume queue,
+        // and on-demand PromoteAsync: resolve the full SDK object by Guid and UpdateEntry it.
+        private IndexEntryEnricher BuildEnricher(dynamic kb, string logLabel)
+        {
+            return new IndexEntryEnricher(e =>
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(e?.Guid)) return;
+                    if (!Guid.TryParse(e.Guid, out var g)) return;
+                    var fullObj = kb.DesignModel.Objects.Get(g);
+                    if (fullObj == null) return;
+                    _indexCacheService.UpdateEntry(fullObj);
+                }
+                catch (Exception ex) { Logger.Warn(logLabel + " " + (e != null ? e.Name : "?") + " failed: " + ex.Message); }
+            });
+        }
+
+        // Fase 1: bounded delta refresh on warm start. The in-memory index is already
+        // hydrated from the validated on-disk cache and serving reads; here we ask the SDK
+        // (same GetKeys(timestamp) primitive KbWatcherService uses) for objects changed
+        // since the persisted high-water-mark, re-index ONLY those, advance the hwm, and
+        // re-persist. This replaces the full 38k re-walk on every warm start.
+        // NOTE (Fase 1 scope): deletions/renames-to-a-new-key are not reconciled here — a
+        // deleted object lingers as a stale entry until a force reindex. Fase 2 wires the
+        // watcher + a Guid key-set diff to handle that.
+        private void StartDeltaRefreshThread(DateTime highWaterMark, int loadedCount)
+        {
+            var deltaThread = new Thread(() =>
+            {
+                var sw = Stopwatch.StartNew();
+                int changed = 0;
+                try
+                {
+                    dynamic kb = GetKB();
+                    if (kb == null) { _currentStatus = "Error: KB not open"; return; }
+
+                    // Wire the on-demand enrichment queue NOW (lazy OR eager) so AnalyzeService can
+                    // PromoteAsync a target after a warm-start restart. The lite pass is the only
+                    // other place that sets it and it doesn't run on a warm delta — without this the
+                    // queue stays null post-restart and on-demand enrichment silently never happens.
+                    var enrichQueue = new EnrichmentQueue(BuildEnricher(kb, "Resume-enrich"));
+                    _indexCacheService.SetEnrichmentQueue(enrichQueue);
+
+                    // 2s safety margin for clock granularity / same-second edits (mirrors the
+                    // watcher's > hwm re-filter below).
+                    DateTime safeHwm = highWaterMark.AddSeconds(-2);
+                    DateTime newHwm = highWaterMark;
+
+                    var changedKeys = kb.DesignModel.Objects.GetKeys(safeHwm);
+                    foreach (var key in (System.Collections.IEnumerable)changedKeys)
+                    {
+                        try
+                        {
+                            var obj = kb.DesignModel.Objects.Get((Artech.Udm.Framework.EntityKey)key);
+                            if (obj == null) continue;
+                            if (obj.LastUpdate <= safeHwm) continue; // re-filter like KbWatcherService
+                            _indexCacheService.UpdateEntry(obj);
+                            if (obj.LastUpdate > newHwm) newHwm = obj.LastUpdate;
+                            changed++;
+                        }
+                        catch { /* skip individual object failures */ }
+                    }
+
+                    // Fase 2: authoritative deletion sweep, count-gated. GetKeys(hwm) never
+                    // reports deletions, so a deleted object would linger as a stale entry.
+                    // Only walk current GUIDs when the live object count dropped below the
+                    // stored count — the common no-deletion case stays a fast delta.
+                    int deleted = 0;
+                    try
+                    {
+                        var idx = _indexCacheService.GetIndex();
+                        int storedCount = idx.Objects.Count;
+                        int currentCount = -1;
+                        try { currentCount = (int)kb.DesignModel.Objects.Count; } catch { currentCount = -1; }
+                        if (currentCount >= 0 && currentCount < storedCount && idx.GuidToKey != null)
+                        {
+                            var currentGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (global::Artech.Architecture.Common.Objects.KBObject o in (System.Collections.IEnumerable)kb.DesignModel.Objects)
+                            {
+                                try { currentGuids.Add(o.Guid.ToString()); } catch { }
+                            }
+                            foreach (var storedGuid in idx.GuidToKey.Keys.ToList())
+                            {
+                                if (!currentGuids.Contains(storedGuid)) { _indexCacheService.RemoveEntryByGuid(storedGuid); deleted++; }
+                            }
+                            if (deleted > 0) Logger.Info($"[DELTA-DELETIONS] removed={deleted} storedCount={storedCount} currentCount={currentCount}");
+                        }
+                    }
+                    catch (Exception dex) { Logger.Warn("Delta deletion sweep failed: " + dex.Message); }
+
+                    _indexCacheService.ObserveLastUpdate(newHwm);
+                    _indexCacheService.MarkIndexComplete(loadedCount);
+                    // Persist the merged body + refreshed sidecar (advances the hwm baseline).
+                    try { _indexCacheService.FlushNow(); _indexCacheService.WriteMetaSidecar(loadedCount); }
+                    catch (Exception fx) { Logger.Warn("Delta refresh flush/sidecar failed: " + fx.Message); }
+
+                    sw.Stop();
+                    Logger.Info($"[DELTA-REFRESH] elapsedMs={sw.ElapsedMilliseconds} changed={changed} deleted={deleted} hwmBefore={highWaterMark:o} hwmAfter={newHwm:o} objects={loadedCount}");
+
+                    // Fase 1 (robustness): if the persisted body was lite-only or partially
+                    // enriched (worker evicted mid-enrichment before), resume enrichment for the
+                    // still-un-enriched entries so the warm cache converges to fully enriched.
+                    // Embedding==null is the reliable "not enriched" signal.
+                    // Fase 3: in lazy mode we DON'T resume-drain everything — changed objects were
+                    // already enriched in the delta loop above; the rest stay on-demand.
+                    var pendingEnrich = Configuration.LazyEnrichment
+                        ? new System.Collections.Generic.List<SearchIndex.IndexEntry>()
+                        : _indexCacheService.GetUnenrichedEntries();
+                    if (pendingEnrich.Count > 0)
+                    {
+                        Logger.Info($"[DELTA-RESUME-ENRICH] pending={pendingEnrich.Count}");
+                        foreach (var e in pendingEnrich) enrichQueue.Enqueue(e);
+                        _indexCacheService.MarkEnrichmentStarted();
+                        enrichQueue.DrainAsync().GetAwaiter().GetResult();
+                        _indexCacheService.MarkIndexComplete(loadedCount);
+                        try { _indexCacheService.FlushNow(); _indexCacheService.WriteMetaSidecar(loadedCount); }
+                        catch (Exception fx) { Logger.Warn("Resume-enrich flush/sidecar failed: " + fx.Message); }
+                        Logger.Info($"[DELTA-RESUME-ENRICH-DONE] enriched={pendingEnrich.Count} {IndexCacheService.GetEnrichTimingSummary()}");
+                    }
+
+                    _currentStatus = "Complete";
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("[DELTA-REFRESH-FAIL] error=" + ex.Message);
+                    _currentStatus = "Error: " + ex.Message;
+                }
+                finally { _isIndexing = false; }
+            })
+            {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+                Name = "GxMcp-Delta"
+            };
+            deltaThread.SetApartmentState(ApartmentState.STA);
+            deltaThread.Start();
         }
 
         // v2.3.8 (post-self-review) — force flag closes the "stale snapshot" gap.
