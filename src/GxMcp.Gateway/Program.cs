@@ -1473,20 +1473,31 @@ namespace GxMcp.Gateway
                         continue;
                     }
 
-                    try
+                    // Dispatch each request concurrently so a slow tool call (worker
+                    // cold-start, index build, edit reapply, self-refresh) can't park
+                    // the read loop and starve the host's keepalive `ping` — the symptom
+                    // behind the IDE's "MCP Server parou de responder" popup while idle.
+                    // JSON-RPC correlates responses by id, so out-of-order replies are
+                    // spec-legal; TryWriteStdout serializes writes via _stdoutGate and
+                    // _currentKb is AsyncLocal, so each dispatched request keeps its own
+                    // KB routing.
+                    string capturedLine = line;
+                    _ = Task.Run(async () =>
                     {
-                        var request = JObject.Parse(line);
-                        string requestId = request["id"]?.ToString() ?? "unknown";
-                        var response = await ProcessMcpRequest(request);
-                        if (response != null)
+                        try
                         {
-                            await TryWriteStdout(response.ToString(Formatting.None));
+                            var request = JObject.Parse(capturedLine);
+                            var response = await ProcessMcpRequest(request);
+                            if (response != null)
+                            {
+                                await TryWriteStdout(response.ToString(Formatting.None));
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log("MCP Error: " + ex.Message);
-                    }
+                        catch (Exception ex)
+                        {
+                            Log("MCP Error: " + ex.Message);
+                        }
+                    });
                 }
             }
             else if (config.Server?.HttpPort > 0)

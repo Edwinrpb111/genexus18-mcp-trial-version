@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.9.1 — 2026-06-09
+
+### Fixed
+
+- **The MCP server no longer shows "parou de responder" / "stopped responding" while idle.** The host's periodic keepalive `ping` was processed in the same single-file queue as tool calls, so a long-running request (a cold start, an index build, an edit reapply, or a background index refresh) blocked the gateway from answering the ping until it finished — and the IDE declared the server unresponsive even when you weren't actively using it. Pings and other lightweight protocol messages are now answered immediately regardless of what heavier work is in flight.
+
 ## v2.9.0 — 2026-06-03
 
 ### Added
