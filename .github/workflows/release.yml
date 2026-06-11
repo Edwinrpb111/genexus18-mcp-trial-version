@@ -134,7 +134,9 @@ jobs:
 
       - name: Install dependencies
         if: steps.npm_check.outputs.already_published == 'false'
-        run: npm install
+        # --force: package.json declares os=win32 (correct for end users);
+        # the linux publish runner only needs devDependencies to run npm publish.
+        run: npm install --force
 
       - name: Enforce OIDC-only npm auth
         if: steps.npm_check.outputs.already_published == 'false'
