@@ -193,6 +193,22 @@ if ($needsBump) {
         }
         Ok "GxMcp.Gateway.csproj → $Version"
     }
+
+    # GxMcp.Worker.csproj — same four version properties (the artefact-stamp
+    # validation in step 5 compares the Worker exe against the release version).
+    $workerCsprojPath = Join-Path $root 'src\GxMcp.Worker\GxMcp.Worker.csproj'
+    if (Test-Path $workerCsprojPath) {
+        if (-not $DryRun) {
+            $raw = Get-Content $workerCsprojPath -Raw
+            $bumped = $raw `
+                -replace '(<Version>)[^<]+(</Version>)',                       "`${1}$Version`${2}" `
+                -replace '(<AssemblyVersion>)[^<]+(</AssemblyVersion>)',       "`${1}$Version.0`${2}" `
+                -replace '(<FileVersion>)[^<]+(</FileVersion>)',               "`${1}$Version.0`${2}" `
+                -replace '(<InformationalVersion>)[^<]+(</InformationalVersion>)', "`${1}$Version`${2}"
+            [System.IO.File]::WriteAllText($workerCsprojPath, $bumped, [System.Text.UTF8Encoding]::new($false))
+        }
+        Ok "GxMcp.Worker.csproj → $Version"
+    }
 } else {
     Ok "Version unchanged — skipping bump."
 }
