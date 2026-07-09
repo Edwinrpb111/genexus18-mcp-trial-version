@@ -1429,8 +1429,9 @@ namespace GxMcp.Worker.Services
                             return _learningReportService.Report(args?["since"]?.ToString(), args?["until"]?.ToString());
                         break;
                     case "gxserver":
-                        // genexus_gxserver — read-only surface for GxServer sync state.
-                        // No SDK calls; probes metadata files under the KB root.
+                        // genexus_gxserver — GxServer sync state (SDK-backed) plus
+                        // write actions (commit/update/lock/resolve), routed inside
+                        // GxServerSyncService.Run to the sibling GxServerWriteService.
                         return _gxServerSyncService.Run(args ?? new JObject());
                     case "sdpanel":
                         return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);

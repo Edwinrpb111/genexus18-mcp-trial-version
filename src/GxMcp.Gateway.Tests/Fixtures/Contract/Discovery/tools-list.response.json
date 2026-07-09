@@ -1059,12 +1059,12 @@
     },
     {
       "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
+        "destructiveHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
-        "readOnlyHint": true
+        "readOnlyHint": false
       },
-      "description": "Surface GxServer sync state (status/pending/conflicts/history). Read-only v1. Returns {connected:false} when KB is not linked.",
+      "description": "GxServer (Team Development) sync. Read: status|pending|conflicts|history. Write (destructive; requires a GXserver-linked KB): commit (message) | update | lock (target) | resolve (targets[] via MarkAsResolved). Returns {connected:false} when KB is not linked.",
       "inputSchema": {
         "examples": [
           {
@@ -1073,6 +1073,16 @@
           {
             "action": "history",
             "limit": 20
+          },
+          {
+            "action": "commit",
+            "message": "Fix Customer validation"
+          },
+          {
+            "action": "resolve",
+            "targets": [
+              "Customer"
+            ]
           }
         ],
         "properties": {
@@ -1081,9 +1091,17 @@
               "status",
               "pending",
               "conflicts",
-              "history"
+              "history",
+              "commit",
+              "update",
+              "lock",
+              "resolve"
             ],
             "type": "string"
+          },
+          "force": {
+            "description": "commit: force commit despite pending server-side changes.",
+            "type": "boolean"
           },
           "kb": {
             "description": "KB alias.",
@@ -1092,6 +1110,21 @@
           "limit": {
             "description": "history only; default 10, max 200.",
             "type": "integer"
+          },
+          "message": {
+            "description": "commit: commit comment.",
+            "type": "string"
+          },
+          "target": {
+            "description": "lock: object name to lock.",
+            "type": "string"
+          },
+          "targets": {
+            "description": "resolve: object names with an active conflict to mark resolved.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
