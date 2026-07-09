@@ -323,6 +323,17 @@ namespace GxMcp.Gateway.Routers
                         @params = args
                     };
 
+                // genexus_merge — WRITE surface over the SDK's IMergeService (2-way/3-way
+                // object merge). No SDK calls happen in the gateway; worker resolves both/
+                // three objects and calls IMergeService.MergeObjects. dryRun defaults true.
+                case "genexus_merge":
+                    return new
+                    {
+                        module = "Merge",
+                        action = "Run",
+                        @params = args
+                    };
+
                 // Item 71 — gh CLI passthrough.
                 case "genexus_github":
                     return new

@@ -87,6 +87,8 @@ namespace GxMcp.Worker.Services
         private readonly GxServerSyncService _gxServerSyncService;
         // genexus_compare — read-only IComparerService surface ("Compare Objects" parity).
         private readonly CompareService _compareService;
+        // genexus_merge — WRITE IMergeService surface (2-way/3-way object merge).
+        private readonly MergeToolService _mergeToolService;
         private readonly SdPanelService _sdPanelService;
         private readonly MultiAgentLockService _multiAgentLockService;
         private readonly WhatIfService _whatIfService;
@@ -196,6 +198,7 @@ namespace GxMcp.Worker.Services
             _learningReportService = new LearningReportService(_kbService);
             _gxServerSyncService = new GxServerSyncService(_kbService);
             _compareService = new CompareService(_kbService, _objectService);
+            _mergeToolService = new MergeToolService(_kbService, _objectService);
             _sdPanelService = new SdPanelService(_objectService, _writeService);
             _multiAgentLockService = new MultiAgentLockService(_kbService);
             _whatIfService = new WhatIfService(_analyzeService, _objectService);
@@ -1439,6 +1442,10 @@ namespace GxMcp.Worker.Services
                         // genexus_compare — read-only IDE "Compare Objects" parity over
                         // the SDK's IComparerService. See docs/sdk_coverage_gap_matrix.md P0 #2.
                         return _compareService.Run(args ?? new JObject());
+                    case "merge":
+                        // genexus_merge — WRITE surface over the SDK's IMergeService.
+                        // dryRun defaults true (see MergeToolService). destructiveHint=true.
+                        return _mergeToolService.Run(args ?? new JObject());
                     case "sdpanel":
                         return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
                     case "multiagentlock":
