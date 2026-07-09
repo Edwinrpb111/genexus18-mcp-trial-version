@@ -1488,23 +1488,54 @@ namespace GxMcp.Worker.Services
                         || partName.Equals("Code", StringComparison.OrdinalIgnoreCase))
                     && GxMcp.Worker.Helpers.DesignSystemSourceSplitter.TrySplit(decodedCode, out string dsTokens, out string dsStyles))
                 {
-                    if (dsStyles != null)
+                    // A Design System keeps tokens and styles in two separate ISource parts.
+                    // The generic "Source"/"Code" write carries one combined blob; split it and
+                    // route each block to its own part. The main write path below handles ONE
+                    // part (with the no-change guard + snapshot + save); the other block, when it
+                    // has changed, is applied here as a side-effect and rides the single obj.Save().
+                    //
+                    // Critical: the main target must be a block that ACTUALLY changed, and the
+                    // side-effect must only touch a part when it changed. Redirecting the main
+                    // write to an unchanged block makes the no-change guard return WriteNoChange
+                    // WITHOUT calling Save(), which silently drops the changed sibling written as
+                    // a side-effect. GetPart("Tokens"/"Styles") resolves to the same instances
+                    // used here, so comparisons/sets are on the real parts.
+                    var tokensSrcPart = GxMcp.Worker.Structure.PartAccessor.GetDesignSystemPart(obj, styles: false) as global::Artech.Architecture.Common.Objects.ISource;
+                    var stylesSrcPart = GxMcp.Worker.Structure.PartAccessor.GetDesignSystemPart(obj, styles: true) as global::Artech.Architecture.Common.Objects.ISource;
+
+                    bool tokensChanged = dsTokens != null && tokensSrcPart != null
+                        && !WritePolicy.IsUnchangedSourceWrite(tokensSrcPart.Source, dsTokens);
+                    bool stylesChanged = dsStyles != null && stylesSrcPart != null
+                        && !WritePolicy.IsUnchangedSourceWrite(stylesSrcPart.Source, dsStyles);
+
+                    if (tokensChanged)
                     {
-                        var stylesPart = GxMcp.Worker.Structure.PartAccessor.GetDesignSystemPart(obj, styles: true);
-                        if (stylesPart is global::Artech.Architecture.Common.Objects.ISource stylesSrc)
+                        // Tokens is the main write. If styles also changed, apply it as a
+                        // side-effect so both persist on the single save.
+                        if (stylesChanged)
                         {
-                            stylesSrc.Source = dsStyles;
-                            Logger.Info("[DSO-SPLIT] Wrote styles block to Styles part (" + dsStyles.Length + " chars).");
+                            stylesSrcPart.Source = dsStyles;
+                            Logger.Info("[DSO-SPLIT] Wrote styles block to Styles part as side-effect (" + dsStyles.Length + " chars).");
                         }
+                        partName = "Tokens";
+                        decodedCode = dsTokens;
                     }
-                    if (dsTokens != null)
+                    else if (stylesChanged)
                     {
+                        // Only styles changed — make it the main write directly; no side-effect,
+                        // so the no-change guard compares the real (unwritten) Styles part.
+                        partName = "Styles";
+                        decodedCode = dsStyles;
+                    }
+                    else if (dsTokens != null)
+                    {
+                        // Neither block changed (or parts unresolved) — fall through with Tokens
+                        // as the target so the guard returns a legitimate WriteNoChange.
                         partName = "Tokens";
                         decodedCode = dsTokens;
                     }
                     else if (dsStyles != null)
                     {
-                        // Only a styles block was supplied — target it directly.
                         partName = "Styles";
                         decodedCode = dsStyles;
                     }

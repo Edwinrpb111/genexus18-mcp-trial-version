@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.13.1 — 2026-07-08
+
+Follow-up to the v2.13.0 Design System work: editing a Design System now actually saves, and a worker that shut down for inactivity comes back on the next call instead of erroring.
+
+### Fixed
+
+- **Editing a Design System's styles no longer silently no-ops.** Writing a Design System's `Source` with only a `styles { … }` block — or a combined `tokens { … } styles { … }` source in which only the styles changed — returned `WriteNoChange` and never persisted, so the object looked untouched in the IDE. The styles now save correctly. A write where neither the tokens nor the styles block changed still returns `WriteNoChange`, as expected.
+- **A worker that shut down for inactivity is replaced on the next call.** After the worker idled out, the following tool call failed with `Worker for KB '…' crashed/exited` and no replacement was started, leaving the session stuck until a manual reconnect. The idle worker is now dropped cleanly the moment it stops, so the next call transparently spawns a fresh one.
+
+### Internal
+
+- `WriteService` DSO routing now compares each block against the persisted part and targets a block that actually changed, instead of always redirecting the combined-source write to Tokens (which let an unchanged-Tokens comparison short-circuit the save and drop a changed-Styles side-effect).
+- `WorkerProcess.StopProcess` disposes the OS `Process` right after `Kill`, which suppressed the async `Process.Exited` event that dropped the pool entry. Exit is now signaled deterministically via `FireWorkerExitedOnce` (idempotent with the `Exited` handler). Adds `WorkerProcessExitNotificationTests`.
+
 ## v2.13.0 — 2026-07-08
 
 Worker-reliability, KB-lifecycle, and DX pass on large KBs (issue #26): the worker comes back on its own, an opened KB stays put, `genexus_search_source` can no longer take the worker down, and Design System objects write their tokens and styles to the right place.

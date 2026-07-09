@@ -52,6 +52,12 @@ namespace GxMcp.Gateway
         private string _lastOperationInfo = "None";
         private bool _isStarting;
         private WorkerStopReason _stopReason = WorkerStopReason.None;
+        // Guards OnWorkerExited so it fires exactly once per worker, whether the exit is
+        // observed via the async Process.Exited event OR forced synchronously by StopProcess.
+        // StopProcess disposes the Process right after Kill, which suppresses the Exited
+        // event — so idle-shutdown teardown must signal the exit itself, or the pool never
+        // drops the entry and the next command hits a dead worker (WorkerCrashed).
+        private int _exitNotified;
         private int _inFlightCommands;
         private int _queuedCommands;
         private long _spawnMs = -1;
@@ -624,7 +630,7 @@ namespace GxMcp.Gateway
                     // — which compounded into a runaway worker-process explosion (a real memory
                     // leak: hundreds of GxMcp.Worker for a single KB). KillOrphanWorkers() at
                     // the top of Start() is the hard "exactly one worker per KB" backstop.
-                    OnWorkerExited?.Invoke(reason);
+                    FireWorkerExitedOnce(reason);
                 };
 
                 _spawnWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -754,6 +760,16 @@ namespace GxMcp.Gateway
             StopProcess(reason);
         }
 
+        // Invokes OnWorkerExited at most once per WorkerProcess lifetime. Both the async
+        // Process.Exited event and StopProcess route through here; whichever runs first
+        // wins and the other becomes a no-op.
+        private void FireWorkerExitedOnce(WorkerStopReason reason)
+        {
+            if (Interlocked.Exchange(ref _exitNotified, 1) != 0) return;
+            try { OnWorkerExited?.Invoke(reason); }
+            catch (Exception ex) { Program.Log($"[Gateway] OnWorkerExited handler threw: {ex.Message}"); }
+        }
+
         private void StopProcess(WorkerStopReason reason)
         {
             lock (_processLock)
@@ -800,6 +816,12 @@ namespace GxMcp.Gateway
                     _process = null;
                 }
             }
+
+            // Signal the exit deterministically. Disposing the Process above suppresses its
+            // async Exited event, so without this the pool would never drop the entry on an
+            // idle/planned teardown and the next AcquireAsync would hand back this dead
+            // worker. Fired outside _processLock; idempotent with the Exited handler.
+            FireWorkerExitedOnce(reason);
         }
 
         private void MarkActivity()
