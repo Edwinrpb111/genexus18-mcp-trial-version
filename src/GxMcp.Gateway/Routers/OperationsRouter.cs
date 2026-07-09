@@ -319,12 +319,20 @@ namespace GxMcp.Gateway.Routers
                     return new
                     {
                         module = "Compare",
+                        action = "Run",
+                        @params = args
+                    };
+
                 // genexus_module — GeneXus Module Manager (install/update modules) over
                 // the SDK's IModuleManagerService. action=list is read-only.
                 case "genexus_module":
                     return new
                     {
                         module = "Module",
+                        action = "Run",
+                        @params = args
+                    };
+
                 // genexus_gam — GAM / integrated-security provisioning over the SDK's
                 // IIntegratedSecurityService. No SDK calls happen in the gateway; the
                 // worker resolves the service and dispatches on args.action. Destructive
@@ -344,6 +352,10 @@ namespace GxMcp.Gateway.Routers
                     return new
                     {
                         module = "Merge",
+                        action = "Run",
+                        @params = args
+                    };
+
                 // genexus_kb_version — KB model-version management (Create Version /
                 // Branch / Activate / Revert) over the SDK's static KBVersionHelper.
                 // action=list is read-only; freeze/branch/set_active/revert mutate.
