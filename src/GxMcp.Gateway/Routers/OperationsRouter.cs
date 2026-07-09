@@ -319,6 +319,12 @@ namespace GxMcp.Gateway.Routers
                     return new
                     {
                         module = "Compare",
+                // genexus_module — GeneXus Module Manager (install/update modules) over
+                // the SDK's IModuleManagerService. action=list is read-only.
+                case "genexus_module":
+                    return new
+                    {
+                        module = "Module",
                         action = "Run",
                         @params = args
                     };
