@@ -311,6 +311,18 @@ namespace GxMcp.Gateway.Routers
                         @params = args
                     };
 
+                // genexus_gam — GAM / integrated-security provisioning over the SDK's
+                // IIntegratedSecurityService. No SDK calls happen in the gateway; the
+                // worker resolves the service and dispatches on args.action. Destructive
+                // (define_api/deploy) — see GamService for guards.
+                case "genexus_gam":
+                    return new
+                    {
+                        module = "Gam",
+                        action = "Run",
+                        @params = args
+                    };
+
                 // Item 71 — gh CLI passthrough.
                 case "genexus_github":
                     return new

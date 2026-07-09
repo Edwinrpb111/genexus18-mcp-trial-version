@@ -85,6 +85,8 @@ namespace GxMcp.Worker.Services
         private readonly LearningReportService _learningReportService;
         // genexus_gxserver — read-only sync-state surface.
         private readonly GxServerSyncService _gxServerSyncService;
+        // genexus_gam — GAM / integrated-security provisioning over IIntegratedSecurityService.
+        private readonly GamService _gamService;
         private readonly SdPanelService _sdPanelService;
         private readonly MultiAgentLockService _multiAgentLockService;
         private readonly WhatIfService _whatIfService;
@@ -193,6 +195,7 @@ namespace GxMcp.Worker.Services
             _wcagCheckService = new WcagCheckService(_objectService);
             _learningReportService = new LearningReportService(_kbService);
             _gxServerSyncService = new GxServerSyncService(_kbService);
+            _gamService = new GamService(_kbService);
             _sdPanelService = new SdPanelService(_objectService, _writeService);
             _multiAgentLockService = new MultiAgentLockService(_kbService);
             _whatIfService = new WhatIfService(_analyzeService, _objectService);
@@ -1432,6 +1435,11 @@ namespace GxMcp.Worker.Services
                         // genexus_gxserver — read-only surface for GxServer sync state.
                         // No SDK calls; probes metadata files under the KB root.
                         return _gxServerSyncService.Run(args ?? new JObject());
+                    case "gam":
+                        // genexus_gam — GAM / integrated-security provisioning over the
+                        // SDK's IIntegratedSecurityService. action=status is read-only;
+                        // define_api/deploy are destructive (see GamService for guards).
+                        return _gamService.Run(args ?? new JObject());
                     case "sdpanel":
                         return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
                     case "multiagentlock":
