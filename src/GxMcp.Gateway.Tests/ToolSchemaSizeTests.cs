@@ -146,7 +146,12 @@ namespace GxMcp.Gateway.Tests
             //   genexus_compare tool (IComparerService "Compare Objects" parity —
             //   objectA/objectB/type/mode schema, ~150 tokens). Measured ~11699
             //   tokens; ~51 headroom.
-            Assert.True(approxTokens < 11750, $"tool_definitions.json is ~{approxTokens} tokens; budget 11750.");
+            //   2026-07-09 (genexus_merge spike): 11750 → 12200 for the new
+            //   genexus_merge tool (IMergeService object-merge, WRITE +
+            //   destructiveHint=true — objectLeft/objectRight/objectBase/type/
+            //   ignoreConflicts/dryRun schema, ~330 tokens). Measured ~12084
+            //   tokens; ~116 headroom.
+            Assert.True(approxTokens < 12200, $"tool_definitions.json is ~{approxTokens} tokens; budget 12200.");
         }
     }
 }

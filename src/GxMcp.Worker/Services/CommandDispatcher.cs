@@ -91,6 +91,8 @@ namespace GxMcp.Worker.Services
         private readonly ModuleService _moduleService;
         // genexus_gam — GAM / integrated-security provisioning over IIntegratedSecurityService.
         private readonly GamService _gamService;
+        // genexus_merge — WRITE IMergeService surface (2-way/3-way object merge).
+        private readonly MergeToolService _mergeToolService;
         private readonly SdPanelService _sdPanelService;
         private readonly MultiAgentLockService _multiAgentLockService;
         private readonly WhatIfService _whatIfService;
@@ -202,6 +204,7 @@ namespace GxMcp.Worker.Services
             _compareService = new CompareService(_kbService, _objectService);
             _moduleService = new ModuleService(_kbService, _objectService);
             _gamService = new GamService(_kbService);
+            _mergeToolService = new MergeToolService(_kbService, _objectService);
             _sdPanelService = new SdPanelService(_objectService, _writeService);
             _multiAgentLockService = new MultiAgentLockService(_kbService);
             _whatIfService = new WhatIfService(_analyzeService, _objectService);
@@ -1455,6 +1458,10 @@ namespace GxMcp.Worker.Services
                         // SDK's IIntegratedSecurityService. action=status is read-only;
                         // define_api/deploy are destructive (see GamService for guards).
                         return _gamService.Run(args ?? new JObject());
+                    case "merge":
+                        // genexus_merge — WRITE surface over the SDK's IMergeService.
+                        // dryRun defaults true (see MergeToolService). destructiveHint=true.
+                        return _mergeToolService.Run(args ?? new JObject());
                     case "sdpanel":
                         return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
                     case "multiagentlock":
