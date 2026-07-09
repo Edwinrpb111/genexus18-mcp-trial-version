@@ -91,14 +91,20 @@ namespace GxMcp.Worker.Services
                 return McpResponse.Err(
                     code: "ObjectNotFound",
                     message: "Object '" + objectAName + "' not found.",
-                    hint: "Confirm objectA exists (and matches type, if provided).");
+                    hint: "Confirm objectA exists (and matches type, if provided).",
+                    nextSteps: new JArray(McpResponse.NextStep("genexus_query",
+                        new JObject { ["name"] = objectAName },
+                        "Search for objectA by name to confirm it exists and get its exact name/type.")));
             }
             if (objB == null)
             {
                 return McpResponse.Err(
                     code: "ObjectNotFound",
                     message: "Object '" + objectBName + "' not found.",
-                    hint: "Confirm objectB exists (and matches type, if provided).");
+                    hint: "Confirm objectB exists (and matches type, if provided).",
+                    nextSteps: new JArray(McpResponse.NextStep("genexus_query",
+                        new JObject { ["name"] = objectBName },
+                        "Search for objectB by name to confirm it exists and get its exact name/type.")));
             }
 
             try

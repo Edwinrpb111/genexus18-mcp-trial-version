@@ -151,7 +151,13 @@ namespace GxMcp.Gateway.Tests
             //   destructiveHint=true — objectLeft/objectRight/objectBase/type/
             //   ignoreConflicts/dryRun schema, ~330 tokens). Measured ~12084
             //   tokens; ~116 headroom.
-            Assert.True(approxTokens < 12200, $"tool_definitions.json is ~{approxTokens} tokens; budget 12200.");
+            //   2026-07-09 (SDK-coverage batch integration): 12200 → 13300 for the
+            //   remaining IDE-parity tools landed together — genexus_kb_version
+            //   (KBVersionHelper), genexus_module (IModuleManagerService), genexus_gam
+            //   (IIntegratedSecurityService), plus genexus_gxserver write actions
+            //   (commit/update/lock/resolve via IGXserverService). Measured ~13150
+            //   tokens; ~150 headroom.
+            Assert.True(approxTokens < 13300, $"tool_definitions.json is ~{approxTokens} tokens; budget 13300.");
         }
     }
 }

@@ -112,15 +112,15 @@ namespace GxMcp.Worker.Services
 
             if (left == null)
             {
-                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + leftName + "' not found.", hint: "Confirm objectLeft exists (and matches type, if provided).");
+                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + leftName + "' not found.", hint: "Confirm objectLeft exists (and matches type, if provided).", nextSteps: new JArray(McpResponse.NextStep("genexus_query", new JObject { ["name"] = leftName }, "Search for objectLeft by name to confirm it exists.")));
             }
             if (right == null)
             {
-                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + rightName + "' not found.", hint: "Confirm objectRight exists (and matches type, if provided).");
+                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + rightName + "' not found.", hint: "Confirm objectRight exists (and matches type, if provided).", nextSteps: new JArray(McpResponse.NextStep("genexus_query", new JObject { ["name"] = rightName }, "Search for objectRight by name to confirm it exists.")));
             }
             if (!string.IsNullOrWhiteSpace(baseName) && baseObj == null)
             {
-                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + baseName + "' not found.", hint: "Confirm objectBase exists (and matches type, if provided).");
+                return McpResponse.Err(code: "ObjectNotFound", message: "Object '" + baseName + "' not found.", hint: "Confirm objectBase exists (and matches type, if provided).", nextSteps: new JArray(McpResponse.NextStep("genexus_query", new JObject { ["name"] = baseName }, "Search for objectBase by name to confirm it exists.")));
             }
 
             bool threeWay = baseObj != null;

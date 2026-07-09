@@ -1160,12 +1160,12 @@
     },
     {
       "annotations": {
-        "destructiveHint": false,
-        "idempotentHint": true,
+        "destructiveHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
-        "readOnlyHint": true
+        "readOnlyHint": false
       },
-      "description": "Surface GxServer sync state (status/pending/conflicts/history). Read-only v1. Returns {connected:false} when KB is not linked.",
+      "description": "GxServer (Team Development) sync. Read: status|pending|conflicts|history. Write (destructive; requires a GXserver-linked KB): commit (message) | update | lock (target) | resolve (targets[] via MarkAsResolved). Returns {connected:false} when KB is not linked.",
       "inputSchema": {
         "examples": [
           {
@@ -1174,6 +1174,16 @@
           {
             "action": "history",
             "limit": 20
+          },
+          {
+            "action": "commit",
+            "message": "Fix Customer validation"
+          },
+          {
+            "action": "resolve",
+            "targets": [
+              "Customer"
+            ]
           }
         ],
         "properties": {
@@ -1182,9 +1192,17 @@
               "status",
               "pending",
               "conflicts",
-              "history"
+              "history",
+              "commit",
+              "update",
+              "lock",
+              "resolve"
             ],
             "type": "string"
+          },
+          "force": {
+            "description": "commit: force commit despite pending server-side changes.",
+            "type": "boolean"
           },
           "kb": {
             "description": "KB alias.",
@@ -1193,6 +1211,21 @@
           "limit": {
             "description": "history only; default 10, max 200.",
             "type": "integer"
+          },
+          "message": {
+            "description": "commit: commit comment.",
+            "type": "string"
+          },
+          "target": {
+            "description": "lock: object name to lock.",
+            "type": "string"
+          },
+          "targets": {
+            "description": "resolve: object names with an active conflict to mark resolved.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1802,6 +1835,71 @@
         "type": "object"
       },
       "name": "genexus_list_objects"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Merge two (or three, with an ancestor) KB objects via the SDK's IMergeService. mode=objects only (mode=models is unsupported — needs multiple KBModel instances not available in this worker). Omit objectBase for a 2-way merge (ignoreConflicts applies); pass objectBase for a 3-way merge. dryRun (default true) reports what would merge via IComparerService WITHOUT writing; dryRun=false performs the merge and saves it. WRITE + destructive.",
+      "inputSchema": {
+        "examples": [
+          {
+            "objectLeft": "Customer",
+            "objectRight": "CustomerV2"
+          },
+          {
+            "dryRun": false,
+            "objectBase": "CustomerBase",
+            "objectLeft": "Customer",
+            "objectRight": "CustomerV2"
+          }
+        ],
+        "properties": {
+          "dryRun": {
+            "default": true,
+            "description": "true (default): report-only, no SDK MergeObjects call, nothing written. false: perform the merge and save it.",
+            "type": "boolean"
+          },
+          "ignoreConflicts": {
+            "description": "2-way merge only: let the SDK auto-resolve conflicting parts instead of failing. Default false.",
+            "type": "boolean"
+          },
+          "kb": {
+            "description": "KB alias.",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Only 'objects' is supported.",
+            "enum": [
+              "objects"
+            ],
+            "type": "string"
+          },
+          "objectBase": {
+            "description": "Optional common ancestor. Omit for a 2-way merge; pass for a 3-way merge.",
+            "type": "string"
+          },
+          "objectLeft": {
+            "type": "string"
+          },
+          "objectRight": {
+            "type": "string"
+          },
+          "type": {
+            "description": "Object type filter applied to all lookups, e.g. 'Transaction'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectLeft",
+          "objectRight"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_merge"
     },
     {
       "annotations": {
