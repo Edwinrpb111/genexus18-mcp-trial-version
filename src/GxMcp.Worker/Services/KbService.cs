@@ -1078,6 +1078,33 @@ namespace GxMcp.Worker.Services
             json["objectsWalked"] = _totalCount;
             json["status"] = _currentStatus;
             json["isBusy"] = _isIndexing || _isOpenInProgress;
+            // Issue #27 item 3 (measured): when the index is loaded from the warm/delta
+            // cache, the in-session walk counters (_totalCount/_processedCount) are never
+            // set, so this reported total:0 / processed:0 / objectsWalked:0 even with a
+            // fully-Ready index of thousands of objects — the "processed:0 the whole
+            // session, impossible to know the total" confusion (#25.1). Fall back to the
+            // authoritative IndexCacheService count when our own walk didn't run this
+            // session. A live walk (_isIndexing) keeps its real running progress.
+            try
+            {
+                if (!_isIndexing && _totalCount == 0)
+                {
+                    int stateTotal = _indexCacheService?.GetState()?.TotalObjects ?? 0;
+                    if (stateTotal > 0)
+                    {
+                        json["total"] = stateTotal;
+                        json["objectsWalked"] = stateTotal;
+                        json["processed"] = stateTotal; // warm-loaded index is fully populated
+                        json["totalKnown"] = true;
+                        // The legacy prose 'status' is also empty on the warm-cache path
+                        // (same unset-counter root cause). Fill it from the index state so
+                        // the compact status isn't blank when the index is actually usable.
+                        if (string.IsNullOrEmpty(json["status"]?.ToString()))
+                            json["status"] = _indexCacheService?.GetState()?.Status ?? "Ready";
+                    }
+                }
+            }
+            catch { /* best-effort telemetry enrichment */ }
             return json.ToString();
         }
 

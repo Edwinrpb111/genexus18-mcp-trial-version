@@ -45,6 +45,22 @@ namespace GxMcp.Worker.Tests
         }
 
         [Fact]
+        public void NotFound_IndexEmpty_TreatedAsWarming_NotFalseNoSimilar()
+        {
+            // Issue #27 item 3: a Cold index is a non-null but EMPTY SearchIndex. It used
+            // to fall through to "No similar names found in the index", falsely implying
+            // an authoritative lookup. An empty index must be treated as warming.
+            var idx = new SearchIndex(); // Objects.Count == 0
+            string raw = HealingService.FormatNotFoundError("Customer", idx);
+            Assert.True(EnvelopeConformance.Validate(raw).Ok);
+
+            var obj = JObject.Parse(raw);
+            Assert.Equal("ObjectNotFoundIndexWarming", (string)obj["error"]["code"]);
+            Assert.Equal(2500, (int)obj["error"]["retryAfterMs"]);
+            Assert.DoesNotContain("No similar names found in the index", (string)obj["error"]["hint"]);
+        }
+
+        [Fact]
         public void AmbiguousName_TwoTypesShareName_EmitsCandidatesAndPerTypeNextSteps()
         {
             var idx = BuildIndex(

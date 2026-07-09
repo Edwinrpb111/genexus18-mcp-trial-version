@@ -540,15 +540,27 @@ namespace GxMcp.Worker.Services
                             // blocking here never stalls the STA thread.
                             int waitSec = args?["wait"]?.ToObject<int?>() ?? 0;
                             string since = args?["since"]?.ToString();
-                            if (waitSec > 0 && !string.IsNullOrEmpty(since))
+                            if (waitSec > 0)
                             {
+                                // Issue #27 item 3 (DX): two block modes.
+                                //  - since given  → return the moment the state LEAVES `since`
+                                //    (event-driven progress poll; legacy behaviour).
+                                //  - since absent → block until the index reaches "Ready"
+                                //    (or timeout), so an agent can just say "wait until usable"
+                                //    without hand-rolling a since-chained poll loop. A Cold+idle
+                                //    index simply times out at its current state — the caller
+                                //    then knows to trigger an index build.
+                                bool waitForReady = string.IsNullOrEmpty(since);
                                 var sw = System.Diagnostics.Stopwatch.StartNew();
                                 long budgetMs = waitSec * 1000L;
                                 while (true)
                                 {
                                     _indexCacheService.ArmStateSignal();
                                     string cur = _indexCacheService.GetState()?.Status ?? "Cold";
-                                    if (!string.Equals(cur, since, StringComparison.OrdinalIgnoreCase)) break;
+                                    bool done = waitForReady
+                                        ? string.Equals(cur, "Ready", StringComparison.OrdinalIgnoreCase)
+                                        : !string.Equals(cur, since, StringComparison.OrdinalIgnoreCase);
+                                    if (done) break;
                                     long remaining = budgetMs - sw.ElapsedMilliseconds;
                                     if (remaining <= 0) break;
                                     // Cap each wait so a missed signal still re-checks promptly.

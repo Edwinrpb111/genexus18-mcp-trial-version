@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.13.3 — 2026-07-09
+
+Index-status honesty + a "wait until ready" convenience, from a measured pass over the index lifecycle (issue #27 item 3). The re-walk/flapping that item reported is already handled by the persistent warm cache (v2.12/2.13) — reopening a large KB loads it instantly and a build no longer drops the index; these are the remaining rough edges around it.
+
+### Fixed
+
+- **Index status no longer reports 0 objects when it's actually ready.** When the index loads from the warm/delta cache (the normal path on reopen), `genexus_lifecycle action=status` reported `total: 0`, `processed: 0`, `objectsWalked: 0` and a blank status even though the index was fully `Ready` with thousands of objects — the "processed: 0 the whole session, impossible to tell progress" confusion. Status now reports the real object count and state in that case.
+- **A read while the index is still warming gives an honest hint.** Reading an object by name before the index has populated returned "No similar names found in the index" — which implied the index had been consulted and the name truly didn't exist. It now says the index is still warming (and a direct lookup also missed), so you retry instead of concluding the object is absent. Reading by exact name never required a full index and still doesn't.
+
+### Added
+
+- **`genexus_lifecycle action=status wait=<sec>` blocks until the index is Ready.** With no `since` baseline, a status call with `wait` now returns the moment the index reaches `Ready` (or the timeout), so you can wait for a usable index in one call instead of hand-rolling a poll loop. Passing `since` keeps the existing change-driven behaviour for progress polling.
+
 ## v2.13.2 — 2026-07-09
 
 Reliability + search-ergonomics pass from a long large-KB session (issue #27): a background build now always resolves to a real result, source search can be scoped to a single object and resumed, and a failed patch tells you enough to fix it in one retry.

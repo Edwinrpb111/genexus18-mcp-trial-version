@@ -1504,7 +1504,7 @@
             "type": "string"
           },
           "wait": {
-            "description": "Status taskId event-driven block, 0-600s.",
+            "description": "Status block, 0-600s. With a build taskId (or since): event-driven, returns on change. On index status with no since: blocks until index is Ready.",
             "type": "integer"
           },
           "wait_seconds": {

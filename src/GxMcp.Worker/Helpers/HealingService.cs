@@ -25,13 +25,18 @@ namespace GxMcp.Worker.Helpers
         // returns null and they get the right canonical shape for free.
         public static string FormatNotFoundError(string target, SearchIndex index)
         {
-            // Index cold / unavailable.
-            if (index == null || index.Objects == null)
+            // Index cold / unavailable. An empty (Count==0) index is the cold/warming
+            // case too — a loaded index always carries the KB catalogue. Issue #27 item 3:
+            // without this, a read while Cold fell through to "No similar names found in
+            // the index", which falsely implies the index was consulted authoritatively.
+            // The object lookup already tried the SDK directly (FindObject slow path), so
+            // the honest message is "index still warming / SDK also missed — retry".
+            if (index == null || index.Objects == null || index.Objects.Count == 0)
             {
                 return McpResponse.Err(
                     code: "ObjectNotFoundIndexWarming",
-                    message: "Object not found and KB name index is still warming.",
-                    hint: "Retry in 2-3 seconds for 'did you mean' suggestions, or list objects to find the exact name.",
+                    message: "Object not found. The KB name index is still warming (a direct SDK lookup also missed).",
+                    hint: "Retry in 2-3 seconds once the index is Ready for 'did you mean' suggestions, or list objects to find the exact name.",
                     nextSteps: new JArray(
                         McpResponse.NextStep(
                             tool: "genexus_list_objects",
