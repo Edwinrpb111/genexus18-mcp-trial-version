@@ -15,9 +15,47 @@ namespace GxMcp.Gateway
     // (force=true) so the SDK picks up the new object.
     internal static class KbImportHelper
     {
+        // SECURITY: `name` and `type` are LLM-controlled and flow into
+        // Path.Combine + Directory.Delete/CreateDirectory/CopyTo. Without an
+        // allowlist, "..\\..\\x" escapes the Objects/ tree and can delete then
+        // overwrite an arbitrary directory. Mirror TimeTravelService.IsSafeObjectName
+        // (the same class the 2026-05-24 shell-out audit added for the Worker side;
+        // it was never ported to these Gateway-side helpers).
+        internal static bool IsSafeSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length > 200) return false;
+            foreach (var c in value)
+            {
+                if (!(char.IsLetterOrDigit(c) || c == '_' || c == '.' || c == '-')) return false;
+            }
+            if (value == "." || value == "..") return false;
+            return true;
+        }
+
+        // Defence in depth: even after the allowlist, confirm the resolved path is
+        // still rooted under <targetKbPath>/Objects/ before any delete/copy.
+        private static bool IsWithin(string root, string candidate)
+        {
+            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                           + Path.DirectorySeparatorChar;
+            var candFull = Path.GetFullPath(candidate);
+            return candFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static JObject ImportObject(string sourceKbPath, string targetKbPath, string name, string type)
         {
+            if (!IsSafeSegment(type) || !IsSafeSegment(name))
+            {
+                return new JObject
+                {
+                    ["status"] = "Error",
+                    ["code"] = "InvalidName",
+                    ["message"] = "'type' and 'name' must match [A-Za-z0-9._-]{1,200} (no path separators or traversal).",
+                    ["hint"] = "Pass exact directory names from Objects/<Type>/<Name>/."
+                };
+            }
             string sourceObjDir = Path.Combine(sourceKbPath, "Objects", type, name);
+            string targetObjRoot = Path.Combine(targetKbPath, "Objects");
             if (!Directory.Exists(sourceObjDir))
             {
                 return new JObject
@@ -28,7 +66,16 @@ namespace GxMcp.Gateway
                     ["hint"] = "Check 'type' (case-sensitive) and 'name'; pass exact directory names from Objects/<Type>/<Name>/."
                 };
             }
-            string targetObjDir = Path.Combine(targetKbPath, "Objects", type, name);
+            string targetObjDir = Path.Combine(targetObjRoot, type, name);
+            if (!IsWithin(targetObjRoot, targetObjDir) || !IsWithin(sourceKbPath, sourceObjDir))
+            {
+                return new JObject
+                {
+                    ["status"] = "Error",
+                    ["code"] = "PathEscape",
+                    ["message"] = "Resolved import path escapes the KB Objects/ tree; refusing.",
+                };
+            }
             bool overwrote = Directory.Exists(targetObjDir);
             try
             {

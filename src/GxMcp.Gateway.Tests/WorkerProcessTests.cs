@@ -54,4 +54,41 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal(1, calls);
         }
     }
+
+    // BUG-03 regression: orphan-worker reaping matched KB paths with a bare
+    // Contains(), so a KB whose path is a prefix of another's (Foo vs FooBar)
+    // would reap the wrong live worker. Match must be by whole --kb argument.
+    public class WorkerProcessKbMatchTests
+    {
+        private const string Cmd = "\"C:\\app\\GxMcp.Worker.exe\" --kb \"C:\\KBs\\Foo\"";
+
+        [Fact]
+        public void Matches_Exact_Kb_Argument()
+        {
+            Assert.True(WorkerProcess.CommandLineTargetsKb(Cmd, "c:\\kbs\\foo"));
+        }
+
+        [Fact]
+        public void Does_Not_Match_Prefix_Sibling()
+        {
+            // Worker serves Foo; must NOT match when we're looking for FooBar (and vice-versa).
+            Assert.False(WorkerProcess.CommandLineTargetsKb(Cmd, "c:\\kbs\\foobar"));
+            string cmdBar = "\"C:\\app\\GxMcp.Worker.exe\" --kb \"C:\\KBs\\FooBar\"";
+            Assert.False(WorkerProcess.CommandLineTargetsKb(cmdBar, "c:\\kbs\\foo"));
+        }
+
+        [Fact]
+        public void Tolerates_Trailing_Separator_On_Command_Value()
+        {
+            string cmd = "\"C:\\app\\GxMcp.Worker.exe\" --kb \"C:\\KBs\\Foo\\\"";
+            Assert.True(WorkerProcess.CommandLineTargetsKb(cmd, "c:\\kbs\\foo"));
+        }
+
+        [Fact]
+        public void Empty_Inputs_Do_Not_Match()
+        {
+            Assert.False(WorkerProcess.CommandLineTargetsKb("", "c:\\kbs\\foo"));
+            Assert.False(WorkerProcess.CommandLineTargetsKb(Cmd, ""));
+        }
+    }
 }

@@ -38,6 +38,10 @@ jobs:
         working-directory: src/nexus-ide
         run: npm run compile
 
+      - name: Nexus IDE lint
+        working-directory: src/nexus-ide
+        run: npm run lint
+
       - name: Nexus IDE tests
         working-directory: src/nexus-ide
         run: npm test

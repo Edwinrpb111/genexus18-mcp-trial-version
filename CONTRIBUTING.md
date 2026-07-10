@@ -33,6 +33,24 @@ npx . doctor --mcp-smoke
 
 If you only touched `cli/`, `npm test` is enough. If you touched the Gateway or Worker, you need `.\build.ps1` and a real KB to verify — there is no mock.
 
+### What CI runs beyond the dev loop
+
+CI (`.github/workflows/ci.yml`) also runs steps not in the dev loop above, so a green local run can still hit CI-only failures. To reproduce them locally:
+
+```pwsh
+# Coverage collection + threshold gate (50% line rate)
+.\scripts\coverage\collect.ps1
+.\scripts\coverage\assert-threshold.ps1
+
+# LLM tool-contract smoke
+.\scripts\mcp_llm_contract_smoke.ps1
+
+# Nexus IDE lint (VS Code extension)
+cd src\nexus-ide; npm run lint
+```
+
+`collect.ps1` skips the Worker half when GeneXus 18 isn't installed locally (it drops a `worker.skipped.txt` marker and `assert-threshold.ps1` enforces only the Gateway floor in that case) — so without a local GeneXus install you exercise the Gateway coverage gate only, same as a GitHub-hosted runner.
+
 ## Code style
 
 - **C# (Gateway + Worker)** — match the surrounding file. No new abstractions unless they're paying for themselves. Don't add error handling for cases that can't happen.

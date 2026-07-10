@@ -1,5 +1,81 @@
 # Changelog
 
+## v2.17.0 — 2026-07-10
+
+Security and stability hardening from a codebase audit. No tool renames; the only
+behavior change a normal caller sees is the new optional HTTP token and the `to`
+argument on `genexus_kb_import`.
+
+### Added
+
+- **`genexus_kb_import` accepts an explicit `to` target KB.** Previously the import
+  silently went to whichever KB happened to be first in the open-worker list. Pass
+  `to=<alias-or-path>` to name the destination explicitly; omitting it keeps the old
+  first-open/DefaultKb fallback for back-compat.
+- **Optional shared-secret auth for the HTTP endpoint.** Set `GXMCP_HTTP_TOKEN` and
+  every `/mcp` request must present it (`Authorization: Bearer …` or `X-GXMCP-Token`).
+  Binding to a non-loopback address now *requires* a token — without one, `/mcp`
+  requests are refused rather than silently exposing the full tool surface to the
+  network. The default loopback (`127.0.0.1`) bind with no token is unchanged.
+
+### Fixed
+
+- **`genexus_kb_import` rejects path-traversal in `name`/`type`.** These arguments flow
+  into filesystem delete/copy; values like `..\..\x` could escape the KB's `Objects/`
+  tree and overwrite an unrelated directory. They are now validated against
+  `[A-Za-z0-9._-]` with a path-containment check before any file operation.
+- **Worker stays consistent under concurrent start/stop.** A worker restart raced with
+  idle-timeout/health-check shutdown because the process and stdio handles were
+  published outside the lock guarding them, which could surface as spurious "worker
+  crashed" errors or dropped commands. The handle swap is now serialized.
+- **Post-save index update no longer races the GeneXus SDK.** After a write, the
+  background index refresh read live SDK object state on a thread-pool thread outside
+  the SDK serialization gate; it now runs on the gated background queue, closing a
+  crash/corrupt-read window under concurrent write load.
+- **Worker reaping matches the whole KB path, not a substring.** Two KBs where one
+  path is a prefix of the other (e.g. `…\Foo` and `…\FooBar`) could cause starting one
+  worker to kill the other's live session. The match is now by the exact `--kb`
+  argument.
+- **A worker error now always returns a response.** An exception escaping command
+  dispatch was logged but left the request unanswered, so the client waited out the
+  full timeout; the worker now replies with an error envelope immediately.
+- **Expired-operation cleanup can't drop a live operation's status.** On JSON-RPC id
+  reuse within the retention window, cleaning up the old operation could delete the
+  status mapping now pointing at a newer, running one; cleanup is now a
+  compare-and-remove.
+- **Per-target write serialization covers blank targets.** A write with an empty
+  target string received its own unshared lock, silently disabling the serialization
+  that prevents concurrent-write races on the same object; blank targets now share one
+  lock.
+
+### Changed
+
+- **The AI-completion proxy no longer echoes raw upstream error bodies by default.** A
+  failed `genexus_ai_complete` used to return the provider's raw error text (which can
+  carry account/billing/request-id detail) into the transcript. It now returns a
+  length-only breadcrumb; set `GXMCP_AI_COMPLETE_DEBUG=1` to include the raw body for
+  local troubleshooting.
+
+### Internal
+
+- CI coverage gate (`scripts/coverage/assert-threshold.ps1`) honors the
+  `worker.skipped.txt` / `worker.failed.txt` markers `collect.ps1` emits, so a
+  GeneXus-less hosted runner enforces the Gateway floor instead of dying with a
+  misleading "Coverage file not found"; failed collection now throws an actionable
+  message.
+- Added `ToolDefinitionsFixtureParityTests` — fails loudly when `tool_definitions.json`
+  and the golden `tools-list` fixture disagree on the tool-name set or the fixture's
+  sort order, instead of surfacing later as a confusing contract diff.
+- CI now runs `npm run lint` for the Nexus IDE extension (it was configured but never
+  invoked). `CONTRIBUTING.md` documents the coverage/contract/lint steps CI runs beyond
+  the dev loop.
+- New regression tests: KB-import traversal rejection, worker KB-path boundary match,
+  reused-request-id operation-cleanup, and blank-target per-target lock sharing.
+- Deferred audit findings (index-flush re-architecture, secondary search indexes,
+  god-object decomposition of `WriteService`/`Program.cs`, dispatch-table refactor,
+  BuildService test suite, repo lint/dep hygiene) are captured as self-contained
+  handoff plans under `plans/`.
+
 ## v2.16.1 — 2026-07-10
 
 ### Fixed

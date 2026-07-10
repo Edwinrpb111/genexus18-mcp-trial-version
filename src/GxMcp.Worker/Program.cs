@@ -596,15 +596,30 @@ namespace GxMcp.Worker
 
         private static void ProcessCommand(string line)
         {
+            string idJson = "null";
             try {
                 var obj = JObject.Parse(line);
-                string idJson = obj["id"]?.ToString() ?? "null";
+                idJson = obj["id"]?.ToString() ?? "null";
                 string method = obj["method"]?.ToString();
                 string correlationId = obj["params"]?["correlationId"]?.ToString() ?? "n/a";
                 Logger.Info($"[WORKER] Command: {method} ({idJson}) [cid:{correlationId}]");
                 string result = _dispatcher.Dispatch(line);
                 SendResponse(result, idJson);
-            } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message); }
+            } catch (Exception ex) {
+                Logger.Error("ProcessCommand Error: " + ex.Message);
+                // Never leave a request unanswered: an exception escaping Dispatch (e.g.
+                // from using-block disposal or the idempotency cache) previously only got
+                // logged, so the gateway had to wait out its full timeout. Send an error
+                // result envelope for the parsed id, matching the shape normal errors use.
+                try {
+                    string errResult = GxMcp.Worker.Models.McpResponse.Err(
+                        code: "WorkerInternalError",
+                        message: "Unhandled worker error: " + ex.Message);
+                    SendResponse(errResult, idJson);
+                } catch (Exception sendEx) {
+                    Logger.Error("ProcessCommand failed to send error response: " + sendEx.Message);
+                }
+            }
         }
 
         private static void SendResponse(string result, string id)

@@ -3269,15 +3269,26 @@ namespace GxMcp.Gateway
                         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Missing 'name' (object name to import).");
                         if (string.IsNullOrWhiteSpace(type)) throw new ArgumentException("Missing 'type' (object type, e.g. WebPanel, Procedure).");
                         string sourcePath = ResolveKbPath(from) ?? throw new ArgumentException($"'from'='{from}' not a declared alias and not an existing directory.");
-                        // Active KB resolution: use first open KB or default.
+                        // Target KB resolution. Prefer an explicit 'to' (alias or path) so the
+                        // import isn't silently pointed at whichever KB happens to be first in
+                        // the open-worker list; fall back to first-open / DefaultKb for
+                        // back-compat when 'to' is omitted.
+                        string to = args?["to"]?.ToString();
                         string targetPath = null;
-                        var openKbs = _workerPool?.ListOpen();
-                        if (openKbs != null && openKbs.Count > 0) targetPath = openKbs[0].Path;
-                        else if (!string.IsNullOrEmpty(_activeConfig?.Environment?.DefaultKb))
+                        if (!string.IsNullOrWhiteSpace(to))
                         {
-                            var d = _activeConfig.Environment.KBs?.FirstOrDefault(k =>
-                                string.Equals(k.Alias, _activeConfig.Environment.DefaultKb, StringComparison.OrdinalIgnoreCase));
-                            targetPath = d?.Path;
+                            targetPath = ResolveKbPath(to) ?? throw new ArgumentException($"'to'='{to}' not a declared alias and not an existing directory.");
+                        }
+                        else
+                        {
+                            var openKbs = _workerPool?.ListOpen();
+                            if (openKbs != null && openKbs.Count > 0) targetPath = openKbs[0].Path;
+                            else if (!string.IsNullOrEmpty(_activeConfig?.Environment?.DefaultKb))
+                            {
+                                var d = _activeConfig.Environment.KBs?.FirstOrDefault(k =>
+                                    string.Equals(k.Alias, _activeConfig.Environment.DefaultKb, StringComparison.OrdinalIgnoreCase));
+                                targetPath = d?.Path;
+                            }
                         }
                         if (string.IsNullOrEmpty(targetPath))
                         {
@@ -5567,10 +5578,50 @@ namespace GxMcp.Gateway
             }
         }
 
+        // SECURITY: the Origin header only defends against browser-issued cross-site
+        // requests (curl/another local process/a port-forward omit it and sail past
+        // IsOriginAllowed). The /mcp surface grants full tool access (SDK writes, the
+        // `gh` shell-out, the AI-completion proxy that holds a live key), so gate it
+        // with an optional shared secret (env GXMCP_HTTP_TOKEN). Contract:
+        //   token set          -> every /mcp request must present it (Bearer / X-GXMCP-Token)
+        //   no token + loopback -> allowed (preserves the default 127.0.0.1 dev workflow)
+        //   no token + non-loopback bind -> refused (don't silently expose to the network)
+        private static bool IsLoopbackBind(string bindAddress)
+        {
+            if (string.IsNullOrWhiteSpace(bindAddress)) return false; // blank -> 0.0.0.0, not loopback
+            var b = bindAddress.Trim();
+            return b == "127.0.0.1" || b == "::1" || b.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ConstantTimeEquals(string a, string b)
+        {
+            if (a == null || b == null) return false;
+            var ba = System.Text.Encoding.UTF8.GetBytes(a);
+            var bb = System.Text.Encoding.UTF8.GetBytes(b);
+            int diff = ba.Length ^ bb.Length;
+            for (int i = 0; i < ba.Length && i < bb.Length; i++) diff |= ba[i] ^ bb[i];
+            return diff == 0;
+        }
+
+        private static bool IsHttpTokenValid(HttpContext context, string expected)
+        {
+            string presented = null;
+            var auth = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                presented = auth.Substring("Bearer ".Length).Trim();
+            if (string.IsNullOrEmpty(presented))
+                presented = context.Request.Headers["X-GXMCP-Token"].FirstOrDefault();
+            return !string.IsNullOrEmpty(presented) && ConstantTimeEquals(presented, expected);
+        }
+
         static Task StartHttpServer(Configuration config)
         {
             var serverConfig = config.Server ?? new ServerConfig();
             string bindAddress = string.IsNullOrWhiteSpace(serverConfig.BindAddress) ? "0.0.0.0" : serverConfig.BindAddress;
+            string httpToken = Environment.GetEnvironmentVariable("GXMCP_HTTP_TOKEN");
+            bool loopbackBind = IsLoopbackBind(serverConfig.BindAddress);
+            if (string.IsNullOrEmpty(httpToken) && !loopbackBind)
+                Log($"[HTTP] WARNING: binding to non-loopback '{bindAddress}' with no GXMCP_HTTP_TOKEN — /mcp requests will be refused. Set GXMCP_HTTP_TOKEN or bind to 127.0.0.1.");
             Log($"[HTTP] Starting server on {bindAddress}:{serverConfig.HttpPort}...");
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseUrls($"http://{bindAddress}:{serverConfig.HttpPort}");
@@ -5590,6 +5641,22 @@ namespace GxMcp.Gateway
                     {
                         context.Response.StatusCode = StatusCodes.Status403Forbidden;
                         await context.Response.WriteAsync("Origin not allowed.");
+                        return;
+                    }
+
+                    if (!string.IsNullOrEmpty(httpToken))
+                    {
+                        if (!IsHttpTokenValid(context, httpToken))
+                        {
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            await context.Response.WriteAsync("Missing or invalid GXMCP_HTTP_TOKEN.");
+                            return;
+                        }
+                    }
+                    else if (!loopbackBind)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        await context.Response.WriteAsync("Non-loopback bind requires GXMCP_HTTP_TOKEN.");
                         return;
                     }
                 }

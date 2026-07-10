@@ -717,8 +717,12 @@ namespace GxMcp.Worker.Services
 
         internal static object AcquirePerTargetLock(string target)
         {
-            if (string.IsNullOrWhiteSpace(target)) return new object();
-            return _perTargetLocks.GetOrAdd(target, _ => new object());
+            // A blank/whitespace target must still serialize against other blank-target
+            // writers — returning `new object()` gave each caller its own lock and
+            // silently disabled the per-target serialization this method exists for.
+            // Route them through a shared sentinel key instead.
+            string key = string.IsNullOrWhiteSpace(target) ? " <empty-target>" : target;
+            return _perTargetLocks.GetOrAdd(key, _ => new object());
         }
 
         internal static void NotePerTargetWrite(string target)
@@ -1866,10 +1870,19 @@ namespace GxMcp.Worker.Services
                         }
                     }
 
-                    // FAST SAVE: Run heavy indexing in background
-                    Task.Run(() => {
+                    // FAST SAVE: Run heavy indexing in background. UpdateEntry reads
+                    // live SDK/COM object state (obj.Guid/Name/TypeDescriptor, attribute
+                    // types, transaction structure, parts), so it MUST run on the STA
+                    // background queue inside SdkGate — not a raw Task.Run pool thread,
+                    // which would race concurrent SDK activity (see SdkGate.cs invariant
+                    // and the matching pattern in IndexCacheService.UpdateEntry's enrich step).
+                    var objToIndex = obj;
+                    Program.EnqueueBackground(() => {
                         try {
-                            _objectService.GetKbService().GetIndexCache().UpdateEntry(obj);
+                            using (SdkGate.Enter())
+                            {
+                                _objectService.GetKbService().GetIndexCache().UpdateEntry(objToIndex);
+                            }
                         } catch (Exception ex) { Logger.Error("[DEBUG-SAVE] Background Index update failed: " + ex.Message); }
                     });
                     

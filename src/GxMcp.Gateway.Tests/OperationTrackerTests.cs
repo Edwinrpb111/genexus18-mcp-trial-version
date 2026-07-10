@@ -32,6 +32,32 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal(0, p95);
         }
 
+        // BUG-05 regression: on JSON-RPC id reuse within the retention window,
+        // StartOperation overwrites _requestToOperation to the new op. CleanupExpired
+        // of the OLD op must not then delete the mapping now pointing at the NEW op.
+        [Fact]
+        public void CleanupExpired_DoesNotDropMappingForReusedRequestId()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMilliseconds(1));
+            string requestId = "reused-request-id";
+
+            string op1 = tracker.StartOperation(requestId, "genexus_first", null, "cid1");
+            System.Threading.Thread.Sleep(30); // age op1 past the 1ms retention window
+            string op2 = tracker.StartOperation(requestId, "genexus_second", null, "cid2");
+
+            tracker.CleanupExpired(); // op1 expired, op2 still fresh
+
+            // The mapping requestId -> op2 must survive so this completion reaches op2.
+            tracker.CompleteFromWorker(requestId, new JObject
+            {
+                ["id"] = requestId,
+                ["result"] = new JObject { ["ok"] = true }
+            });
+
+            Assert.Equal("Completed", (string)tracker.BuildOperationStatus(op2)["status"]!);
+            Assert.NotEqual(op1, op2);
+        }
+
         [Fact]
         public void CompleteFromWorker_ShouldHandleArrayResultPayload()
         {

@@ -417,7 +417,7 @@ namespace GxMcp.Gateway
                         if (ourPid.HasValue && proc.Id == ourPid.Value) continue;
                         string cmd = GetCommandLine(proc);
                         if (string.IsNullOrEmpty(cmd)) continue;
-                        if (!cmd.ToLowerInvariant().Contains(norm)) continue;
+                        if (!CommandLineTargetsKb(cmd, norm)) continue;
 
                         Program.Log($"[Gateway] KillOrphanWorkers: reaping duplicate worker pid={proc.Id} for KB '{Kb?.Alias}'.");
                         proc.Kill(true);
@@ -454,7 +454,7 @@ namespace GxMcp.Gateway
                     {
                         string cmd = GetCommandLine(proc);
                         if (string.IsNullOrEmpty(cmd)) continue;
-                        if (cmd.ToLowerInvariant().Contains(norm)) return proc.Id;
+                        if (CommandLineTargetsKb(cmd, norm)) return proc.Id;
                     }
                     catch (Exception ex)
                     {
@@ -467,6 +467,40 @@ namespace GxMcp.Gateway
                 Program.Log($"[Gateway] FindExistingWorkerPidForKb: enumeration failed: {ex.Message}");
             }
             return null;
+        }
+
+        // BUG-fix: a bare Contains(norm) match falsely matches when one KB path is a
+        // prefix of another (C:\KBs\Foo vs C:\KBs\FooBar), so starting Foo's worker
+        // would reap FooBar's live worker. Workers are spawned with --kb "<path>"
+        // (see Start()), so extract that argument's value and compare it, normalized
+        // the same way (trim, strip trailing separators, lowercase), by whole path.
+        internal static bool CommandLineTargetsKb(string commandLine, string normalizedKbPath)
+        {
+            if (string.IsNullOrEmpty(commandLine) || string.IsNullOrEmpty(normalizedKbPath)) return false;
+            string cmd = commandLine.ToLowerInvariant();
+
+            int idx = cmd.IndexOf("--kb", StringComparison.Ordinal);
+            while (idx >= 0)
+            {
+                int p = idx + 4;
+                while (p < cmd.Length && (cmd[p] == ' ' || cmd[p] == '\t' || cmd[p] == '=')) p++;
+                string value;
+                if (p < cmd.Length && cmd[p] == '"')
+                {
+                    int end = cmd.IndexOf('"', p + 1);
+                    value = end > p ? cmd.Substring(p + 1, end - p - 1) : cmd.Substring(p + 1);
+                }
+                else
+                {
+                    int end = p;
+                    while (end < cmd.Length && cmd[end] != ' ' && cmd[end] != '\t') end++;
+                    value = cmd.Substring(p, end - p);
+                }
+                value = value.Trim().TrimEnd('\\', '/');
+                if (value == normalizedKbPath) return true;
+                idx = cmd.IndexOf("--kb", idx + 4, StringComparison.Ordinal);
+            }
+            return false;
         }
 
         private static string GetCommandLine(Process process)
@@ -504,8 +538,15 @@ namespace GxMcp.Gateway
                 KillOrphanWorkers();
                 _stopReason = WorkerStopReason.None;
                 MarkActivity();
-                _pipeReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                _sdkReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                // Publish the readiness sources under the lock: StopProcess /
+                // WaitForPipeReadyAsync read these same fields under _processLock, and
+                // a concurrent stop (idle-timeout / health-check thread) must never
+                // observe a half-updated field set.
+                lock (_processLock)
+                {
+                    _pipeReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _sdkReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
 
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string workerPath = _config.GeneXus?.WorkerExecutable ?? string.Empty;
@@ -585,6 +626,10 @@ namespace GxMcp.Gateway
                 }
                 catch { /* env forwarding is best-effort */ }
 
+                // Swap the process handle under the lock so a concurrent StopProcess
+                // can't dispose/null _process mid-assignment.
+                lock (_processLock)
+                {
                 if (_process != null)
                 {
                     try
@@ -632,6 +677,7 @@ namespace GxMcp.Gateway
                     // the top of Start() is the hard "exactly one worker per KB" backstop.
                     FireWorkerExitedOnce(reason);
                 };
+                }
 
                 _spawnWatch = System.Diagnostics.Stopwatch.StartNew();
                 _sdkInitWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -703,8 +749,11 @@ namespace GxMcp.Gateway
 
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
-                _pipeWriter = _process.StandardInput;
-                _pipeWriter.AutoFlush = true;
+                lock (_processLock)
+                {
+                    _pipeWriter = _process.StandardInput;
+                    _pipeWriter.AutoFlush = true;
+                }
                 Program.Log("[Gateway] Worker stdio command channel initialized.");
                 _pipeReady.TrySetResult(true);
 

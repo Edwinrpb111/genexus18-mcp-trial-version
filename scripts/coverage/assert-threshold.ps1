@@ -24,17 +24,33 @@ function Get-LineRatePercent {
 
 $gatewayPath = Join-Path $CoverageRoot "gateway.cobertura.xml"
 $workerPath = Join-Path $CoverageRoot "worker.cobertura.xml"
+$workerSkippedMarker = Join-Path $CoverageRoot "worker.skipped.txt"
+$workerFailedMarker = Join-Path $CoverageRoot "worker.failed.txt"
+
+Write-Host "Required minimum: $MinLineRatePercent%"
 
 $gatewayRate = Get-LineRatePercent -Path $gatewayPath
-$workerRate = Get-LineRatePercent -Path $workerPath
-
 Write-Host "Gateway line-rate: $gatewayRate%"
-Write-Host "Worker line-rate: $workerRate%"
-Write-Host "Required minimum: $MinLineRatePercent%"
 
 $failed = @()
 if ($gatewayRate -lt $MinLineRatePercent) { $failed += "gateway=$gatewayRate%" }
-if ($workerRate -lt $MinLineRatePercent) { $failed += "worker=$workerRate%" }
+
+# collect.ps1 branches on GeneXus-SDK presence: it emits worker.skipped.txt when
+# the SDK isn't installed (every GitHub-hosted runner — see CONTRIBUTING.md) and
+# worker.failed.txt when the Worker tests threw. Honor those markers instead of
+# unconditionally reading worker.cobertura.xml and dying with a misleading
+# "Coverage file not found" that hides the real cause.
+if (Test-Path -LiteralPath $workerFailedMarker) {
+    throw "Worker coverage collection failed (worker.failed.txt present). See the 'Gateway and Worker coverage' step log above for the dotnet test error."
+} elseif (Test-Path -LiteralPath $workerSkippedMarker) {
+    Write-Host "Worker line-rate: skipped (no local GeneXus 18 SDK; gateway threshold enforced only)." -ForegroundColor Yellow
+} elseif (Test-Path -LiteralPath $workerPath) {
+    $workerRate = Get-LineRatePercent -Path $workerPath
+    Write-Host "Worker line-rate: $workerRate%"
+    if ($workerRate -lt $MinLineRatePercent) { $failed += "worker=$workerRate%" }
+} else {
+    throw "Worker coverage missing and no skip/failed marker present at $CoverageRoot. Expected worker.cobertura.xml, worker.skipped.txt, or worker.failed.txt from collect.ps1."
+}
 
 if ($failed.Count -gt 0) {
     throw "Coverage threshold failed: $($failed -join ', ')"

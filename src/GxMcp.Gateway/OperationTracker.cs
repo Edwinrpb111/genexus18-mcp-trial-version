@@ -572,7 +572,13 @@ namespace GxMcp.Gateway
                 if (!remove) continue;
 
                 _operations.TryRemove(kvp.Key, out _);
-                _requestToOperation.TryRemove(record.RequestId, out _);
+                // Only drop the request->operation mapping if it still points at THIS
+                // (expiring) operation. StartOperation overwrites the mapping on id
+                // reuse, so an unconditional TryRemove(record.RequestId) could delete a
+                // newer, live operation's mapping. Compare-and-remove via the
+                // ICollection<KeyValuePair<>> overload.
+                ((ICollection<KeyValuePair<string, string>>)_requestToOperation)
+                    .Remove(new KeyValuePair<string, string>(record.RequestId, kvp.Key));
             }
         }
 

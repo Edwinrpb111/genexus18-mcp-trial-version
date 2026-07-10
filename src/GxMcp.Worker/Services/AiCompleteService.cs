@@ -94,11 +94,13 @@ namespace GxMcp.Worker.Services
 
             if (statusCode < 200 || statusCode >= 300)
             {
+                var errExtra = new JObject { ["statusCode"] = statusCode };
+                MaybeAttachBody(errExtra, respText);
                 return JObject.Parse(McpResponse.Err(
                     code: "AiEndpointError",
                     message: "AI endpoint returned HTTP " + statusCode + ".",
-                    hint: "Check the API key and endpoint URL. Response body attached in extra.",
-                    extra: new JObject { ["statusCode"] = statusCode, ["body"] = TruncateForEnvelope(respText) }));
+                    hint: "Check the API key and endpoint URL. Set GXMCP_AI_COMPLETE_DEBUG=1 to include the raw upstream body.",
+                    extra: errExtra));
             }
 
             // Parse OpenAI-compatible response: choices[0].message.content + usage.{prompt_tokens, completion_tokens}.
@@ -124,11 +126,13 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
+                var parseExtra = new JObject();
+                MaybeAttachBody(parseExtra, respText);
                 return JObject.Parse(McpResponse.Err(
                     code: "AiResponseUnparseable",
                     message: "Failed to parse AI endpoint response: " + ex.Message,
-                    hint: "The endpoint may not be OpenAI-compatible. Check GXMCP_AI_COMPLETE_URL.",
-                    extra: new JObject { ["body"] = TruncateForEnvelope(respText) }));
+                    hint: "The endpoint may not be OpenAI-compatible. Check GXMCP_AI_COMPLETE_URL. Set GXMCP_AI_COMPLETE_DEBUG=1 to include the raw body.",
+                    extra: parseExtra));
             }
         }
 
@@ -136,6 +140,24 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
             return s.Length <= 512 ? s : s.Substring(0, 512) + "...[truncated]";
+        }
+
+        // Upstream error bodies can carry provider-internal detail (org/account ids,
+        // billing/rate-limit messages, request ids). Don't relay them to the MCP
+        // transcript by default — only attach when explicitly opted in for local
+        // troubleshooting. Otherwise surface a length-only breadcrumb.
+        private static void MaybeAttachBody(JObject extra, string respText)
+        {
+            bool debug = string.Equals(Environment.GetEnvironmentVariable("GXMCP_AI_COMPLETE_DEBUG"), "1", StringComparison.Ordinal);
+            if (debug)
+            {
+                extra["body"] = TruncateForEnvelope(respText);
+            }
+            else
+            {
+                extra["bodyRedacted"] = true;
+                extra["bodyLength"] = respText?.Length ?? 0;
+            }
         }
 
         /// <summary>net48-safe HTTP POST using HttpWebRequest. Production seam — tests
