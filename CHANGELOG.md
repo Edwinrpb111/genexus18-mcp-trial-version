@@ -1,5 +1,24 @@
 # Changelog
 
+## v2.15.0 — 2026-07-10
+
+Second pass on the long-session report (issue #28): the remaining authoring and stability gaps. A spec-check that skips the full build, an API object type, no more phantom placeholder KB, and error text that keeps your casing.
+
+### Added
+
+- **`genexus_lifecycle action=specify` — spec-check without a full build.** Runs the Specify + Generate pass for a target and stops before Compile and deploy, so you see `spc*` / `gen*` diagnostics fast instead of waiting out (and reading through) a full build. Diagnostics come back under `codeErrors` (see v2.14.0's env/code split). If the in-process spec pass isn't available it reports that rather than silently falling back to a full compile+deploy.
+- **`genexus_create` can create API objects.** `action=object type=API` scaffolds a GeneXus API object, so grouped-route REST services can be created through the MCP instead of only in the IDE.
+
+### Fixed
+
+- **No more phantom placeholder KB.** The shipped fallback config carries a placeholder `KBPath` (`C:\KBs\YourKB` — an empty scaffold). It was being auto-migrated into a `yourkb` default that opened alongside your real KB, so every call failed with `Multiple KBs open (yourkb,…); 'kb' parameter is required`. A `KBPath` that isn't a real KB (missing, or no `.gxw` / `KnowledgeBase.Connection`) is no longer migrated — the only open KB is the one you actually open, so no `kb` argument is needed.
+- **Error messages keep the authored identifier casing.** GeneXus lowercases identifiers in its diagnostics (`&Objcod` for a variable authored `&ObjCod`). Build errors now restore the casing the KB actually uses for `&`-prefixed identifiers, so the error matches what you wrote. Unknown identifiers and literal text are left exactly as emitted.
+
+### Internal
+
+- Long-session stability items #1/#2/#3 from the report (Service Manager warmup, mid-session disconnects on long blocking calls) are already covered by existing mechanisms and left unchanged: builds/index run as async jobs with `operationId`, `action=status wait=<sec>` bounds the blocking poll, a spec-compliant `notifications/progress` heartbeat keeps long synchronous calls from tripping the client timeout, and v2.14.0 made index status honest during warmup. No non-spec keepalive was added.
+- `Configuration.LooksLikeKb` gates the legacy `KBPath`→`KBs[]` migration (new `ConfigurationParsingTests` for migrate-real + skip-placeholder). `BuildService.NormalizeErrorIdentifierCase` rewrites `&ident` tokens via the index's canonical name. `specifyOnly` threads `BuildService.Build` → `BuildTaskStatus.SpecifyOnly` → `InProcessBuildRunner.Run`, forcing the `ExecuteSpecifyOneOnly` path and refusing the MSBuild.exe fallback. `API` was already in `ResolveObjectTypeGuid`; only the schema advertised it. Golden `tools-list` fixture regenerated.
+
 ## v2.14.0 — 2026-07-10
 
 Stability and authoring fixes from a long real-world session on a ~1200-object KB (issue #28): edits no longer stall behind a "not ready" index after a reconnect, declaring variables and SDTs takes fewer round-trips, and a failed build finally tells you whether it's your code or the environment.

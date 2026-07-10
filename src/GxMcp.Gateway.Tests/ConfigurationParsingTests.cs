@@ -10,16 +10,18 @@ namespace GxMcp.Gateway.Tests
         [Fact]
         public void ParseConfig_LegacyKbPath_MigratesToKbsAndDefaultKb()
         {
+            // issue #28 item 6: legacy KBPath is migrated ONLY when it points at a real KB
+            // (a dir containing a .gxw / KnowledgeBase.Connection). Point KBPath at a temp
+            // dir carrying a .gxw sentinel so the migration path is exercised.
             string tempDir = Path.Combine(Path.GetTempPath(), "gxmcp-gw-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
+            string kbDir = Path.Combine(tempDir, "LegacyDemo");
+            Directory.CreateDirectory(kbDir);
+            File.WriteAllText(Path.Combine(kbDir, "LegacyDemo.gxw"), "");
             string configPath = Path.Combine(tempDir, "config.json");
             try
             {
-                var json = @"{
-  ""Environment"": {
-    ""KBPath"": ""C:/KBs/LegacyDemo""
-  }
-}";
+                var json = "{ \"Environment\": { \"KBPath\": " + System.Text.Json.JsonSerializer.Serialize(kbDir) + " } }";
                 File.WriteAllText(configPath, json);
 
                 var cfg = ParseConfig(configPath);
@@ -28,8 +30,43 @@ namespace GxMcp.Gateway.Tests
                 Assert.NotNull(cfg.Environment!.KBs);
                 var single = Assert.Single(cfg.Environment.KBs);
                 Assert.Equal("legacydemo", single.Alias);
-                Assert.Equal("C:/KBs/LegacyDemo", single.Path);
+                Assert.Equal(kbDir, single.Path);
                 Assert.Equal("legacydemo", cfg.Environment.DefaultKb);
+            }
+            finally
+            {
+                TryDeleteDirectory(tempDir);
+            }
+        }
+
+        [Fact]
+        public void ParseConfig_PlaceholderKbPath_IsNotMigrated()
+        {
+            // issue #28 item 6: the shipped fallback config carries a placeholder KBPath
+            // (an empty scaffold with no .gxw / KnowledgeBase.Connection). It must NOT be
+            // migrated into a phantom DefaultKb that auto-opens alongside the real KB.
+            string tempDir = Path.Combine(Path.GetTempPath(), "gxmcp-gw-tests-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            string placeholderDir = Path.Combine(tempDir, "YourKB"); // exists but no .gxw
+            Directory.CreateDirectory(placeholderDir);
+            string missingDir = Path.Combine(tempDir, "DoesNotExist");
+            string configPath = Path.Combine(tempDir, "config.json");
+            try
+            {
+                foreach (var kbPath in new[] { placeholderDir, missingDir })
+                {
+                    var json = "{ \"Environment\": { \"KBPath\": " + System.Text.Json.JsonSerializer.Serialize(kbPath) + " } }";
+                    File.WriteAllText(configPath, json);
+
+                    var cfg = ParseConfig(configPath);
+
+                    Assert.NotNull(cfg.Environment);
+                    // No KBs synthesised, no phantom DefaultKb.
+                    Assert.True(cfg.Environment!.KBs == null || cfg.Environment.KBs.Count == 0,
+                        $"Expected no migrated KBs for placeholder '{kbPath}'");
+                    Assert.True(string.IsNullOrEmpty(cfg.Environment.DefaultKb),
+                        $"Expected no DefaultKb for placeholder '{kbPath}'");
+                }
             }
             finally
             {

@@ -1245,6 +1245,8 @@ namespace GxMcp.Worker.Services
                             args?["page"]?.ToObject<int?>() ?? 1,
                             args?["pageSize"]?.ToObject<int?>() ?? 50);
                         if (action == "Cancel") return _buildService.Cancel(target);
+                        // issue #28 item 12: spec-check only (Spec+Gen, no Compile/deploy).
+                        if (action == "Specify") return _buildService.Specify(target);
                         // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.
                         if (action == "ReorgPreview") return _buildService.ReorgPreview(target);
                         {

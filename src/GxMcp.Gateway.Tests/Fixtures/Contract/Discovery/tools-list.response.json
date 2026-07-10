@@ -387,13 +387,18 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Creation umbrella. action: object (Transaction/Procedure/WebPanel/SDT/Domain/Dashboard; Domain takes dataType+length or enumValues; NOT WWP — use genexus_apply_pattern) | popup (popup WebPanel with Form type='layout' body) | sd_panel_create|sd_panel_inspect|sd_panel_edit | save_as (clone parts) | scaffold|translate|sample (forge) | template (kpi_header|empty_state|confirm_dialog).",
+      "description": "Creation umbrella. action: object (Transaction/Procedure/WebPanel/SDT/API/Domain/Dashboard; type='API' scaffolds a REST API object for grouped-route services; SDT takes optional firstItem/firstItemType; Domain takes dataType+length or enumValues; NOT WWP — use genexus_apply_pattern) | popup (popup WebPanel with Form type='layout' body) | sd_panel_create|sd_panel_inspect|sd_panel_edit | save_as (clone parts) | scaffold|translate|sample (forge) | template (kpi_header|empty_state|confirm_dialog).",
       "inputSchema": {
         "examples": [
           {
             "action": "object",
             "name": "NewPanel",
             "type": "WebPanel"
+          },
+          {
+            "action": "object",
+            "name": "CustomerApi",
+            "type": "API"
           },
           {
             "action": "popup",
@@ -1642,7 +1647,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Build, validate, index, or poll the KB. Long ops are async with operationId. dryRun=true (build/rebuild/index) returns the build plan or index plan without executing. See genexus://kb/tool-help/genexus_lifecycle for actions and target formats.",
+      "description": "Build, validate, index, or poll the KB. action=specify runs a spec-check (Spec+Gen only, no Compile/deploy) returning spc*/gen* diagnostics for the target fast — use it to catch spec errors without a full build. Long ops are async with operationId. dryRun=true (build/rebuild/index) returns the build plan or index plan without executing. See genexus://kb/tool-help/genexus_lifecycle for actions and target formats.",
       "inputSchema": {
         "examples": [
           {
@@ -1658,6 +1663,7 @@
             "enum": [
               "build",
               "cancel",
+              "specify",
               "rebuild",
               "reorg",
               "reorg_preview",

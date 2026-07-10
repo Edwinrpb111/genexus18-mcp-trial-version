@@ -108,22 +108,36 @@ namespace GxMcp.Gateway
                     }
 
                     // Legacy migration: Environment.KBPath without KBs[] synthesises one entry.
+                    // issue #28 item 6: only migrate when KBPath points at a REAL KB. The
+                    // shipped fallback config carries a placeholder KBPath (C:\KBs\YourKB —
+                    // an empty scaffold with no .gxw / KnowledgeBase.Connection). Migrating
+                    // that synthesised a phantom `yourkb` DefaultKb that auto-opened alongside
+                    // the user's real KB, producing "Multiple KBs open (yourkb,…); 'kb'
+                    // required" on every call. Skipping the placeholder means the only open KB
+                    // is the one the user actually opened, so no `kb` arg is needed.
                     if (config.Environment != null &&
                         (config.Environment.KBs == null || config.Environment.KBs.Count == 0) &&
                         !string.IsNullOrWhiteSpace(config.Environment.KBPath))
                     {
                         string legacyPath = config.Environment.KBPath!;
-                        string alias = Path.GetFileName(legacyPath.TrimEnd('\\', '/')).ToLowerInvariant();
-                        if (string.IsNullOrEmpty(alias)) alias = "default";
-                        config.Environment.KBs = new List<KbEntry>
+                        if (!LooksLikeKb(legacyPath))
                         {
-                            new KbEntry { Alias = alias, Path = legacyPath }
-                        };
-                        if (string.IsNullOrWhiteSpace(config.Environment.DefaultKb))
-                        {
-                            config.Environment.DefaultKb = alias;
+                            Program.Log($"[Gateway] Legacy KBPath '{legacyPath}' is not a valid KB (missing / no .gxw / KnowledgeBase.Connection) — skipping auto-migration so no placeholder KB is opened. Open your KB with genexus_kb action=open path=<kbPath>, or declare it in config.Environment.KBs[].");
                         }
-                        Program.Log($"[Gateway] Legacy KBPath migrated to KBs[{alias}], DefaultKb={alias}");
+                        else
+                        {
+                            string alias = Path.GetFileName(legacyPath.TrimEnd('\\', '/')).ToLowerInvariant();
+                            if (string.IsNullOrEmpty(alias)) alias = "default";
+                            config.Environment.KBs = new List<KbEntry>
+                            {
+                                new KbEntry { Alias = alias, Path = legacyPath }
+                            };
+                            if (string.IsNullOrWhiteSpace(config.Environment.DefaultKb))
+                            {
+                                config.Environment.DefaultKb = alias;
+                            }
+                            Program.Log($"[Gateway] Legacy KBPath migrated to KBs[{alias}], DefaultKb={alias}");
+                        }
                     }
 
                     return config;
@@ -134,6 +148,24 @@ namespace GxMcp.Gateway
                 }
             }
             throw new Exception("Could not read config.json after multiple attempts.");
+        }
+
+        // issue #28 item 6: a path is a real KB only if it exists and carries a .gxw
+        // (or the legacy KnowledgeBase.Connection). Used to skip auto-migrating the
+        // shipped placeholder KBPath into a phantom DefaultKb.
+        internal static bool LooksLikeKb(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return false;
+                foreach (var f in Directory.EnumerateFiles(path))
+                {
+                    var name = Path.GetFileName(f).ToLowerInvariant();
+                    if (name.EndsWith(".gxw") || name == "knowledgebase.connection") return true;
+                }
+            }
+            catch { /* unreadable dir → treat as not-a-KB */ }
+            return false;
         }
 
         private static void SetupWatcher(string path)

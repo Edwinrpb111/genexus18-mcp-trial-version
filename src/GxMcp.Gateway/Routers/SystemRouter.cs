@@ -28,6 +28,8 @@ namespace GxMcp.Gateway.Routers
                             fastIncremental = args?["fastIncremental"]?.ToObject<bool?>() ?? false
                         };
                         case "cancel": return new { module = "Build", action = "Cancel", target = target };
+                        // issue #28 item 12: spec-check only — Spec+Gen, no Compile/deploy.
+                        case "specify": return new { module = "Build", action = "Specify", target = target };
                         case "rebuild": return new { module = "Build", action = "RebuildAll", target = target };
                         case "reorg": return new { module = "Build", action = "Reorg", target = target };
                         // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.

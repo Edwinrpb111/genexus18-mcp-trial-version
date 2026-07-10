@@ -374,6 +374,35 @@ namespace GxMcp.Worker.Services
             return "code";
         }
 
+        // issue #28 item 14: GeneXus lowercases identifiers in its diagnostics
+        // (e.g. "&Objcod is not defined" when the source authored "&ObjCod"). Rewrite
+        // each &-prefixed token to the canonical casing the KB actually uses, looked up
+        // via the index (attributes/objects are stored with authored casing under a
+        // case-insensitive key). Only rewrites when a same-name entry exists with a
+        // DIFFERENT casing — never invents a name, never touches non-&-tokens — so a
+        // literal string or an unknown identifier is left exactly as GeneXus emitted it.
+        private static readonly Regex _rxAmpIdent = new Regex(@"&([A-Za-z_]\w*)", RegexOptions.Compiled);
+        internal string NormalizeErrorIdentifierCase(string line)
+        {
+            if (string.IsNullOrEmpty(line) || _indexCacheService == null || line.IndexOf('&') < 0) return line;
+            try
+            {
+                return _rxAmpIdent.Replace(line, m =>
+                {
+                    string tok = m.Groups[1].Value;
+                    var entry = _indexCacheService.TryGetEntryByName(tok);
+                    if (entry != null && !string.IsNullOrEmpty(entry.Name)
+                        && string.Equals(entry.Name, tok, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(entry.Name, tok, StringComparison.Ordinal))
+                    {
+                        return "&" + entry.Name;
+                    }
+                    return m.Value;
+                });
+            }
+            catch { return line; }
+        }
+
         public class BuildTaskStatus
         {
             public string TaskId { get; set; }
@@ -458,6 +487,9 @@ namespace GxMcp.Worker.Services
             // build path is taken, skip the IdeWebBuildAndDeploy step. See
             // InProcessBuildRunner.Run for the safety story.
             [JsonIgnore] internal bool SkipFullDeploy { get; set; }
+            // issue #28 item 12: spec-check only — run SpecifyOneOnly (Spec+Gen), skip
+            // Compile + deploy, so spc*/gen* diagnostics surface without a full build.
+            [JsonIgnore] internal bool SpecifyOnly { get; set; }
             // Item 28 (Tier-S, EXPERIMENTAL) — fastIncremental decision metadata.
             // Surfaced under top-level response fields (not status output) so the
             // agent sees the decision exactly once, with the Accepted envelope.
@@ -685,6 +717,14 @@ namespace GxMcp.Worker.Services
         public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy, string notifyOnFailure)
             => Build(action, target, includeCallees, buildPlanCap, skipFullDeploy, notifyOnFailure, fastIncremental: false);
 
+        // issue #28 item 12: spec-check entry. Runs the SpecifyOneOnly pass (Spec+Gen,
+        // no Compile, no deploy) for the target so the agent sees spc*/gen* diagnostics
+        // without the full ~compile+deploy build. Reuses the whole build-task pipeline;
+        // the #13 error split surfaces the spec diagnostics under codeErrors.
+        public string Specify(string target)
+            => Build("Build", target, includeCallees: "none", buildPlanCap: 200,
+                     skipFullDeploy: false, notifyOnFailure: null, fastIncremental: false, specifyOnly: true);
+
         /// <summary>
         /// dryRun=true: expands the build plan without dispatching a build task.
         /// Returns code=DryRun with the resolved targets list so the agent can
@@ -740,6 +780,9 @@ namespace GxMcp.Worker.Services
         //   - fastIncrementalFallback=true         → legacy full build queued
         //   - fastIncremental={canSkipDeploy,...}  → fast build queued
         public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy, string notifyOnFailure, bool fastIncremental)
+            => Build(action, target, includeCallees, buildPlanCap, skipFullDeploy, notifyOnFailure, fastIncremental, specifyOnly: false);
+
+        public string Build(string action, string target, string includeCallees, int buildPlanCap, bool skipFullDeploy, string notifyOnFailure, bool fastIncremental, bool specifyOnly)
         {
             // Parse target: single name OR comma/semicolon-separated list for batch "Build With These Only"
             var targets = ParseTargets(target);
@@ -810,6 +853,9 @@ namespace GxMcp.Worker.Services
                 StartTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 StartedAt = DateTime.UtcNow,
                 BuildPlan = plan,
+                SpecifyOnly = specifyOnly
+                    && string.Equals(action, "Build", StringComparison.OrdinalIgnoreCase)
+                    && targets.Count >= 1,
                 SkipFullDeploy = skipFullDeploy
                     && string.Equals(action, "Build", StringComparison.OrdinalIgnoreCase)
                     && targets.Count == 1
@@ -1248,7 +1294,8 @@ namespace GxMcp.Worker.Services
                             (s, l, err) => HandleLine(s, l, err),
                             _kbService.KbObject, _kbService.KbLock,
                             skipFullDeploy: status.SkipFullDeploy,
-                            kbPath: _kbService.GetKbPath());
+                            kbPath: _kbService.GetKbPath(),
+                            specifyOnly: status.SpecifyOnly);
                     }
                     catch (Exception ex)
                     {
@@ -1282,6 +1329,20 @@ namespace GxMcp.Worker.Services
                                     + ", " + status.ElapsedSeconds + "s)");
                         // Item 72 (friction 2026-05-22) — POST webhook on terminal Failed (not PartialSuccess).
                         MaybeNotifyOnFailure(status);
+                        return;
+                    }
+                    // issue #28 item 12: never fall back to a full MSBuild.exe spawn for a
+                    // spec-check request — that would compile + deploy, the opposite of what
+                    // specifyOnly asked for. Report spec-unavailable instead.
+                    if (status.SpecifyOnly)
+                    {
+                        status.Status = "Failed";
+                        status.Phase = "Done";
+                        EmitPhaseProgress(status.Phase);
+                        status.Error = "Spec-check (specifyOnly) could not run in-process (GeneXus MSBuild tasks unavailable in this worker). Not falling back to a full build. Run a normal build to see diagnostics.";
+                        status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                        status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);
+                        try { status.StateChangeSignal.Set(); } catch { }
                         return;
                     }
                     Logger.Warn("[BUILD-INPROCESS-FALLBACK] taskId=" + status.TaskId + " falling back to MSBuild.exe spawn");
@@ -1497,6 +1558,9 @@ namespace GxMcp.Worker.Services
                     // actionable target instead of a temp-file address. Keep the
                     // raw form too — ErrorsDetailed carries both for debugging.
                     string rawErr = line.Trim();
+                    // issue #28 item 14: restore authored identifier casing (&objcod → &ObjCod)
+                    // before location-rewriting, so the surfaced line and the detail agree.
+                    rawErr = NormalizeErrorIdentifierCase(rawErr);
                     string rewritten;
                     bool didRewrite = GxMcp.Worker.Helpers.BuildOutputShaper.TryRewriteErrorLocation(
                         rawErr, status.CurrentObject, status.Phase, out rewritten);

@@ -57,7 +57,8 @@ namespace GxMcp.Worker.Services
             object kbHandle,
             object kbLock,
             bool skipFullDeploy = false,
-            string kbPath = null)
+            string kbPath = null,
+            bool specifyOnly = false)
         {
             if (status == null) return false;
             if (kbHandle == null)
@@ -112,6 +113,21 @@ namespace GxMcp.Worker.Services
                         && targets != null
                         && targets.Count > 0;
                     bool forceRebuild = action != null && action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase);
+
+                    // issue #28 item 12: spec-check only. Run SpecifyOneOnly (Spec+Gen) for the
+                    // target(s) and stop — no Compile, no IdeWebBuildAndDeploy. Surfaces spc*/gen*
+                    // diagnostics via the engine sink (→ status errors, split by #13) without the
+                    // full build's compile+deploy cost. Reuses the proven ExecuteSpecifyOneOnly path.
+                    if (specifyOnly && isBuildWithTargets)
+                    {
+                        lineSink("[BUILD-INPROCESS] specifyOnly=true — running SpecifyOneOnly (Spec+Gen) only; Compile and deploy are SKIPPED. Use this for a fast spec check, not to produce runnable output.", false);
+                        engine.ResetSectionFlags();
+                        bool specOk = ExecuteSpecifyOneOnly(kbHandle, targets, engine);
+                        // Success here means "spec pass ran"; spec errors (if any) were emitted to
+                        // the sink and counted. Return true so the caller reports the spec result
+                        // rather than falling back to a full MSBuild.exe spawn.
+                        return specOk || status.ErrorCount > 0;
+                    }
 
                     // Friction 2026-05-22 fast path: use BuildOne — the same task the
                     // GeneXus IDE F5 invokes for "Build this object only". It does
