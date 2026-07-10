@@ -58,6 +58,37 @@ namespace GxMcp.Gateway.Tests
             Assert.NotEqual(op1, op2);
         }
 
+        // Regression: a worker-crash retry drives both MarkFailedByRequest (the crash) and,
+        // via LinkRequest, CompleteFromWorker (the successful retry) against ONE operation.
+        // Final status must be Completed, and the tool must be metric-counted exactly once
+        // (count == 1) — not twice — so whoami stats stay trustworthy.
+        [Fact]
+        public void CrashThenRetrySuccess_UpdatesStatus_ButCountsMetricOnce()
+        {
+            var tracker = new OperationTracker(TimeSpan.FromMinutes(5));
+            string firstId = "req-attempt-1";
+            string opId = tracker.StartOperation(firstId, "genexus_read", null, "cid");
+
+            // Attempt 1 crashes (OnWorkerExited path).
+            tracker.MarkFailedByRequest(firstId, "Worker crashed/exited.");
+
+            // Retry under a fresh request id, linked back to the same operation.
+            string retryId = "req-attempt-2";
+            tracker.LinkRequest(retryId, opId);
+            tracker.CompleteFromWorker(retryId, new JObject
+            {
+                ["id"] = retryId,
+                ["result"] = new JObject { ["status"] = "Success" }
+            });
+
+            Assert.Equal("Completed", (string)tracker.BuildOperationStatus(opId)["status"]!);
+
+            var tools = (JObject)tracker.BuildToolStatsBlock()["tools"]!;
+            var readStats = (JObject)tools["genexus_read"]!;
+            Assert.Equal(1, (long)readStats["count"]!);   // one logical call, not two
+            Assert.Equal(1, (long)readStats["errorCount"]!); // the crash, counted once
+        }
+
         [Fact]
         public void CompleteFromWorker_ShouldHandleArrayResultPayload()
         {

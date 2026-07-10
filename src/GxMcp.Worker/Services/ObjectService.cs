@@ -537,11 +537,14 @@ namespace GxMcp.Worker.Services
                 // Previous version used `-ErrorAction SilentlyContinue` on a single
                 // Copy-Item, which masked the lock race entirely — the reload returned
                 // Success while the binary on disk was unchanged.
-                string src = sourceDir.Replace("'", "''");
-                string dst = publishDir.Replace("'", "''");
+                // SECURITY: never interpolate sourceDir/publishDir into the PowerShell
+                // command string — sourceDir is a raw tool argument and a crafted value
+                // (e.g. containing a double-quote) could break out of the -Command quoting
+                // and inject script. Pass both paths via process environment variables
+                // instead (not shell-parsed); the script reads them with $env:.
                 string ps =
                     "$pid_target=" + currentPid + "; " +
-                    "$src='" + src + "'; $dst='" + dst + "'; " +
+                    "$src=$env:GXMCP_RELOAD_SRC; $dst=$env:GXMCP_RELOAD_DST; " +
                     "$log = Join-Path $dst 'worker_reload.last_result.json'; " +
                     "function Write-Status($status, $detail) { " +
                     "  @{ status = $status; detail = $detail; timestamp = (Get-Date).ToString('o'); src = $src; dst = $dst } | " +
@@ -575,6 +578,10 @@ namespace GxMcp.Worker.Services
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
+                // Paths flow to the helper as environment variables, never interpolated
+                // into the command line — see the security note above.
+                psi.EnvironmentVariables["GXMCP_RELOAD_SRC"] = sourceDir;
+                psi.EnvironmentVariables["GXMCP_RELOAD_DST"] = publishDir;
                 Process.Start(psi);
 
                 Logger.Info("WorkerReload: helper spawned (will copy " + sourceDir + " -> " + publishDir + " after exit). Exiting in 1s.");

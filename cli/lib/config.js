@@ -421,7 +421,7 @@ function createConfigFile(kbPath, gxPath) {
 
     const changed = !existing || JSON.stringify(existing) !== JSON.stringify(nextConfig);
     if (changed) {
-        fs.writeFileSync(targetConfigPath, JSON.stringify(nextConfig, null, 2));
+        writeFileAtomic(targetConfigPath, JSON.stringify(nextConfig, null, 2));
     }
 
     return {
@@ -1064,7 +1064,7 @@ function writeKbCatalog(configPath, { kbs, activeKb, kbPath }) {
     else delete cfg.Environment.ActiveKb;
     if (kbPath) cfg.Environment.KBPath = kbPath;
     else delete cfg.Environment.KBPath;
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+    writeFileAtomic(configPath, JSON.stringify(cfg, null, 2));
 }
 
 function addKbToConfig(configPath, name, kbPath) {
@@ -1165,7 +1165,7 @@ function applyLauncherConfigOrExit({ cwd, stderr, quiet }) {
     log(`[genexus-mcp] Generating default config.json for KB at: ${cwd}`);
 
     const defaultConfig = generateConfig(foundGxPath, cwd);
-    fs.writeFileSync(cwdConfigPath, JSON.stringify(defaultConfig, null, 2));
+    writeFileAtomic(cwdConfigPath, JSON.stringify(defaultConfig, null, 2));
     process.env.GX_CONFIG_PATH = cwdConfigPath;
 
     return { ok: true };

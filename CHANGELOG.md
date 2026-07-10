@@ -2,18 +2,29 @@
 
 ## Unreleased
 
-Second-pass codebase audit. Two concurrency/correctness fixes plus documentation
-hygiene; no tool renames or behavior changes a normal caller sees.
+Second-pass codebase audit. Correctness, data-safety, and security-hardening fixes
+plus documentation hygiene; no tool renames or behavior changes a normal caller sees.
 
 ### Fixed
 
+- **Background writes are no longer silently lost when a commit fails.** The background
+  flush caught commit exceptions at debug level and then cleared its "pending write"
+  flag unconditionally — so a failed commit was never retried, even though the client had
+  already been told the write succeeded, and a later worker recycle lost the change
+  permanently. Commit failures are now logged as errors and leave the write pending so
+  the next flush retries it.
 - **Async operation status no longer gets stuck at "Running" after a transient worker
-  crash.** When a read-only tool call hit a worker crash mid-flight and was
-  transparently retried, the retry's completion arrived under a fresh internal request
-  id that was never linked back to the operation, so `genexus_operations status` (and
-  `whoami`'s last-error surface) reported the call as perpetually running even though it
-  had finished. The retry is now linked to its operation, so status reflects the real
-  outcome.
+  crash.** When a tool call hit a worker crash mid-flight and was transparently retried,
+  the retry's completion arrived under a fresh internal request id that was never linked
+  back to the operation, so `genexus_operations status` (and `whoami`'s last-error
+  surface) reported the call as perpetually running even though it had finished. The
+  retry is now linked to its operation, and per-tool metrics count each call exactly once
+  (the crash-then-retry no longer double-counts).
+- **The CLI writes its own `config.json` atomically.** The KB catalog / active-KB
+  pointer was written in place with a plain overwrite, so a crash or interruption
+  mid-write could truncate it and lose the entire registered-KB list — while every
+  third-party client config in the same module already used the atomic temp-file+rename
+  helper. The tool's own state file now uses it too.
 - **`genexus_worker_pool action=warm_spares` is stable when pre-warming more than one
   KB.** The pre-spawn result was collected into a non-thread-safe list from concurrent
   background callbacks, which could throw or drop entries once two or more KBs were
@@ -22,6 +33,15 @@ hygiene; no tool renames or behavior changes a normal caller sees.
   `GENEXUS_MCP_CACHE_DIR` environment variable that does not exist; following it
   silently did nothing. The entry now explains the real options for locked-down
   `%LOCALAPPDATA%` machines.
+
+### Security
+
+- **`genexus_worker_reload` no longer builds its PowerShell helper command by
+  interpolating the `sourceDir` argument.** The reload path spawned `powershell.exe` with
+  the source/destination paths concatenated into the `-Command` string; a crafted
+  `sourceDir` could break out of the quoting. The paths are now passed to the helper as
+  process environment variables (never shell-parsed), and the script reads them via
+  `$env:`.
 
 ### Added
 
@@ -38,9 +58,14 @@ hygiene; no tool renames or behavior changes a normal caller sees.
   `private`→`internal` (the test assembly already has `InternalsVisibleTo`), and the
   Gateway test project gained a `Microsoft.AspNetCore.App` framework reference for
   `HttpContext`.
+- New `OperationTracker` regression test (`CrashThenRetrySuccess_UpdatesStatus_ButCountsMetricOnce`)
+  pinning the crash-then-retry contract: status transitions to Completed while the tool
+  metric is counted exactly once. Backed by a `MetricRegistered` guard on the operation
+  record; retry-linked request ids are now also dropped by `CleanupExpired`.
 - Additional deferred audit findings captured as backlog entries under `plans/`
   (O(n²) parent-index insert, per-search enrichment scan, hung-worker reaping, shared
-  path-safety helper, error-envelope normalization, additional god-object decomposition).
+  path-safety helper, error-envelope normalization, additional god-object decomposition,
+  and the `warm_spares` result-reporting gap).
 
 ## v2.17.0 — 2026-07-10
 

@@ -93,6 +93,15 @@ verification — and should become numbered plans (012+) before execution:
 - **DIR-01 — finish or shelve the v2.8.0 canonical-envelope cleanup.** Dual-shape fallback
   TODOs (`BatchService.cs:146`, `ObjectService.cs:238,1548-1559`, `FeatureScaffoldService.cs:358`)
   still live nine releases later; audit callers, then remove the legacy branch per site.
+- **BUG-04 — `genexus_worker_pool action=warm_spares` reports empty results.**
+  `WorkerPool.ConfigureWarmSpares` (`src/GxMcp.Gateway/WorkerPool.cs:334-384`) fires the
+  pre-spawns fire-and-forget, then returns `Prespawned`/`Skipped` synchronously — before
+  any spawn's continuation runs — so the tool almost always reports nothing pre-spawned even
+  though workers are coming up in the background. (The v2.17.0-followup `ConcurrentBag` change
+  fixed the concurrent-write hazard on those lists but not this reporting gap.) Fix needs a
+  bounded await of the spawn tasks before building the result, or a contract change to report
+  "scheduled" synchronously and actual outcomes via `whoami`/`lifecycle`. MED risk: awaiting
+  inline changes the tool's fast/fire-and-forget response-time characteristic — cap it.
 
 ## Findings considered and rejected
 

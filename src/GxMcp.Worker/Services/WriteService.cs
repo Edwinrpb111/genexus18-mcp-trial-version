@@ -369,6 +369,11 @@ namespace GxMcp.Worker.Services
                     var kb = _objectService.GetKbService().GetKB();
                     if (kb == null) return;
 
+                    // Track commit failures: a failed Commit must NOT clear _pendingCommit,
+                    // or the write is silently lost (no retry) after the caller was already
+                    // told Success. Keep the flag set on failure so the next flush retries.
+                    bool commitFailed = false;
+
                     // Commits
                     var model = kb.DesignModel;
                     if (model != null) {
@@ -376,21 +381,29 @@ namespace GxMcp.Worker.Services
                             var modelCommit = model.GetType().GetMethod("Commit", BindingFlags.Public | BindingFlags.Instance);
                             modelCommit?.Invoke(model, null);
                             Logger.Info("[BACKGROUND-FLUSH] Model.Commit() successful.");
-                        } catch (Exception ex) { Logger.Debug("[BACKGROUND-FLUSH] Model.Commit skipped: " + ex.Message); }
+                        } catch (Exception ex) { commitFailed = true; Logger.Error("[BACKGROUND-FLUSH] Model.Commit FAILED (will retry): " + ex.Message); }
                     }
-                    
+
                     try {
                         var kbCommit = kb.GetType().GetMethod("Commit", BindingFlags.Public | BindingFlags.Instance);
                         kbCommit?.Invoke(kb, null);
                         Logger.Info("[BACKGROUND-FLUSH] KB.Commit() successful.");
-                    } catch (Exception ex) { Logger.Debug("[BACKGROUND-FLUSH] KB.Commit skipped: " + ex.Message); }
+                    } catch (Exception ex) { commitFailed = true; Logger.Error("[BACKGROUND-FLUSH] KB.Commit FAILED (will retry): " + ex.Message); }
 
-                    _pendingCommit = false;
-                    Logger.Info("[BACKGROUND-FLUSH] Full commit cycle complete.");
+                    if (commitFailed)
+                    {
+                        Logger.Error("[BACKGROUND-FLUSH] Commit failed; keeping pending flag so the write is retried on the next flush.");
+                    }
+                    else
+                    {
+                        _pendingCommit = false;
+                        Logger.Info("[BACKGROUND-FLUSH] Full commit cycle complete.");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error("[BACKGROUND-FLUSH] ERROR: " + ex.Message);
+                    // Leave _pendingCommit set so a later flush retries rather than dropping the write.
+                    Logger.Error("[BACKGROUND-FLUSH] ERROR (write left pending for retry): " + ex.Message);
                 }
             }
         }

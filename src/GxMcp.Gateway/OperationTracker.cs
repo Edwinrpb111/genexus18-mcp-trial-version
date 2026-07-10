@@ -47,6 +47,18 @@ namespace GxMcp.Gateway
         {
             if (string.IsNullOrWhiteSpace(requestId) || string.IsNullOrWhiteSpace(operationId)) return;
             _requestToOperation[requestId] = operationId;
+            // Remember the extra id on the record so CleanupExpired can drop it later;
+            // skip the no-op self-link StartOperation already made (requestId == RequestId).
+            if (_operations.TryGetValue(operationId, out var record))
+            {
+                lock (record.SyncRoot)
+                {
+                    if (!string.Equals(requestId, record.RequestId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        (record.LinkedRequestIds ??= new List<string>()).Add(requestId);
+                    }
+                }
+            }
         }
 
         public void MarkTimeout(string operationId)
@@ -78,6 +90,7 @@ namespace GxMcp.Gateway
             if (!_operations.TryGetValue(operationId, out var record)) return;
 
             DateTime now = DateTime.UtcNow;
+            bool registerMetric;
             lock (record.SyncRoot)
             {
                 bool isErrorEnvelope = workerPayload["error"] != null;
@@ -90,7 +103,13 @@ namespace GxMcp.Gateway
                 record.LastError = isErrorEnvelope
                     ? workerPayload["error"]?.ToString()
                     : (isErrorStatus ? resultObj?["error"]?.ToString() ?? resultObj?["details"]?.ToString() : record.LastError);
+                // Status still updates on a retried completion (Failed -> Completed), but the
+                // metric is registered only on the first terminal transition (see MetricRegistered).
+                registerMetric = !record.MetricRegistered;
+                record.MetricRegistered = true;
             }
+
+            if (!registerMetric) return;
 
             var metric = _toolMetrics.GetOrAdd(record.ToolName, _ => new ToolMetricState(record.ToolName));
             long elapsedMs = record.CompletedAtUtc.HasValue
@@ -134,6 +153,7 @@ namespace GxMcp.Gateway
                 record.CompletedAtUtc = DateTime.UtcNow;
                 record.UpdatedAtUtc = record.CompletedAtUtc.Value;
                 record.LastError = reason ?? "Cancelled by client";
+                record.MetricRegistered = true; // a later CompleteFromWorker must not re-count this op
             }
 
             var metric = _toolMetrics.GetOrAdd(record.ToolName, _ => new ToolMetricState(record.ToolName));
@@ -150,13 +170,18 @@ namespace GxMcp.Gateway
             if (!_requestToOperation.TryGetValue(requestId, out var operationId)) return;
             if (!_operations.TryGetValue(operationId, out var record)) return;
 
+            bool registerMetric;
             lock (record.SyncRoot)
             {
                 record.Status = "Failed";
                 record.CompletedAtUtc = DateTime.UtcNow;
                 record.UpdatedAtUtc = record.CompletedAtUtc.Value;
                 record.LastError = errorMessage;
+                registerMetric = !record.MetricRegistered;
+                record.MetricRegistered = true;
             }
+
+            if (!registerMetric) return;
 
             var metric = _toolMetrics.GetOrAdd(record.ToolName, _ => new ToolMetricState(record.ToolName));
             long elapsedMs = record.CompletedAtUtc.HasValue
@@ -587,8 +612,15 @@ namespace GxMcp.Gateway
                 // reuse, so an unconditional TryRemove(record.RequestId) could delete a
                 // newer, live operation's mapping. Compare-and-remove via the
                 // ICollection<KeyValuePair<>> overload.
-                ((ICollection<KeyValuePair<string, string>>)_requestToOperation)
-                    .Remove(new KeyValuePair<string, string>(record.RequestId, kvp.Key));
+                var mapView = (ICollection<KeyValuePair<string, string>>)_requestToOperation;
+                mapView.Remove(new KeyValuePair<string, string>(record.RequestId, kvp.Key));
+                // Also drop any retry ids linked to this operation (LinkRequest), or they
+                // would leak — CleanupExpired never sees them via record.RequestId.
+                if (record.LinkedRequestIds != null)
+                {
+                    foreach (var linkedId in record.LinkedRequestIds)
+                        mapView.Remove(new KeyValuePair<string, string>(linkedId, kvp.Key));
+                }
             }
         }
 
@@ -666,6 +698,15 @@ namespace GxMcp.Gateway
             public string? LastError { get; set; }
             public JObject? ToolArguments { get; set; }
             public JToken? WorkerPayload { get; set; }
+            // Guard against registering more than one metric completion per logical
+            // operation: a worker-crash retry drives both MarkFailedByRequest (the crash)
+            // and CompleteFromWorker (the successful retry) against the same record, and
+            // without this the tool metrics would double-count that single user call.
+            public bool MetricRegistered { get; set; }
+            // Extra request ids linked to this operation by worker-crash retries (via
+            // LinkRequest). CleanupExpired must drop these too or _requestToOperation grows
+            // without bound — the retention window only knows about the original RequestId.
+            public List<string>? LinkedRequestIds { get; set; }
         }
 
         private sealed class ToolMetricState
