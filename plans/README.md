@@ -42,8 +42,72 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (reason) | REJECTED (rational
   a test net around its ~34 public entry points. 009 is the model for how to build
   one; apply the same approach to WriteService before starting 007.
 
+## Second-pass audit (2026-07-10, against `ee09820` / v2.17.0)
+
+A follow-up audit ran after v2.17.0. Its safe, verifiable findings were fixed
+directly (see the `Unreleased` CHANGELOG entry): the worker-crash-retry operation
+status leak, the warm-spare concurrency bug, the stale `GENEXUS_MCP_CACHE_DIR`
+troubleshooting entry, the missing env-var reference doc, and the untested `/mcp`
+auth path. The findings below were **deferred** — MED-risk or needing per-site
+verification — and should become numbered plans (012+) before execution:
+
+- **PERF-01 — O(n²) parent-children index insert.** `IndexCacheService.AddOrUpdateEntryInParentIndex`
+  (`src/GxMcp.Worker/Services/IndexCacheService.cs:597-610`) does a `list.Any(...)` linear
+  scan per insert under the per-list lock; for large sibling groups (thousands of
+  attributes under one table, procs under one folder) bulk/incremental indexing is
+  quadratic. Fix needs an O(1) membership structure (companion `HashSet` of storage keys)
+  alongside the ordered `List`, updated in both add and `RemoveEntryFromParentIndex`.
+  Land plan 001 (flush-count regression test) first — same safety-net argument as 003/004.
+- **PERF-02 — full index scan per non-quick search.** `SearchService` calls
+  `IndexCacheService.HasPendingEnrichment()` inline on qualifying searches; it walks the
+  whole in-memory index (`IndexCacheService.cs:987-997`). Replace with an `Interlocked`
+  un-enriched counter maintained across every `Objects` mutation path (`ReplaceAll`/
+  `AddOrUpdateBatch`/`RemoveEntry*`). MED risk: a missed increment/decrement site makes
+  the flag lie — wire it into every mutation or don't ship it.
+- **BUG-03 — a hung (not crashed) worker is never idle-reaped.** `WorkerProcess._inFlightCommands`
+  only decrements on a real worker response or a write failure; a gateway-side operation
+  timeout updates the tracker but not the counter, and `ShouldStopForIdle` refuses to reap
+  while in-flight > 0. A worker wedged on an SDK call (never exits) holds its slot forever.
+  Needs a per-in-flight-command deadline map + a hard ceiling in the health check that
+  force-stops past it — with a threshold well above legitimate long builds. Confirm real
+  frequency from logs before investing.
+- **TECHDEBT-01 — consolidate path-containment / make-relative helpers.** "Is this path
+  inside the KB root?" is reimplemented in `AssetService`, `BlameService`, `TimeTravelService`
+  (three variants) and *absent* at `IndexCacheService.cs:460`, `ObjectService.cs:1496,1528`.
+  Extract one `PathSafety` helper + tests (trailing-slash/case/UNC), then replace call sites.
+  Verify each currently-unchecked site actually takes untrusted input before adding a
+  containment check that could reject a legitimate path.
+- **TECHDEBT-02 — normalize the error envelope across ~16 services.** Several services
+  hand-build `{error,...}` shapes instead of `McpResponse.Err`; `FeatureScaffoldService.cs:357`
+  already special-cases the drift. MED risk — response shape is observable to callers;
+  needs before/after coverage. `BatchService`'s nested-error wrapper may be intentional.
+- **TECHDEBT-03 — additional god objects.** `LayoutService.cs` (3066), `PatternApplyService.cs`
+  (2285), `ObjectService.cs` (2226), `AnalyzeService.cs` (2191), `PatchService.cs` (1985) —
+  same class of decomposition as the already-planned WriteService/Program.cs splits (007/008),
+  characterization tests first.
+- **TEST-02 — replace source-text guard tests with behavioral tests.** ~19 test files
+  `File.ReadAllText` a `.cs` and `Assert.Contains` a string literal instead of exercising the
+  code path (this is the root of the flagged flaky `Dispatcher_PatchApply_ValidateOnly`).
+  Triage per-file; for the validate-only/dry-run mapping specifically, add a real
+  `CommandDispatcher.Dispatch(validate=only)` test asserting no persistence.
+- **DIR-01 — finish or shelve the v2.8.0 canonical-envelope cleanup.** Dual-shape fallback
+  TODOs (`BatchService.cs:146`, `ObjectService.cs:238,1548-1559`, `FeatureScaffoldService.cs:358`)
+  still live nine releases later; audit callers, then remove the legacy branch per site.
+
 ## Findings considered and rejected
 
+- **SEC (kb_import/kb_diff arbitrary-directory resolve)**: NOT A FIX HERE — by-design.
+  `ResolveKbPath` (`Program.cs:4930`) intentionally falls back to any existing directory
+  because `genexus_kb_diff kbA/kbB` and `genexus_kb_import to` are **documented** as
+  `<alias-or-path>` (AGENTS.md; v2.17.0 changelog). v2.17.0 already hardened the `name`/`type`
+  segments + containment within the resolved root. Narrowing the resolver to declared
+  aliases only would change a documented public-API contract, so it needs an explicit
+  product decision, not a silent audit fix. Revisit if the alias-or-path contract is ever
+  dropped.
+- **DEP-01 (Node lockfile + `npm audit` CI step)**: NOT WORTH DOING NOW — `package.json`
+  has zero runtime and zero dev dependencies, so a lockfile captures nothing and `npm audit`
+  audits nothing. Revisit the moment any dependency is added (then generate the lockfile and
+  add an `--audit-level=high` CI step in the same change).
 - **SEC-03 (multi_agent_lock arbitrary path)**: REJECTED — not reachable. The audit
   flagged `kbPathOverride` flowing from tool args into `Path.Combine`, but
   `CommandDispatcher.cs:1506` hardcodes `kbPathOverride: null` on the only dispatch

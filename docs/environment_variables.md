@@ -1,0 +1,77 @@
+# Environment variables
+
+Reference for the environment variables the GeneXus MCP gateway and worker read
+at runtime. There is **no `.env` file loader** — set these in the environment
+that launches the AI client (which spawns the gateway), or in the MCP-client
+config's `env` block for the server entry.
+
+All are optional. Unset means the documented default applies.
+
+## Update / self-update
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GENEXUS_MCP_NO_UPDATE_CHECK` | Set to `1` to disable the background "is a newer version available?" check performed on `initialize`. Useful on networks that block the GitHub API. | check enabled |
+| `GENEXUS_MCP_NO_SELF_UPDATE` | Set to `1` to disable the self-update apply path (the check may still run; nothing is installed). | self-update enabled |
+
+## HTTP endpoint
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GXMCP_HTTP_TOKEN` | Shared secret required on every `/mcp` HTTP request (`Authorization: Bearer <token>` or `X-GXMCP-Token`). Binding to a non-loopback address **requires** this — without it, non-loopback `/mcp` requests are refused. The default `127.0.0.1` bind with no token is unchanged. | unset (loopback-only, no auth) |
+
+## AI-completion proxy (`genexus_ai_complete`)
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GXMCP_AI_COMPLETE_URL` | OpenAI-compatible chat-completions endpoint the tool forwards to. | unset → tool returns `AiEndpointNotConfigured` |
+| `GXMCP_AI_COMPLETE_KEY` | Bearer key for the endpoint above. | unset |
+| `GXMCP_AI_COMPLETE_MODEL` | Model name sent in the request body. | provider/endpoint default |
+| `GXMCP_AI_COMPLETE_DEBUG` | Set to `1` to include the raw upstream error body in a failed response (may carry account/billing/request-id detail). Off by default; failures return a length-only breadcrumb. | off |
+
+## GAM credentials (headless preview / login)
+
+Precedence is: tool `auth` argument > these env vars > built-in default.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GXMCP_GAM_USER` | GAM username for headless authentication. | unset |
+| `GXMCP_GAM_PASS` | GAM password. **Secret** — prefer the MCP-client config `env` block over a shell profile. | unset |
+| `GXMCP_GAM_LOGIN_URL` | GAM login URL override. | unset |
+
+## Build path (`genexus_edit_and_build` / `genexus_run_object`)
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GXMCP_INPROCESS_BUILD` | Opt into the in-process build runner. | off |
+| `GXMCP_INPROCESS_BUILD_BATCH` | Set to `1` to opt into batched build (opt-in since 2026-05-22). | off |
+| `GXMCP_INPROCESS_BUILD_FASTPATH` | Fast-path build variant (benchmark / opt-out lever). | off |
+| `GXMCP_BUILD_COMPILE_ONLY` | Compile without the full build pipeline (benchmark / opt-out lever). | off |
+| `GXMCP_BUILD_PROFILE` | Select a build profile. | unset |
+| `GXMCP_REAP_ORPHAN_MSBUILD` | Reap orphaned MSBuild processes after a build. | off |
+
+## Timeouts / budgets
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GENEXUS_MCP_REAPPLY_TIMEOUT_MS` | Worker reapply timeout; the gateway aligns its wait to it. | 300000 (5 min) |
+| `GXMCP_PREVIEW_BUDGET_MS` | Time budget for the headless preview render before it stops blocking. | see `PreviewService` |
+
+## Diagnostics / advanced
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GXMCP_SYNC_LOG` | Set to `1` to also append every log line synchronously (crash forensics). | off |
+| `GXMCP_LEGACY_TOOL_ALIASES` | Set to `0` to opt out of legacy tool-name aliases (de-advertised tools reachable by old names). | aliases on |
+| `GXMCP_RESILIENT_SPEC` | Set to `1` to opt into the resilient specifier path (slower; opt-in). | off |
+| `GXMCP_OCR_ENGINE` | Set to `tesseract` to select the Tesseract OCR engine (requires the Tesseract.NET dependency). | unset |
+
+## Set internally (do not set by hand)
+
+| Variable | Purpose |
+|----------|---------|
+| `GXMCP_SERVER_VERSION` | The gateway injects the server version into the worker's environment on spawn. Reading it in worker code is fine; setting it externally has no effect. |
+
+> **Maintenance note:** when you add a new `GXMCP_*` / `GENEXUS_MCP_*` variable,
+> add a row here. This table is the single reference operators are pointed at
+> from `AGENTS.md` and `TROUBLESHOOTING.md`.

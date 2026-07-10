@@ -39,6 +39,16 @@ namespace GxMcp.Gateway
             return operationId;
         }
 
+        // When a worker-crash retry re-sends the same operation under a fresh JSON-RPC
+        // request id, the worker's completion arrives keyed by that new id. Without this
+        // mapping, CompleteFromWorker's _requestToOperation lookup misses and the operation
+        // record is stranded at "Running" forever even though the retry succeeded.
+        public void LinkRequest(string requestId, string operationId)
+        {
+            if (string.IsNullOrWhiteSpace(requestId) || string.IsNullOrWhiteSpace(operationId)) return;
+            _requestToOperation[requestId] = operationId;
+        }
+
         public void MarkTimeout(string operationId)
         {
             if (string.IsNullOrWhiteSpace(operationId)) return;

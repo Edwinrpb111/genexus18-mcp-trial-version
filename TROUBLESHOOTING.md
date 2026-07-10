@@ -168,9 +168,16 @@ Then retry. This is safe — leases regenerate.
 
 ### "Access denied" writing to `%LOCALAPPDATA%\GenexusMCP\`
 
-Corporate machines sometimes lock down `%LOCALAPPDATA%`. Either:
-- Ask IT to whitelist the folder, or
-- Set an alternate cache dir via env var: `GENEXUS_MCP_CACHE_DIR=D:\genexus-mcp-cache` before launching the client.
+The gateway and worker keep their cache, index, and snapshot data under
+`%LOCALAPPDATA%\GenexusMCP\` (and `%LOCALAPPDATA%\GxMcp\`). There is no
+dedicated env var to move just this cache — the location is derived from the
+OS "Local Application Data" folder. If a corporate policy locks it down:
+- Ask IT to whitelist `%LOCALAPPDATA%\GenexusMCP\` (and `%LOCALAPPDATA%\GxMcp\`), or
+- Redirect the whole Local AppData folder for the launching user to a writable
+  location (e.g. point the `LOCALAPPDATA` environment variable at `D:\AppData\Local`
+  before starting the AI client), which moves this cache along with everything else.
+
+> All runtime environment variables are listed in [`docs/environment_variables.md`](docs/environment_variables.md).
 
 ### KB is on a network drive and reads are slow / fail intermittently
 

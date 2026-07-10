@@ -2157,6 +2157,13 @@ namespace GxMcp.Gateway
                     WorkerAlias = worker.Kb?.NormalizedAlias
                 };
                 _pendingRequests[attemptRequestId] = pending;
+                // A worker-crash retry mints a fresh attemptRequestId; the worker's completion
+                // comes back keyed by it, so link it to the operation or CompleteFromWorker misses
+                // and the op record stays "Running" forever. Idempotent on the first attempt.
+                if (operationId != null)
+                {
+                    _operationTracker.LinkRequest(attemptRequestId, operationId);
+                }
 
                 await worker.SendCommandAsync(workerRequest.ToString(Formatting.None));
 
@@ -5586,14 +5593,14 @@ namespace GxMcp.Gateway
         //   token set          -> every /mcp request must present it (Bearer / X-GXMCP-Token)
         //   no token + loopback -> allowed (preserves the default 127.0.0.1 dev workflow)
         //   no token + non-loopback bind -> refused (don't silently expose to the network)
-        private static bool IsLoopbackBind(string bindAddress)
+        internal static bool IsLoopbackBind(string bindAddress)
         {
             if (string.IsNullOrWhiteSpace(bindAddress)) return false; // blank -> 0.0.0.0, not loopback
             var b = bindAddress.Trim();
             return b == "127.0.0.1" || b == "::1" || b.Equals("localhost", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool ConstantTimeEquals(string a, string b)
+        internal static bool ConstantTimeEquals(string a, string b)
         {
             if (a == null || b == null) return false;
             var ba = System.Text.Encoding.UTF8.GetBytes(a);
@@ -5603,7 +5610,7 @@ namespace GxMcp.Gateway
             return diff == 0;
         }
 
-        private static bool IsHttpTokenValid(HttpContext context, string expected)
+        internal static bool IsHttpTokenValid(HttpContext context, string expected)
         {
             string presented = null;
             var auth = context.Request.Headers["Authorization"].FirstOrDefault();

@@ -339,11 +339,14 @@ namespace GxMcp.Gateway
             if (requested > MaxWarmSpareCount) { requested = MaxWarmSpareCount; capped = true; }
             Interlocked.Exchange(ref _warmSpareCount, requested);
 
-            var prespawned = new System.Collections.Generic.List<string>();
-            var skipped = new System.Collections.Generic.List<string>();
+            // ConcurrentBag: the fire-and-forget continuations below run on thread-pool
+            // threads (TaskScheduler.Default) and can populate these concurrently when
+            // more than one KB is configured — a plain List.Add would corrupt/throw.
+            var prespawned = new ConcurrentBag<string>();
+            var skipped = new ConcurrentBag<string>();
             if (requested == 0 || declaredKbs == null)
             {
-                return new WarmSpareResult(requestedOrig, requested, capped, prespawned, skipped);
+                return new WarmSpareResult(requestedOrig, requested, capped, prespawned.ToList(), skipped.ToList());
             }
 
             int budget = requested;
@@ -377,7 +380,7 @@ namespace GxMcp.Gateway
                     skipped.Add(kb.Alias);
                 }
             }
-            return new WarmSpareResult(requestedOrig, requested, capped, prespawned, skipped);
+            return new WarmSpareResult(requestedOrig, requested, capped, prespawned.ToList(), skipped.ToList());
         }
 
         public sealed record WarmSpareResult(

@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+Second-pass codebase audit. Two concurrency/correctness fixes plus documentation
+hygiene; no tool renames or behavior changes a normal caller sees.
+
+### Fixed
+
+- **Async operation status no longer gets stuck at "Running" after a transient worker
+  crash.** When a read-only tool call hit a worker crash mid-flight and was
+  transparently retried, the retry's completion arrived under a fresh internal request
+  id that was never linked back to the operation, so `genexus_operations status` (and
+  `whoami`'s last-error surface) reported the call as perpetually running even though it
+  had finished. The retry is now linked to its operation, so status reflects the real
+  outcome.
+- **`genexus_worker_pool action=warm_spares` is stable when pre-warming more than one
+  KB.** The pre-spawn result was collected into a non-thread-safe list from concurrent
+  background callbacks, which could throw or drop entries once two or more KBs were
+  configured as warm spares. Collection is now concurrency-safe.
+- **Corrected a stale troubleshooting entry.** `TROUBLESHOOTING.md` documented a
+  `GENEXUS_MCP_CACHE_DIR` environment variable that does not exist; following it
+  silently did nothing. The entry now explains the real options for locked-down
+  `%LOCALAPPDATA%` machines.
+
+### Added
+
+- **`docs/environment_variables.md`** — a single reference for every runtime
+  environment variable (HTTP token, GAM credentials, AI-completion proxy, build-path and
+  diagnostic knobs), with purpose and default for each. Linked from `AGENTS.md` and
+  `TROUBLESHOOTING.md`.
+
+### Internal
+
+- New `HttpTokenAuthTests` covering the `/mcp` auth primitives (loopback classification,
+  constant-time compare, Bearer / `X-GXMCP-Token` parsing, wrong/empty/missing token) —
+  the auth boundary previously had zero test coverage. The three helpers were widened
+  `private`→`internal` (the test assembly already has `InternalsVisibleTo`), and the
+  Gateway test project gained a `Microsoft.AspNetCore.App` framework reference for
+  `HttpContext`.
+- Additional deferred audit findings captured as backlog entries under `plans/`
+  (O(n²) parent-index insert, per-search enrichment scan, hung-worker reaping, shared
+  path-safety helper, error-envelope normalization, additional god-object decomposition).
+
 ## v2.17.0 — 2026-07-10
 
 Security and stability hardening from a codebase audit. No tool renames; the only

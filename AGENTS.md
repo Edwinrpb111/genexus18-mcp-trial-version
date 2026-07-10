@@ -136,6 +136,8 @@ The check is performed by the gateway in the background on `initialize`, cached 
 
 Set environment variable `GENEXUS_MCP_NO_UPDATE_CHECK=1` to disable the background check entirely. Some corporate networks block GitHub API; in those cases `update` returns `{currentVersion, updateAvailable: false, note: "no update-check yet ..."}` and the LLM should respect the absence and not pester.
 
+> All runtime environment variables (HTTP token, GAM credentials, AI-completion proxy, build-path and diagnostic knobs) are catalogued in [`docs/environment_variables.md`](docs/environment_variables.md).
+
 ## Tool playbook — v2.6.6 additions
 
 Discoverable via `tools/list`; full schema in `src/GxMcp.Gateway/tool_definitions.json`. Each entry below is a 2-3 line orientation for the LLM agent.
