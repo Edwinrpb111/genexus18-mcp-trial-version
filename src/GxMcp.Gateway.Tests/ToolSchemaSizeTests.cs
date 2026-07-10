@@ -157,7 +157,11 @@ namespace GxMcp.Gateway.Tests
             //   (IIntegratedSecurityService), plus genexus_gxserver write actions
             //   (commit/update/lock/resolve via IGXserverService). Measured ~13150
             //   tokens; ~150 headroom.
-            Assert.True(approxTokens < 13300, $"tool_definitions.json is ~{approxTokens} tokens; budget 13300.");
+            //   2026-07-10 (issue #28 authoring papercuts): 13300 → 13600 for
+            //   genexus_variable length/decimals/collection params + genexus_create
+            //   firstItem/firstItemType SDT-seed params (issue #28 items 7/8/9).
+            //   Measured ~13378 tokens; ~222 headroom.
+            Assert.True(approxTokens < 13600, $"tool_definitions.json is ~{approxTokens} tokens; budget 13600.");
         }
     }
 }

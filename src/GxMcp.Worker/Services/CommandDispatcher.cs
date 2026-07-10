@@ -597,6 +597,17 @@ namespace GxMcp.Worker.Services
                         {
                             // v2.3.8 Task 1.2: surface unified IndexState from IndexCacheService.
                             // Gateway uses this to populate the `index` block in whoami.
+                            //
+                            // issue #28 item 4: hydrate the on-disk cache BEFORE reading the
+                            // state. On a warm/reconnected worker _state starts "Cold" until
+                            // something calls GetIndex() (lazy disk load → MarkIndexComplete →
+                            // "Ready"). Because the gateway's SDK-bound short-circuit fast-fails
+                            // edits on a Cold mirror BEFORE they reach the worker, GetIndex()
+                            // never ran on the edit path and the state stayed Cold forever
+                            // ("Index loaded. Objects: 1191" in the log, yet edits blocked with
+                            // IndexNotReady). Triggering the lazy load here promotes the state to
+                            // reflect the loaded cache on the first whoami/refresh after reconnect.
+                            try { _indexCacheService.GetIndex(); } catch { /* load is best-effort; GetState still returns Cold/0 */ }
                             var st = _indexCacheService.GetState();
                             // v2.8.0 — index state shape is the tool's payload (not an envelope).
                             // Renamed top-level "status" to "indexStatus" to avoid colliding with
@@ -862,7 +873,10 @@ namespace GxMcp.Worker.Services
                                 target,
                                 args?["varName"]?.ToString(),
                                 args?["typeName"]?.ToString(),
-                                varDryRun);
+                                varDryRun,
+                                args?["length"]?.ToObject<int?>(),
+                                args?["decimals"]?.ToObject<int?>(),
+                                args?["collection"]?.ToObject<bool?>());
                         }
                         if (action == "DeleteVariable")
                         {
@@ -880,7 +894,10 @@ namespace GxMcp.Worker.Services
                                 args?["varName"]?.ToString(),
                                 args?["typeName"]?.ToString(),
                                 args?["basedOn"]?.ToString(),
-                                varDryRun);
+                                varDryRun,
+                                args?["length"]?.ToObject<int?>(),
+                                args?["decimals"]?.ToObject<int?>(),
+                                args?["collection"]?.ToObject<bool?>());
                         }
                         if (action == "ValidatePayload")
                         {

@@ -98,6 +98,10 @@ namespace GxMcp.Gateway.Routers
                         varName = args?["varName"]?.ToString(),
                         typeName = args?["typeName"]?.ToString(),
                         basedOn = args?["basedOn"]?.ToString(),
+                        // issue #28 items 8/9: explicit length/decimals + collection flag.
+                        length = args?["length"]?.ToObject<int?>(),
+                        decimals = args?["decimals"]?.ToObject<int?>(),
+                        collection = args?["collection"]?.ToObject<bool?>(),
                         dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
                 }
@@ -475,6 +479,9 @@ namespace GxMcp.Gateway.Routers
                         description = args?["description"]?.ToString(),
                         basedOn = args?["basedOn"]?.ToString(),
                         enumValues = args?["enumValues"],
+                        // issue #28 item 7: SDT first-item seed override.
+                        firstItem = args?["firstItem"]?.ToString(),
+                        firstItemType = args?["firstItemType"]?.ToString(),
                         dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                     };
 

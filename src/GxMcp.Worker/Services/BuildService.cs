@@ -344,6 +344,34 @@ namespace GxMcp.Worker.Services
             public string rewritten { get; set; }
             public string phase { get; set; }
             public string gxObject { get; set; }
+            // issue #28 item 13: "environment" (infra — missing generated sources,
+            // unresolved DLL refs, locked outputs, NuGet restore) vs "spec" (spc/gen
+            // diagnostics on the authored object) vs "code" (C# compile of authored
+            // code). Lets the agent tell "my code is wrong" from "the env can't compile".
+            public string category { get; set; }
+        }
+
+        // issue #28 item 13: classify a raw error line so build output can be split
+        // into environment errors (not the edited object's fault) vs spec/code errors.
+        //   environment: CS2001 (missing generated .cs, e.g. GxWebServicesConfig.cs),
+        //                MSB3245 (unresolved DLL ref), MSB3027/MSB3021 (locked output),
+        //                MSB4018/MSB4062 (task crash), CS0006 (missing metadata file),
+        //                NU#### (NuGet restore).
+        //   spec:        spc####, gen####.
+        //   code:        everything else that matched _rxError (authored-code CS####).
+        private static readonly Regex _rxEnvError = new Regex(
+            @"\b(CS2001|CS0006|MSB3245|MSB3027|MSB3021|MSB4018|MSB4062|NU\d{3,4})\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex _rxSpecError = new Regex(
+            @"\berror\s+(spc|gen)\d+\b",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        internal static string ClassifyErrorCategory(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return "code";
+            if (_rxEnvError.IsMatch(line)) return "environment";
+            if (_rxSpecError.IsMatch(line)) return "spec";
+            return "code";
         }
 
         public class BuildTaskStatus
@@ -375,6 +403,34 @@ namespace GxMcp.Worker.Services
             // FR#21 (v2.6.6 Stream C): keep both the raw MSBuild line and the
             // rewritten "[gx-object=... phase=...]" form so debugging is possible.
             public List<ErrorDetail> ErrorsDetailed { get; set; } = new List<ErrorDetail>();
+            // issue #28 item 13: environment vs authored-code split, derived from
+            // ErrorsDetailed's category. Environment errors (missing generated sources,
+            // unresolved DLLs, locked outputs, NuGet) mean the KB won't compile in this
+            // environment — NOT that the edited object is wrong. Kept as computed getters
+            // so they auto-serialize into every status/result envelope.
+            [JsonProperty("envErrors")]
+            public List<string> EnvErrors =>
+                (ErrorsDetailed ?? new List<ErrorDetail>())
+                    .Where(e => e.category == "environment")
+                    .Select(e => e.rewritten ?? e.raw)
+                    .ToList();
+            [JsonProperty("codeErrors")]
+            public List<string> CodeErrors =>
+                (ErrorsDetailed ?? new List<ErrorDetail>())
+                    .Where(e => e.category != "environment")
+                    .Select(e => e.rewritten ?? e.raw)
+                    .ToList();
+            [JsonProperty("envErrorCount")]
+            public int EnvErrorCount => (ErrorsDetailed ?? new List<ErrorDetail>()).Count(e => e.category == "environment");
+            [JsonProperty("codeErrorCount")]
+            public int CodeErrorCount => (ErrorsDetailed ?? new List<ErrorDetail>()).Count(e => e.category != "environment");
+            // Populated only when the failure is purely environmental so the agent
+            // doesn't chase a phantom code bug. Null (omitted) otherwise.
+            [JsonProperty("envErrorsHint")]
+            public string EnvErrorsHint =>
+                (EnvErrorCount > 0 && CodeErrorCount == 0)
+                    ? "Build failed only on environment/infra errors (missing generated sources, unresolved DLL references, locked outputs, or NuGet restore) — not on the edited object's spec/code. Fix the KB environment (regenerate/restore) and rebuild; the authored object may already be correct."
+                    : null;
             // FR#9 (v2.6.6 Stream E): CS2001 errors referencing "<obj>_bc.cs" where
             // the underlying Transaction no longer exists (or isn't a Transaction)
             // are demoted to warnings — counted here, full lines preserved in
@@ -1453,7 +1509,8 @@ namespace GxMcp.Worker.Services
                             raw = rawErr,
                             rewritten = didRewrite ? rewritten : null,
                             phase = status.Phase,
-                            gxObject = status.CurrentObject
+                            gxObject = status.CurrentObject,
+                            category = ClassifyErrorCategory(rawErr)
                         });
                     }
 

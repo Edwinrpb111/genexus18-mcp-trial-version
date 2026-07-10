@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.14.0 — 2026-07-10
+
+Stability and authoring fixes from a long real-world session on a ~1200-object KB (issue #28): edits no longer stall behind a "not ready" index after a reconnect, declaring variables and SDTs takes fewer round-trips, and a failed build finally tells you whether it's your code or the environment.
+
+### Fixed
+
+- **Edits no longer blocked by `IndexNotReady` when the index is actually loaded.** After a reconnect the worker's index loads from its warm cache (log shows `Index loaded. Objects: 1191`), yet the first `genexus_edit` could still be rejected with `IndexNotReady` / `indexStatus: Cold` — and the only way to warm it risked a long blocking call. The index state is now hydrated from the loaded cache the moment it's queried, so the first status/edit after a reconnect reflects the objects already in memory instead of reporting `Cold`.
+
+### Added
+
+- **`genexus_variable` accepts `length` and `decimals`.** New variables no longer default to `Character(20)` — too short for API keys or message strings. Pass `length` (and `decimals`) to set the size directly; it overrides the length parsed from the type name. Applies to both `add` and `modify`.
+- **`genexus_variable` accepts `collection: true`.** Declare a collection variable in one call instead of adding a scalar and then setting an undocumented property.
+- **`genexus_variable add` with no type inherits a matching attribute's type.** Adding `&ObjCod` when an attribute `ObjCod` exists now bases the variable on that attribute (type, length, decimals) instead of falling back to a generic default.
+- **`genexus_create` (SDT) can seed a real first field.** An SDT still needs at least one item to save, but instead of a throwaway `Item1 : VarChar(40)` you can pass `firstItem` and `firstItemType` so the seeded item is the field you actually want. Omit them for the previous default.
+- **Build output separates environment errors from your object's errors.** A failed build now carries `envErrors` (missing generated sources, unresolved DLL references, locked outputs, NuGet restore — the KB can't compile in this environment) apart from `codeErrors` (the authored object's spec/`spc*`/C# errors), with counts for each. When a build fails on environment errors only, an `envErrorsHint` says so — no more mistaking `CS2001` / `MSB3245` infrastructure noise for a bug in the object you just edited.
+
+### Internal
+
+- `IndexCacheService.GetIndexState` triggers the lazy on-disk hydrate (which promotes `Cold` → `Ready`) before reading the state snapshot. `BuildService.ClassifyErrorCategory` buckets each raw error line (`environment` / `spec` / `code`); `BuildTaskStatus` exposes `EnvErrors` / `CodeErrors` / `EnvErrorCount` / `CodeErrorCount` / `EnvErrorsHint` as computed properties that serialize into every status/result envelope. `WriteService.AddVariable` / `ModifyVariable` and `ObjectService.InitializeSDTWithDefaultItem` gained the length/decimals/collection and first-item parameters, threaded through `OperationsRouter` and `CommandDispatcher`. Tool-schema budget 13300 → 13600. New `BuildErrorCategoryTests`; golden `tools-list` fixture regenerated.
+
 ## v2.13.3 — 2026-07-09
 
 Index-status honesty + a "wait until ready" convenience, from a measured pass over the index lifecycle (issue #27 item 3). The re-walk/flapping that item reported is already handled by the persistent warm cache (v2.12/2.13) — reopening a large KB loads it instantly and a build no longer drops the index; these are the remaining rough edges around it.

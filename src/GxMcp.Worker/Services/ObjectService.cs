@@ -173,8 +173,16 @@ namespace GxMcp.Worker.Services
                 JObject domainMeta = null;
                 if (type.Equals("SDT", StringComparison.OrdinalIgnoreCase) || type.Equals("StructuredDataType", StringComparison.OrdinalIgnoreCase))
                 {
-                    InitializeSDTWithDefaultItem(newObj, name);
-                    seededDescription = "Item1 : VARCHAR(40)";
+                    // issue #28 item 7: the SDK rejects an empty SDT Save, so a first item
+                    // must be seeded. Instead of a bogus Item1:VARCHAR(40) the caller can
+                    // name the real first field via firstItem/firstItemType, so the seed is
+                    // meaningful rather than throwaway. Defaults preserve prior behavior.
+                    string firstItem = options?["firstItem"]?.ToString();
+                    string firstItemType = options?["firstItemType"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(firstItem)) firstItem = "Item1";
+                    if (string.IsNullOrWhiteSpace(firstItemType)) firstItemType = "VARCHAR";
+                    string seededType = InitializeSDTWithDefaultItem(newObj, name, firstItem, firstItemType);
+                    seededDescription = firstItem + " : " + (seededType ?? firstItemType);
                 }
                 else if (newObj is Artech.Genexus.Common.Objects.Transaction newTrn)
                 {
@@ -697,8 +705,11 @@ namespace GxMcp.Worker.Services
 
         private static readonly Guid SDT_STRUCTURE_PART_GUID = Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
 
-        private static void InitializeSDTWithDefaultItem(KBObject sdt, string sdtName)
+        // Returns the eDBType name actually seeded (e.g. "VARCHAR", "NUMERIC") for the
+        // response's seededDescription, or null if seeding fell through / already populated.
+        private static string InitializeSDTWithDefaultItem(KBObject sdt, string sdtName, string itemName = "Item1", string itemTypeName = "VARCHAR")
         {
+            string seededTypeName = null;
             try
             {
                 KBObjectPart structure = null;
@@ -717,7 +728,7 @@ namespace GxMcp.Worker.Services
                 if (structure == null)
                 {
                     Logger.Error("InitializeSDTWithDefaultItem: SDTStructurePart not found for " + sdtName);
-                    return;
+                    return seededTypeName;
                 }
 
                 dynamic ds = structure;
@@ -726,7 +737,7 @@ namespace GxMcp.Worker.Services
                 if (root == null)
                 {
                     Logger.Error("InitializeSDTWithDefaultItem: Root not found for " + sdtName);
-                    return;
+                    return seededTypeName;
                 }
 
                 dynamic items = null;
@@ -734,13 +745,19 @@ namespace GxMcp.Worker.Services
                 if (items == null)
                 {
                     Logger.Error("InitializeSDTWithDefaultItem: items collection not found for " + sdtName);
-                    return;
+                    return seededTypeName;
                 }
 
                 // Skip if structure is already populated
                 try {
-                    foreach (dynamic existing in items) { return; }
+                    foreach (dynamic existing in items) { return seededTypeName; }
                 } catch { }
+
+                // Resolve the requested item type to its canonical eDBType name (VarChar→VARCHAR,
+                // Character→CHARACTER, Numeric→NUMERIC, ...). Falls back to VARCHAR when unknown.
+                string wantedEnumName = "VARCHAR";
+                if (GxMcp.Worker.Helpers.VariableInjector.TryParseDbType(itemTypeName, out var wantedDbType))
+                    wantedEnumName = wantedDbType.ToString();
 
                 Type rootType = ((object)root).GetType();
                 var asm = rootType.Assembly;
@@ -757,12 +774,12 @@ namespace GxMcp.Worker.Services
                     {
                         try
                         {
-                            object varchar = Enum.Parse(eDBTypeT, "VARCHAR");
-                            object added = addItem.Invoke(root, new object[] { "Item1", varchar });
+                            object typeVal = Enum.Parse(eDBTypeT, wantedEnumName);
+                            object added = addItem.Invoke(root, new object[] { itemName, typeVal });
                             if (added != null)
                             {
-                                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName + " via AddItem(string, eDBType)");
-                                return;
+                                Logger.Info("InitializeSDTWithDefaultItem: seeded '" + itemName + "' (" + wantedEnumName + ") into " + sdtName + " via AddItem(string, eDBType)");
+                                return wantedEnumName;
                             }
                         }
                         catch (Exception ex)
@@ -814,7 +831,7 @@ namespace GxMcp.Worker.Services
                 if (sdtItemType == null)
                 {
                     Logger.Error("InitializeSDTWithDefaultItem: SDTItem type not resolved for " + sdtName + " (fallback path).");
-                    return;
+                    return seededTypeName;
                 }
 
                 dynamic newItem = null;
@@ -834,20 +851,22 @@ namespace GxMcp.Worker.Services
                 if (newItem == null)
                 {
                     Logger.Error("InitializeSDTWithDefaultItem: ctor fallback failed for " + sdtName + ". LastEx: " + lastCtorEx?.Message);
-                    return;
+                    return seededTypeName;
                 }
-                newItem.Name = "Item1";
+                newItem.Name = itemName;
                 try
                 {
-                    if (eDBTypeT != null) newItem.Type = Enum.Parse(eDBTypeT, "VARCHAR");
+                    if (eDBTypeT != null) newItem.Type = Enum.Parse(eDBTypeT, wantedEnumName);
                 } catch { }
                 items.Add(newItem);
-                Logger.Info("InitializeSDTWithDefaultItem: default 'Item1' added to " + sdtName + " via ctor fallback");
+                seededTypeName = wantedEnumName;
+                Logger.Info("InitializeSDTWithDefaultItem: seeded '" + itemName + "' (" + wantedEnumName + ") into " + sdtName + " via ctor fallback");
             }
             catch (Exception ex)
             {
                 Logger.Error("InitializeSDTWithDefaultItem failed: " + ex.Message);
             }
+            return seededTypeName;
         }
 
         private static readonly ConcurrentDictionary<string, Guid> _typeGuidCache =

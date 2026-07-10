@@ -453,6 +453,14 @@
             },
             "type": "array"
           },
+          "firstItem": {
+            "description": "object SDT optional: name of the first structure item to seed (SDK requires ≥1). Defaults to Item1. Use to avoid the throwaway Item1.",
+            "type": "string"
+          },
+          "firstItemType": {
+            "description": "object SDT optional: type of the seeded first item (Character/Numeric/VarChar/…). Defaults to VarChar.",
+            "type": "string"
+          },
           "includePatternInstance": {
             "description": "save_as.",
             "type": "boolean"
@@ -2715,7 +2723,7 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "Variables part CRUD. action: add | delete (idempotent; refuses GAM/WWP+ framework-managed vars) | modify (atomically change type; preserves name+description). async=true returns an operationId for lifecycle polling. dryRun=true previews the change without persisting. varName required for all; typeName required for add+modify.",
+      "description": "Variables part CRUD. action: add | delete (idempotent; refuses GAM/WWP+ framework-managed vars) | modify (atomically change type; preserves name+description). length/decimals override the type-embedded size (e.g. long API-key strings); collection=true declares a collection var; add with no typeName inherits a same-named attribute's type. async=true returns an operationId for lifecycle polling. dryRun=true previews the change without persisting. varName required for all; typeName required for modify.",
       "inputSchema": {
         "examples": [
           {
@@ -2747,6 +2755,14 @@
             "description": "modify optional: Domain.",
             "type": "string"
           },
+          "collection": {
+            "description": "add/modify optional: declare the variable as a collection.",
+            "type": "boolean"
+          },
+          "decimals": {
+            "description": "add/modify optional: overrides decimals parsed from typeName.",
+            "type": "integer"
+          },
           "dryRun": {
             "default": false,
             "description": "When true, returns what would change without persisting.",
@@ -2759,6 +2775,10 @@
           "kb": {
             "description": "KB alias.",
             "type": "string"
+          },
+          "length": {
+            "description": "add/modify optional: overrides the length parsed from typeName (fixes the Character(20) default).",
+            "type": "integer"
           },
           "name": {
             "type": "string"

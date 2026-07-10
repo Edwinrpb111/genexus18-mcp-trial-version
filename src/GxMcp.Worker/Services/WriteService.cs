@@ -2611,7 +2611,8 @@ namespace GxMcp.Worker.Services
             return sb.ToString();
         }
 
-        public string AddVariable(string target, string varName, string typeName = null, bool dryRun = false)
+        public string AddVariable(string target, string varName, string typeName = null, bool dryRun = false,
+            int? length = null, int? decimals = null, bool? collection = null)
         {
             if (dryRun)
                 return McpResponse.Ok(
@@ -2624,15 +2625,28 @@ namespace GxMcp.Worker.Services
                             ["action"] = "add",
                             ["target"] = target,
                             ["varName"] = varName,
-                            ["typeName"] = typeName
+                            ["typeName"] = typeName,
+                            ["length"] = length,
+                            ["decimals"] = decimals,
+                            ["collection"] = collection
                         }
                     });
-            var raw = AddVariableInternal(target, varName, typeName);
+            var raw = AddVariableInternal(target, varName, typeName, length, decimals, collection);
             MarkDirtyIfSuccess(raw, target);
             return WrapWithPersistedState(raw, target, "Variables", GxMcp.Worker.Helpers.WriteResultMeta.TypedWriter);
         }
 
-        private string AddVariableInternal(string target, string varName, string typeName = null)
+        // issue #28 items 8/9/11:
+        //   length/decimals  — explicit override of the type-embedded length (fixes the
+        //                       Character(20) default that was too short for API keys /
+        //                       message strings). When omitted, the length parsed from
+        //                       typeName (e.g. Character(200)) still applies.
+        //   collection        — sets Variable.IsCollection so SDT/scalar collection vars
+        //                       are declarable directly, without the AttCollection dance.
+        //   (item 11) when typeName is omitted, CreateVariable already inherits the type of
+        //   a same-named attribute via FindAttribute — length/decimals below still override.
+        private string AddVariableInternal(string target, string varName, string typeName = null,
+            int? length = null, int? decimals = null, bool? collection = null)
         {
             try
             {
@@ -2696,8 +2710,12 @@ namespace GxMcp.Worker.Services
                         newVar.Type = dbType;
                         try
                         {
-                            if (resolvedLength.HasValue) newVar.Length = resolvedLength.Value;
-                            if (resolvedDecimals.HasValue) newVar.Decimals = resolvedDecimals.Value;
+                            // Explicit length/decimals args (issue #28 item 8) win over the
+                            // value parsed out of typeName; otherwise fall back to the parsed one.
+                            int? effLen = length ?? resolvedLength;
+                            int? effDec = decimals ?? resolvedDecimals;
+                            if (effLen.HasValue) newVar.Length = effLen.Value;
+                            if (effDec.HasValue) newVar.Decimals = effDec.Value;
                         }
                         catch { /* best-effort — SDK may reject for some types */ }
                     }
@@ -2736,11 +2754,22 @@ namespace GxMcp.Worker.Services
                                 extra: new JObject { ["typeName"] = typeName });
                         }
                     }
+                    if (collection == true) { try { newVar.IsCollection = true; } catch { /* not all types collectible */ } }
                     varPart.Variables.Add(newVar);
                 }
                 else
                 {
+                    // No typeName: CreateVariable inherits a same-named attribute's type
+                    // (issue #28 item 11) or applies the naming heuristic. Explicit
+                    // length/decimals/collection args still override the result.
                     var newVar = VariableInjector.CreateVariable(varPart, varName);
+                    try
+                    {
+                        if (length.HasValue) newVar.Length = length.Value;
+                        if (decimals.HasValue) newVar.Decimals = decimals.Value;
+                    }
+                    catch { /* best-effort */ }
+                    if (collection == true) { try { newVar.IsCollection = true; } catch { } }
                     varPart.Variables.Add(newVar);
                 }
 
@@ -2768,7 +2797,8 @@ namespace GxMcp.Worker.Services
         // description when possible). Implemented as delete+add over the same
         // VariablesPart, with a snapshot of the pre-change variable set so we
         // can roll back if obj.Save() throws.
-        public string ModifyVariable(string target, string varName, string newTypeName, string basedOn = null, bool dryRun = false)
+        public string ModifyVariable(string target, string varName, string newTypeName, string basedOn = null, bool dryRun = false,
+            int? length = null, int? decimals = null, bool? collection = null)
         {
             if (dryRun)
                 return McpResponse.Ok(
@@ -2782,15 +2812,19 @@ namespace GxMcp.Worker.Services
                             ["target"] = target,
                             ["varName"] = varName,
                             ["newTypeName"] = newTypeName,
-                            ["basedOn"] = basedOn
+                            ["basedOn"] = basedOn,
+                            ["length"] = length,
+                            ["decimals"] = decimals,
+                            ["collection"] = collection
                         }
                     });
-            var raw = ModifyVariableInternal(target, varName, newTypeName, basedOn);
+            var raw = ModifyVariableInternal(target, varName, newTypeName, basedOn, length, decimals, collection);
             MarkDirtyIfSuccess(raw, target);
             return WrapWithPersistedState(raw, target, "Variables", GxMcp.Worker.Helpers.WriteResultMeta.TypedWriter);
         }
 
-        private string ModifyVariableInternal(string target, string varName, string newTypeName, string basedOn)
+        private string ModifyVariableInternal(string target, string varName, string newTypeName, string basedOn,
+            int? length = null, int? decimals = null, bool? collection = null)
         {
             // Gate 1 — resolve newTypeName up front, before any SDK / KB call.
             // Mirrors AddVariable's Task 4.2 envelope shape exactly.
@@ -2933,8 +2967,11 @@ namespace GxMcp.Worker.Services
                         newVar.Type = dbType;
                         try
                         {
-                            if (resolvedLength.HasValue) newVar.Length = resolvedLength.Value;
-                            if (resolvedDecimals.HasValue) newVar.Decimals = resolvedDecimals.Value;
+                            // Explicit length/decimals args (issue #28 item 8) win over the parsed value.
+                            int? effLen = length ?? resolvedLength;
+                            int? effDec = decimals ?? resolvedDecimals;
+                            if (effLen.HasValue) newVar.Length = effLen.Value;
+                            if (effDec.HasValue) newVar.Decimals = effDec.Value;
                         }
                         catch { /* SDK may reject for some types */ }
                     }
@@ -2952,6 +2989,8 @@ namespace GxMcp.Worker.Services
                         }
                     }
 
+                    // issue #28 item 9: collection flag (null = leave as-is on retype).
+                    if (collection.HasValue) { try { newVar.IsCollection = collection.Value; } catch { } }
                     varPart.Variables.Add(newVar);
 
                     obj.EnsureSave();
