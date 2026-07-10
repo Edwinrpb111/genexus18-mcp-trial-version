@@ -198,6 +198,23 @@ now fails with `FolderMoveNotSupported` instead of silently reporting success.
 Create folders/modules with `genexus_create type=Folder|Module`, but place objects
 into them from the GeneXus IDE (KB Explorer drag-and-drop / right-click Move).
 
+### SDPanel (Smart Device Panel) parts are WorkWithDevices projections (issue #29)
+
+An `SDPanel` is not a plain object with self-contained parts — it's driven by the
+WorkWithDevices pattern. Its parts are `Artech.Patterns.WorkWithDevices.Parts.Virtual*Part`
+projections, and their GUIDs differ from the Web equivalents (leading hex nibble masked,
+e.g. Web Events `c44bd5ff-…` → SD Events `144bd5ff-…`). Consequences the tools now handle:
+
+- **Readable:** `SDEvents` (the panel's event code) and `SDRules` are `ISource` virtual
+  parts and read fine. They are surfaced in `availableParts`, and `part=Source`/`Events`
+  resolves to `SDEvents` (previously it hit `SDRules`, which is almost always empty — the
+  source of the "reads empty" report). `part=SDEvents` / `part=SDRules` also work by name.
+- **Not extractable:** `SDLayout`, `SDVariables`, `SDConditions` are non-`ISource` virtual
+  parts. `SerializeToXml()` returns an empty `<Properties />` even when the panel has
+  content, because the data is projected from the pattern, not stored on the part. Reading
+  one now returns `projected:true` + a `note` explaining this — an empty result here does
+  **not** mean the panel is empty. Layout/variables are authored in the GeneXus IDE.
+
 ## Release discipline
 
 - Before any release (`./release.ps1`, tag, or GitHub Release), update

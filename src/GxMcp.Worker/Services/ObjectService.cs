@@ -1573,6 +1573,17 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // issue #29: a WorkWithDevices virtual part serializes to an empty properties element
+        // ("<Properties />" or "<Properties></Properties>") when it has no own content.
+        private static bool IsEmptyPropertiesXml(string xml)
+        {
+            if (string.IsNullOrWhiteSpace(xml)) return true;
+            string t = xml.Trim();
+            return t.Equals("<Properties />", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("<Properties/>", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("<Properties></Properties>", StringComparison.OrdinalIgnoreCase);
+        }
+
         private string ReadObjectSourceInternal(KBObject obj, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false)
         {
             partName = ResolvePartName(obj, partName);
@@ -1784,6 +1795,25 @@ namespace GxMcp.Worker.Services
                         string xml = part.SerializeToXml();
                         ProcessTextResponse(xml, result, client);
                         Logger.Info("ReadSource (XML) SUCCESS");
+
+                        // issue #29: SDPanel layout/variables/conditions are WorkWithDevices
+                        // virtual projection parts — SerializeToXml() returns an empty
+                        // "<Properties />" even when the panel is populated, because the real
+                        // content is projected from the pattern and not stored on the part.
+                        // Flag this explicitly so an agent does NOT conclude the object is
+                        // empty. The event code IS readable via the SDEvents/SDRules parts.
+                        if (GxMcp.Worker.Structure.PartAccessor.IsWorkWithDevicesProjectionPart(part)
+                            && IsEmptyPropertiesXml(xml))
+                        {
+                            result["projected"] = true;
+                            result["limitation"] = "SDPanelProjectionPart";
+                            result["note"] = $"'{partName}' is a Smart Device Panel (WorkWithDevices) virtual projection part. "
+                                + "Its content is projected from the panel's pattern and is NOT extractable as XML through the SDK — "
+                                + "an empty '<Properties />' here does NOT mean the panel is empty. "
+                                + "The panel's event code IS readable via part=SDEvents (and rules via part=SDRules). "
+                                + "Layout and variables can only be edited in the GeneXus IDE.";
+                            result["readableParts"] = new JArray("SDEvents", "SDRules");
+                        }
                     }
                 }
 

@@ -122,6 +122,37 @@ namespace GxMcp.Worker.Tests
             Assert.Equal(expected, PartAccessor.MatchesSourcePart(requestedPartName, sourcePartName));
         }
 
+        // ── issue #29 — SDPanel (Smart Device Panel) part GUID mapping ─────────────────
+        // SDPanel parts are WorkWithDevices virtual projection parts whose GUIDs differ
+        // from the Web equivalents. GetPartGuid must return the SD GUIDs, and Source/Events
+        // must resolve to SDEvents (the event code), not the generic Web Events/Source GUID.
+        [Theory]
+        [InlineData("SDPanel", "Source", "144bd5ff-f918-415b-98e6-aca44fed84fa")]
+        [InlineData("SDPanel", "Events", "144bd5ff-f918-415b-98e6-aca44fed84fa")]
+        [InlineData("SDPanel", "Code", "144bd5ff-f918-415b-98e6-aca44fed84fa")]
+        [InlineData("SDPanel", "SDEvents", "144bd5ff-f918-415b-98e6-aca44fed84fa")]
+        [InlineData("SDPanel", "Rules", "1b0a32a3-de6d-4be1-a4dd-1b85d3741534")]
+        [InlineData("SDPanel", "Variables", "14c4ade7-53f0-4a56-bdfd-843735b66f47")]
+        [InlineData("SDPanel", "Layout", "1414ed00-8cc4-4f44-8820-4baf93547173")]
+        [InlineData("SDPanel", "SDLayout", "1414ed00-8cc4-4f44-8820-4baf93547173")]
+        [InlineData("SDPanel", "Conditions", "163f0d8b-d8ac-4db4-8dd4-de8979f2b5b9")]
+        [InlineData("PanelForSD", "Source", "144bd5ff-f918-415b-98e6-aca44fed84fa")]
+        public void GetPartGuid_SDPanel_MapsToVirtualPartGuids(string objType, string partName, string expectedGuid)
+        {
+            Assert.Equal(System.Guid.Parse(expectedGuid), PartAccessor.GetPartGuid(objType, partName));
+        }
+
+        [Fact]
+        public void GetPartGuid_SDPanel_SourceDiffersFromWebSourceGuid()
+        {
+            // Regression guard: the SD Events GUID must NOT be the generic Web Events/Source
+            // GUID (c44bd5ff-…) — using the Web GUID is exactly what made SDPanel reads
+            // fall through to an empty "<Properties />".
+            var sd = PartAccessor.GetPartGuid("SDPanel", "Source");
+            var web = PartAccessor.GetPartGuid("WebPanel", "Source");
+            Assert.NotEqual(web, sd);
+        }
+
         [Fact]
         public void IsUnchangedSourceWrite_ShouldTreatIdenticalContentAsNoChange()
         {

@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.16.1 — 2026-07-10
+
+### Fixed
+
+- **Reading a Smart Device Panel (`SDPanel`) no longer reports real content as empty.** An SDPanel's parts are WorkWithDevices projections, and the tool was looking them up with the Web panel's part identifiers, which never matched — so `part=Source` landed on the panel's (usually empty) rules part, and the layout/variables/conditions came back as a blank `<Properties />` that read like an empty object. Now: `part=Source` (and `Events`) returns the panel's **event code**; `SDEvents` and `SDRules` are listed in `availableParts` and readable by name; and reading `SDLayout` / `SDVariables` / `SDConditions` returns a clear note (`projected: true`) explaining the content is projected from the pattern and authored in the GeneXus IDE — a blank there does not mean the panel is empty.
+
+### Internal
+
+- SDPanel virtual-part GUIDs (`Artech.Patterns.WorkWithDevices.Parts.Virtual*Part`) mapped in `PartAccessor.GetPartGuid`; `GetDisplayPartName` no longer collapses the SD `ISource` parts to a single `Source`; `PartAccessor.IsWorkWithDevicesProjectionPart` gates the honest-read note in `ObjectService`. Added `GetPartGuid_SDPanel_*` unit tests.
+
 ## v2.16.0 — 2026-07-10
 
 Follow-up on two v2.15 authoring sessions (issues #30 and #31): SDT element sizing, per-object validation, batch reads, no-op detection, and folder moves now behave.

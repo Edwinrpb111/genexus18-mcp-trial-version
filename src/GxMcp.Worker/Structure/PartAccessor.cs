@@ -140,6 +140,22 @@ namespace GxMcp.Worker.Structure
                 if (p == "layout" || p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
             }
 
+            // issue #29: SDPanel (Smart Device Panel) parts are WorkWithDevices *virtual*
+            // projection parts whose GUIDs differ from the Web equivalents (the leading hex
+            // nibble is masked). The generic switch below returns the Web GUIDs, which never
+            // match, so reads fell through to a bare SerializeToXml() → "<Properties />".
+            // Map the SD source-bearing parts explicitly. "Source"/"Events"/"Code" resolve to
+            // SDEvents (the panel's event code) — matching WebPanel semantics — NOT SDRules.
+            if (objType.Equals("SDPanel", StringComparison.OrdinalIgnoreCase)
+                || objType.Equals("PanelForSD", StringComparison.OrdinalIgnoreCase))
+            {
+                if (p == "events" || p == "source" || p == "code" || p == "sdevents") return Guid.Parse("144bd5ff-f918-415b-98e6-aca44fed84fa");
+                if (p == "rules" || p == "sdrules") return Guid.Parse("1b0a32a3-de6d-4be1-a4dd-1b85d3741534");
+                if (p == "variables" || p == "sdvariables") return Guid.Parse("14c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "layout" || p == "sdlayout") return Guid.Parse("1414ed00-8cc4-4f44-8820-4baf93547173");
+                if (p == "conditions" || p == "sdconditions") return Guid.Parse("163f0d8b-d8ac-4db4-8dd4-de8979f2b5b9");
+            }
+
             if (objType.Equals("DataProvider", StringComparison.OrdinalIgnoreCase))
             {
                 if (p == "source" || p == "code") return Guid.Parse("91705646-6086-4f32-8871-08149817e754");
@@ -241,6 +257,21 @@ namespace GxMcp.Worker.Structure
             return null;
         }
 
+        // issue #29: the SDPanel layout/variables/conditions parts are WorkWithDevices
+        // *virtual* projection parts (Artech.Patterns.WorkWithDevices.Parts.Virtual*Part).
+        // They are not ISource and their SerializeToXml() returns an empty "<Properties />"
+        // even when the panel has content, because the real data is projected from the
+        // pattern rather than stored on the part. Callers use this to emit an honest
+        // "not extractable / not truly empty" note instead of a misleading blank.
+        public static bool IsWorkWithDevicesProjectionPart(KBObjectPart part)
+        {
+            if (part == null) return false;
+            if (part is ISource) return false; // SDEvents/SDRules ARE readable via .Source
+            var full = part.GetType().FullName ?? string.Empty;
+            return full.IndexOf("WorkWithDevices.Parts", StringComparison.OrdinalIgnoreCase) >= 0
+                   && part.GetType().Name.StartsWith("Virtual", StringComparison.Ordinal);
+        }
+
         public static string[] GetAvailableParts(KBObject obj)
         {
             if (obj == null)
@@ -294,6 +325,15 @@ namespace GxMcp.Worker.Structure
                 // instead of collapsing both to "Source" (which hid the Styles part).
                 if (string.Equals(sourceName, "Tokens", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(sourceName, "Styles", StringComparison.OrdinalIgnoreCase))
+                {
+                    return sourceName;
+                }
+                // issue #29: an SDPanel has TWO ISource virtual parts — SDEvents (the event
+                // code) and SDRules. Collapsing both to "Source" hid SDEvents entirely and
+                // made "Source" resolve to whichever came first (SDRules → always empty).
+                // Keep the SD-prefixed source parts individually addressable.
+                if (!string.IsNullOrEmpty(sourceName) &&
+                    sourceName.StartsWith("SD", StringComparison.Ordinal))
                 {
                     return sourceName;
                 }
