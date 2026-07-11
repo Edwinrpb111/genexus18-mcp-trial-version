@@ -21,7 +21,7 @@ update your row when done.
 | 004 | Batch COM property reads in the lite index walk | P2 | L | 001 | TODO |
 | 005 | Replace CommandDispatcher switch with a dispatch table | P2 | M | — | DONE |
 | 006 | Shared filter-predicate builder for SearchService/ListService | P2 | S-M | 002 | TODO |
-| 007 | Decompose WriteService (6982 lines) | P3 | L | 009-style char tests | TODO |
+| 007 | Decompose WriteService (6982 lines) | P3 | L | 009-style char tests | DONE |
 | 008 | Decompose Gateway Program.cs (5657 lines) | P3 | L | — | TODO |
 | 009 | BuildService characterization test suite | P2 | M | — | DONE |
 | 010 | Repo-wide JS/TS lint + editorconfig, ESLint 9, central pkg versions | P3 | S-M | — | DONE |

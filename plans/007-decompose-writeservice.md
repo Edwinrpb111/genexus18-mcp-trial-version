@@ -75,11 +75,39 @@ owner; if a member straddles two seams, leave it where its state lives and note 
 
 ## Done criteria
 
-- [ ] Step 0 characterization coverage exists for all public entry points
-- [ ] `WriteService.cs` (any single file) is materially smaller; concerns live in
+- [x] Step 0 characterization coverage exists for all public entry points (existing
+      `WriteService*Tests.cs` suite; full suite was green before and after every step)
+- [x] `WriteService.cs` (any single file) is materially smaller; concerns live in
       separate files/collaborators
-- [ ] Build 0 errors; full Worker suite green after EVERY seam commit
-- [ ] `git diff` shows moves only — no logic edits (reviewer can verify with `--color-moved`)
+- [x] Build 0 errors; full Worker suite green after EVERY seam commit
+- [x] `git diff` shows moves only — no logic edits (reviewer can verify with `--color-moved`)
+
+## Outcome (2026-07-10)
+
+`WriteService.cs` went from 6016 to 1804 lines (70% reduction), split into 7 partial
+files by concern:
+
+- `WriteService.Variables.cs` — variable CRUD (add/delete/modify)
+- `WriteService.BulkWrite.cs` — bulk write + rollback replay
+- `WriteService.PatternDiagnostics.cs` — pattern-write reflection diagnostics
+  (`GX_MCP_PATTERN_DEBUG` / `_NATIVE_EXPERIMENT` gated logging, ~2500 lines)
+- `WriteService.PatchUtils.cs` — patch-matching + persisted-state utilities
+  (`TryMatch`, `ComputeSha256`, `WrapWithPersistedState`, …)
+- `WriteService.VisualWrite.cs` — WebForm/Layout (visual part) write path
+- `WriteService.PatternWrite.cs` — pattern-part write path (`WritePatternPart` +
+  `DeserializeDataFrom` application helpers)
+- `WriteService.PatchApply.cs` — semantic-ops + JSON-Patch write entry points
+
+`WriteService.cs` retains the core orchestrator: flush/persistence machinery,
+per-target locking, the `WriteObject` facades, `WriteObjectInternal` (the ~690-line
+main save path), and its error-response builders. This is a single cohesive concern
+and a reasonable stopping point — further splitting `WriteObjectInternal` itself
+would risk threading its local state across a boundary for little benefit.
+
+Three source-scanning convention tests (`EdgeCaseRegressionTests`,
+`PatternReconcileAttachmentTests`, `FormTypeTransitionRejectTests`) read
+`WriteService.cs` by path and were updated to point at the partial file the
+asserted string now lives in (test-only change, no production behavior touched).
 
 ## STOP conditions
 
