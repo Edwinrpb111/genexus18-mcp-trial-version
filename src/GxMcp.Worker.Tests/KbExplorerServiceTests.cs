@@ -17,6 +17,17 @@ namespace GxMcp.Worker.Tests
             Assert.NotNull(j["error"]);
         }
 
+        // TECHDEBT-02: missing-name now routes through the canonical
+        // McpResponse.Err envelope (status:"error" + nested error.code/message).
+        [Fact]
+        public void Locate_MissingName_ReturnsCanonicalEnvelope()
+        {
+            var svc = new KbExplorerService(null, null);
+            var j = JObject.Parse(svc.Locate(""));
+            Assert.Equal("error", (string)j["status"]);
+            Assert.Equal("MissingArgument", (string)j["error"]["code"]);
+        }
+
         [Fact]
         public void Locate_ObjectServiceNull_ReturnsNotFound()
         {

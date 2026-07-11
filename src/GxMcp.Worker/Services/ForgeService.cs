@@ -65,12 +65,15 @@ namespace GxMcp.Worker.Services
                 Logger.Info("[DEBUG-SCAFFOLD] Step 5: Before Save");
                 obj.EnsureSave();
                 Logger.Info($"Scaffold complete: {name}");
-                return "{\"status\":\"Success\", \"name\":\"" + name + "\", \"guid\":\"" + obj.Guid + "\"}";
+                return Models.McpResponse.Ok(
+                    target: name,
+                    code: "ScaffoldCompleted",
+                    result: new JObject { ["name"] = name, ["guid"] = obj.Guid.ToString() });
             }
             catch (Exception ex)
             {
                 Logger.Error($"Scaffold Error: {ex.Message}");
-                return "{\"status\":\"Error\",\"message\":\"" + CommandDispatcher.EscapeJsonString(ex.ToString()) + "\"}";
+                return Models.McpResponse.Err(code: "ScaffoldFailed", message: ex.ToString());
             }
         }
     }

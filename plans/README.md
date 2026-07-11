@@ -81,10 +81,29 @@ verification — and should become numbered plans (012+) before execution:
   Extract one `PathSafety` helper + tests (trailing-slash/case/UNC), then replace call sites.
   Verify each currently-unchecked site actually takes untrusted input before adding a
   containment check that could reject a legitimate path.
-- **TECHDEBT-02 — normalize the error envelope across ~16 services.** Several services
-  hand-build `{error,...}` shapes instead of `McpResponse.Err`; `FeatureScaffoldService.cs:357`
-  already special-cases the drift. MED risk — response shape is observable to callers;
-  needs before/after coverage. `BatchService`'s nested-error wrapper may be intentional.
+- **TECHDEBT-02 — normalize the error envelope across ~16 services. PARTIALLY DONE.**
+  Normalized (now emit via `McpResponse.Ok`/`Err`, regression tests added, full suite green):
+  `ForgeService.Scaffold` (success + catch); `VersionControlService.GetPendingChanges/Update/Commit`
+  (all `NoKb`/catch sites); `ObjectService.CreateObject` (`NoKb`, `UnsupportedObjectType`,
+  `AlreadyExists`, catch) and `ObjectService.WorkerReload` (`Accepted`→canonical `accepted`,
+  catch); `KbExplorerService.Locate` (missing-name, catch); `BlameService.Blame` (`KbNotInGit`,
+  `PartNotTracked`, `GitFailed` ×2, `PathOutsideRepo`, `FileNotFound`).
+  SKIPPED — observable, needs a product decision before touching:
+  - `BlameService.Blame`'s `NoKb`/`missingArgs` sites (still the old private `Error()` helper):
+    `BlameServiceTests` reads the top-level `code` field directly; canonical `Err` only nests
+    it under `error.code`, so normalizing would drop a field the test depends on.
+  - `KbExplorerService.Locate`'s `NotFound` site: `KbExplorerServiceTests` reads top-level
+    `code` *and* top-level `name`; canonical shape nests `code` under `error` and has no
+    top-level `name` slot.
+  - `BatchService`'s three per-item `{error: rawString}` fallbacks (used only when a sub-call's
+    result string fails to parse as JSON) — flagged as possibly-intentional in the original
+    audit; left untouched.
+  - `CommandDispatcher.TryCaptureWarmSnapshot`'s `{saved:false, error:...}` sub-object — not a
+    top-level response envelope, it's a documented micro-schema stitched into another envelope
+    under a `warmSnapshot` key; converting it to nested `McpResponse.Err` would be a worse fit,
+    not a normalization.
+  `Program.cs` and `IndexCacheService.cs` untouched per assignment guardrails (other work in
+  flight there) — their hand-rolled shapes (soft-reload ack, etc.) remain for a future pass.
 - **TECHDEBT-03 — additional god objects.** `LayoutService.cs` (3066), `PatternApplyService.cs`
   (2285), `ObjectService.cs` (2226), `AnalyzeService.cs` (2191), `PatchService.cs` (1985) —
   same class of decomposition as the already-planned WriteService/Program.cs splits (007/008),

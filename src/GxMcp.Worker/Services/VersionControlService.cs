@@ -5,6 +5,7 @@ using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common.Objects;
 using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -22,7 +23,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 dynamic kb = _kbService.GetKB();
-                if (kb == null) return "{\"status\":\"Error\",\"message\": \"No KB open\"}";
+                if (kb == null) return McpResponse.Err(code: "NoKb", message: "No KB open");
 
                 var result = new JObject();
                 
@@ -52,7 +53,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(code: "PendingChangesFailed", message: ex.Message);
             }
         }
 
@@ -61,12 +62,12 @@ namespace GxMcp.Worker.Services
             try
             {
                 dynamic kb = _kbService.GetKB();
-                if (kb == null) return "{\"status\":\"Error\",\"message\": \"No KB open\"}";
+                if (kb == null) return McpResponse.Err(code: "NoKb", message: "No KB open");
 
                 kb.VersionControl.Update();
-                return "{\"status\": \"Success\"}";
+                return McpResponse.Ok(code: "VcUpdateCompleted");
             }
-            catch (Exception ex) { return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
+            catch (Exception ex) { return McpResponse.Err(code: "VcUpdateFailed", message: ex.Message); }
         }
 
         public string Commit(string message)
@@ -74,12 +75,12 @@ namespace GxMcp.Worker.Services
             try
             {
                 dynamic kb = _kbService.GetKB();
-                if (kb == null) return "{\"status\":\"Error\",\"message\": \"No KB open\"}";
+                if (kb == null) return McpResponse.Err(code: "NoKb", message: "No KB open");
 
                 kb.VersionControl.Commit(message);
-                return "{\"status\": \"Success\"}";
+                return McpResponse.Ok(code: "VcCommitCompleted");
             }
-            catch (Exception ex) { return "{\"status\":\"Error\",\"message\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
+            catch (Exception ex) { return McpResponse.Err(code: "VcCommitFailed", message: ex.Message); }
         }
     }
 }

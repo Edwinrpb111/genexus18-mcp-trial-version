@@ -56,37 +56,33 @@ namespace GxMcp.Worker.Services
 
             string gitRoot = FindGitRoot(kbDir);
             if (string.IsNullOrEmpty(gitRoot))
-                return new JObject
-                {
-                    ["error"] = "The KB directory is not inside a git repository.",
-                    ["code"] = "KbNotInGit",
-                    ["kbDir"] = kbDir,
-                    ["hint"] = "Initialise git in the KB directory (git init) or supply filePath pointing at a tracked file."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return Models.McpResponse.Err(
+                    code: "KbNotInGit",
+                    message: "The KB directory is not inside a git repository.",
+                    hint: "Initialise git in the KB directory (git init) or supply filePath pointing at a tracked file.",
+                    extra: new JObject { ["kbDir"] = kbDir });
 
             string targetFile = ResolveTargetFile(req, kbDir, gitRoot, out var candidates, out var resolveErr);
             if (!string.IsNullOrEmpty(resolveErr))
                 return resolveErr;
             if (string.IsNullOrEmpty(targetFile))
             {
-                return new JObject
-                {
-                    ["error"] = "Could not locate a tracked file for the requested name/part.",
-                    ["code"] = "PartNotTracked",
-                    ["candidates"] = new JArray(candidates ?? new List<string>()),
-                    ["hint"] = "Pass filePath=<KB-relative file> explicitly. GeneXus persists most parts in proprietary stores; only files tracked by git can be blamed."
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return Models.McpResponse.Err(
+                    code: "PartNotTracked",
+                    message: "Could not locate a tracked file for the requested name/part.",
+                    hint: "Pass filePath=<KB-relative file> explicitly. GeneXus persists most parts in proprietary stores; only files tracked by git can be blamed.",
+                    extra: new JObject { ["candidates"] = new JArray(candidates ?? new List<string>()) });
             }
 
             string[] fileLines;
             try { fileLines = File.ReadAllLines(targetFile); }
-            catch (Exception ex) { return Error("Failed to read target file: " + ex.Message, "ReadFailed"); }
+            catch (Exception ex) { return Models.McpResponse.Err(code: "ReadFailed", message: "Failed to read target file: " + ex.Message); }
 
             int totalLines = fileLines.Length;
             int requested = req.Line;
             if (requested < 0) requested = 0;
             if (requested > totalLines)
-                return Error($"Requested line {requested} exceeds file length {totalLines}.", "LineOutOfRange");
+                return Models.McpResponse.Err(code: "LineOutOfRange", message: $"Requested line {requested} exceeds file length {totalLines}.");
 
             int startLine = requested == 0 ? 1 : requested;
             int endLine = requested == 0 ? totalLines : requested;
@@ -101,12 +97,10 @@ namespace GxMcp.Worker.Services
             }, out blameRaw, out blameErr);
             if (rc != 0)
             {
-                return new JObject
-                {
-                    ["error"] = "git blame failed: " + (string.IsNullOrEmpty(blameErr) ? blameRaw : blameErr),
-                    ["code"] = "GitFailed",
-                    ["filePath"] = targetFile
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return Models.McpResponse.Err(
+                    code: "GitFailed",
+                    message: "git blame failed: " + (string.IsNullOrEmpty(blameErr) ? blameRaw : blameErr),
+                    target: targetFile);
             }
 
             var entries = ParsePorcelain(blameRaw);
@@ -203,20 +197,16 @@ namespace GxMcp.Worker.Services
                 catch { withinRoot = false; }
                 if (!withinRoot)
                 {
-                    error = new JObject
-                    {
-                        ["error"] = "filePath resolves outside the git repository root.",
-                        ["code"] = "PathOutsideRepo"
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    error = Models.McpResponse.Err(
+                        code: "PathOutsideRepo",
+                        message: "filePath resolves outside the git repository root.");
                     return null;
                 }
                 if (!File.Exists(path))
                 {
-                    error = new JObject
-                    {
-                        ["error"] = "filePath does not exist: " + req.FilePath,
-                        ["code"] = "FileNotFound"
-                    }.ToString(Newtonsoft.Json.Formatting.None);
+                    error = Models.McpResponse.Err(
+                        code: "FileNotFound",
+                        message: "filePath does not exist: " + req.FilePath);
                     return null;
                 }
                 return path;
@@ -227,7 +217,7 @@ namespace GxMcp.Worker.Services
             int rc = RunGit(gitRoot, new[] { "ls-files" }, out ls, out lsErr);
             if (rc != 0)
             {
-                error = Error("git ls-files failed: " + lsErr, "GitFailed");
+                error = Models.McpResponse.Err(code: "GitFailed", message: "git ls-files failed: " + lsErr);
                 return null;
             }
 

@@ -33,7 +33,7 @@ namespace GxMcp.Worker.Services
         public string Locate(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
-                return new JObject { ["error"] = "Missing 'name'." }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "MissingArgument", message: "Missing 'name'.");
 
             try
             {
@@ -70,11 +70,7 @@ namespace GxMcp.Worker.Services
             }
             catch (Exception ex)
             {
-                return new JObject
-                {
-                    ["error"] = ex.Message,
-                    ["code"] = "LocateFailed"
-                }.ToString(Newtonsoft.Json.Formatting.None);
+                return McpResponse.Err(code: "LocateFailed", message: ex.Message);
             }
         }
 

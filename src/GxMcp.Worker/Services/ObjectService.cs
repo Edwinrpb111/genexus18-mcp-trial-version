@@ -111,7 +111,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var kb = _kbService.GetKB();
-                if (kb == null) return "{\"status\":\"Error\", \"error\":\"No KB open\"}";
+                if (kb == null) return McpResponse.Err(code: "NoKb", message: "No KB open");
 
                 Logger.Info(string.Format("Creating Object: {0} ({1})", name, type));
 
@@ -123,8 +123,10 @@ namespace GxMcp.Worker.Services
                 Guid typeGuid = ResolveObjectTypeGuid(type);
                 if (typeGuid == Guid.Empty)
                 {
-                    return "{\"status\":\"Error\", \"error\":\"Unsupported object type: " + type +
-                        "\", \"hint\":\"Known types: Transaction, Procedure, WebPanel, SDPanel, SDT, DataProvider, DataSelector, Domain, Attribute, Table, Index, ExternalObject, Image, Theme, ThemeClass, DesignSystem, ColorPalette, Menu, Menubar, Stencil, UserControl, WorkPanel, Report, Dashboard, Query, WorkflowDiagram, ConversationalFlows, TestSuite, API, URLRewrite, MiniApp, SuperApp, OfflineDatabase, DataView, Group, Language, TranslationMessage, WorkWithDevices, WorkWithWeb.\"}";
+                    return McpResponse.Err(
+                        code: "UnsupportedObjectType",
+                        message: "Unsupported object type: " + type,
+                        hint: "Known types: Transaction, Procedure, WebPanel, SDPanel, SDT, DataProvider, DataSelector, Domain, Attribute, Table, Index, ExternalObject, Image, Theme, ThemeClass, DesignSystem, ColorPalette, Menu, Menubar, Stencil, UserControl, WorkPanel, Report, Dashboard, Query, WorkflowDiagram, ConversationalFlows, TestSuite, API, URLRewrite, MiniApp, SuperApp, OfflineDatabase, DataView, Group, Language, TranslationMessage, WorkWithDevices, WorkWithWeb.");
                 }
 
                 // Pre-flight duplicate check: gives a clear, structured error before the SDK throws.
@@ -133,7 +135,10 @@ namespace GxMcp.Worker.Services
                     var existing = kb.DesignModel.Objects.Get(typeGuid, name);
                     if (existing != null)
                     {
-                        return "{\"status\":\"Error\", \"code\":\"AlreadyExists\", \"error\":\"" + type + " '" + CommandDispatcher.EscapeJsonString(name) + "' already exists.\"}";
+                        return McpResponse.Err(
+                            code: "AlreadyExists",
+                            message: type + " '" + name + "' already exists.",
+                            target: name);
                     }
                 }
                 catch { /* lookup is best-effort; if it throws, Save will surface the duplicate error anyway */ }
@@ -305,7 +310,7 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 Logger.Error("CreateObject failed: " + ex.Message);
-                return "{\"status\":\"Error\", \"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(code: "CreateObjectFailed", message: ex.Message);
             }
         }
 
@@ -590,12 +595,20 @@ namespace GxMcp.Worker.Services
                     Logger.Info("WorkerReload: exiting now for respawn.");
                     Environment.Exit(0);
                 });
-                return "{\"status\":\"Accepted\", \"sourceDir\":\"" + CommandDispatcher.EscapeJsonString(sourceDir) + "\", \"publishDir\":\"" + CommandDispatcher.EscapeJsonString(publishDir) + "\", \"note\":\"Worker exits in 1s; detached helper copies binaries with retries and kills any worker that respawned mid-copy so the gateway brings up a fresh one. Inspect '" + CommandDispatcher.EscapeJsonString(System.IO.Path.Combine(publishDir, "worker_reload.last_result.json")) + "' for the copy outcome.\"}";
+                return McpResponse.Accepted(
+                    target: null,
+                    operationId: null,
+                    extra: new JObject
+                    {
+                        ["sourceDir"] = sourceDir,
+                        ["publishDir"] = publishDir,
+                        ["note"] = "Worker exits in 1s; detached helper copies binaries with retries and kills any worker that respawned mid-copy so the gateway brings up a fresh one. Inspect '" + System.IO.Path.Combine(publishDir, "worker_reload.last_result.json") + "' for the copy outcome."
+                    });
             }
             catch (Exception ex)
             {
                 Logger.Error("WorkerReload failed: " + ex.Message);
-                return "{\"status\":\"Error\", \"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                return McpResponse.Err(code: "WorkerReloadFailed", message: ex.Message);
             }
         }
 
