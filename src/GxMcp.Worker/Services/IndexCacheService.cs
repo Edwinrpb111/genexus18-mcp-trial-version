@@ -34,8 +34,59 @@ namespace GxMcp.Worker.Services
         private long _dirtyGeneration = 0;
         private long _flushedGeneration = -1;
 
-        internal void MarkDirty() => System.Threading.Interlocked.Increment(ref _dirtyGeneration);
+        // Plan 003: bare MarkDirty() (no key known at the call site) conservatively marks
+        // every shard dirty — used by whole-index replace paths (ReplaceAll/UpdateIndex).
+        // MarkDirtyForKey is the precise per-object path (UpdateEntry/RemoveEntry/…) that
+        // only dirties the one shard the mutated storage key falls into, which is what
+        // lets FlushToDisk skip clean shards instead of re-serializing everything.
+        internal void MarkDirty() { System.Threading.Interlocked.Increment(ref _dirtyGeneration); MarkAllShardsDirty(); }
+        internal void MarkDirtyForKey(string storageKey) { System.Threading.Interlocked.Increment(ref _dirtyGeneration); MarkShardDirty(storageKey); }
         internal long DirtyGeneration => System.Threading.Interlocked.Read(ref _dirtyGeneration);
+
+        // ── Sharded on-disk snapshot (plan 003) ─────────────────────────────────
+        // Fixed number of buckets keyed by a stable hash of the storage key ("Type:Name").
+        // A flush only re-serializes shards containing entries dirtied since the last
+        // flush, so cost scales with dirty-entry count instead of total index size.
+        internal const int ShardCount = 16;
+
+        // Which shards have unflushed changes. Starts fully populated: FlushedGeneration
+        // begins at -1 (nothing confirmed on disk yet), so until the first real flush
+        // succeeds every shard is — by definition — potentially dirty. This also covers
+        // the legacy-snapshot migration case: loading an old single-file body doesn't
+        // clear any shard, so the very next flush writes the complete sharded layout.
+        private readonly ConcurrentDictionary<int, byte> _dirtyShards = MakeAllDirty();
+        private static ConcurrentDictionary<int, byte> MakeAllDirty()
+        {
+            var d = new ConcurrentDictionary<int, byte>();
+            for (int i = 0; i < ShardCount; i++) d[i] = 1;
+            return d;
+        }
+        private void MarkAllShardsDirty() { for (int i = 0; i < ShardCount; i++) _dirtyShards[i] = 1; }
+        private void MarkShardDirty(string storageKey) { if (!string.IsNullOrEmpty(storageKey)) _dirtyShards[ShardOf(storageKey)] = 1; }
+
+        // FNV-1a 32-bit over the upper-invariant chars. NOT String.GetHashCode — that's
+        // randomized per-process in .NET (security hardening), so it can't be used to
+        // decide an on-disk shard id that has to mean the same thing across runs.
+        internal static int ShardOf(string storageKey)
+        {
+            if (string.IsNullOrEmpty(storageKey)) return 0;
+            unchecked
+            {
+                uint hash = 2166136261;
+                foreach (char c in storageKey)
+                {
+                    hash ^= char.ToUpperInvariant(c);
+                    hash *= 16777619;
+                }
+                return (int)(hash % ShardCount);
+            }
+        }
+
+        // Test observability: per-shard write counter so a shard-isolation test can assert
+        // that dirtying one entry only rewrites that entry's shard file.
+        private readonly ConcurrentDictionary<int, long> _shardWriteCounts = new ConcurrentDictionary<int, long>();
+        internal long ShardWriteCountForTest(int shardId) => _shardWriteCounts.TryGetValue(shardId, out var v) ? v : 0;
+        internal void ResetShardWriteCountsForTest() => _shardWriteCounts.Clear();
 
         // PERF-02: HasPendingEnrichment used to scan the whole Objects map on every
         // qualifying search — O(n) per call, worst-case a full walk once everything is
@@ -52,6 +103,11 @@ namespace GxMcp.Worker.Services
         // PERFORMANCE (W-A3): mirror path with .gz extension. Derived from _indexPath so
         // the two never drift; new flushes go here gzipped, legacy plain-JSON still readable.
         private string _indexPathGz => _indexPath + ".gz";
+        // Plan 003: sharded snapshot directory + manifest, derived from _indexPath the same
+        // way _indexPathGz is so the paths never drift relative to each other.
+        private string _shardDirPath => string.IsNullOrEmpty(_indexPath) ? null : _indexPath + "_shards";
+        private string _shardManifestPath => string.IsNullOrEmpty(_shardDirPath) ? null : Path.Combine(_shardDirPath, "manifest.json");
+        private string ShardFilePath(int shardId) => Path.Combine(_shardDirPath, string.Format("shard_{0:00}.json.gz", shardId));
         private BuildService _buildService;
         private bool _initialized = false;
         private readonly object _lock = new object();
@@ -400,8 +456,10 @@ namespace GxMcp.Worker.Services
                  try
                  {
                      if (string.IsNullOrEmpty(_indexPath)) return true;
-                     // PERFORMANCE (W-A3): accept either the gzipped (new) or plain (legacy) snapshot.
-                     if (!File.Exists(_indexPathGz) && !File.Exists(_indexPath)) return true;
+                     // PERFORMANCE (W-A3): accept the gzipped (legacy) snapshot, the plain
+                     // (older legacy) snapshot, or (plan 003) a sharded snapshot's manifest.
+                     bool shardManifestPresent = !string.IsNullOrEmpty(_shardManifestPath) && File.Exists(_shardManifestPath);
+                     if (!File.Exists(_indexPathGz) && !File.Exists(_indexPath) && !shardManifestPresent) return true;
 
                      var index = GetIndex();
                      return index == null || index.Objects.Count == 0;
@@ -868,23 +926,36 @@ namespace GxMcp.Worker.Services
                 if (_index != null) return _index;
                 try
                 {
-                    // PERFORMANCE (W-A3): prefer the new gzipped snapshot; fall back to legacy
-                    // plain JSON so existing installs keep working without re-indexing.
-                    string json = null;
-                    if (File.Exists(_indexPathGz))
+                    // Plan 003: prefer the sharded snapshot (manifest present = the shard
+                    // directory is trustworthy); fall back to the legacy single-file gz/plain
+                    // snapshot so existing installs keep working without re-indexing. Loading
+                    // the legacy body doesn't clear any shard's dirty flag, so the very next
+                    // flush re-emits it as a sharded snapshot (silent migration).
+                    SearchIndex loaded = null;
+                    if (!string.IsNullOrEmpty(_shardManifestPath) && File.Exists(_shardManifestPath))
                     {
-                        Logger.Debug(string.Format("Loading gzipped index from disk: {0}", _indexPathGz));
-                        json = ReadGzippedText(_indexPathGz);
+                        Logger.Debug(string.Format("Loading sharded index from disk: {0}", _shardDirPath));
+                        loaded = LoadShardedIndex();
                     }
-                    else if (File.Exists(_indexPath))
+                    else
                     {
-                        Logger.Debug(string.Format("Loading legacy plain index from disk: {0}", _indexPath));
-                        json = File.ReadAllText(_indexPath);
+                        string json = null;
+                        if (File.Exists(_indexPathGz))
+                        {
+                            Logger.Debug(string.Format("Loading gzipped index from disk: {0}", _indexPathGz));
+                            json = ReadGzippedText(_indexPathGz);
+                        }
+                        else if (File.Exists(_indexPath))
+                        {
+                            Logger.Debug(string.Format("Loading legacy plain index from disk: {0}", _indexPath));
+                            json = File.ReadAllText(_indexPath);
+                        }
+                        if (!string.IsNullOrEmpty(json)) loaded = SearchIndex.FromJson(json);
                     }
 
-                    if (!string.IsNullOrEmpty(json))
+                    if (loaded != null)
                     {
-                        _index = SearchIndex.FromJson(json);
+                        _index = loaded;
                         NormalizeLegacyHierarchy(_index);
                         BuildParentIndex(_index);
                         PrimeHierarchyCacheFromIndex(_index);
@@ -916,6 +987,31 @@ namespace GxMcp.Worker.Services
             {
                 return reader.ReadToEnd();
             }
+        }
+
+        // Plan 003: reconstruct the full index by reading every shard file present. A
+        // missing shard file is a legitimately empty shard (never had any dirty entry),
+        // not a corruption signal — each shard's own tmp+move write is independently
+        // atomic, so a shard file that exists is always a complete, valid snapshot of
+        // that shard as of some past flush.
+        private SearchIndex LoadShardedIndex()
+        {
+            var idx = new SearchIndex();
+            for (int id = 0; id < ShardCount; id++)
+            {
+                string shardPath = ShardFilePath(id);
+                if (!File.Exists(shardPath)) continue;
+                try
+                {
+                    string json = ReadGzippedText(shardPath);
+                    if (string.IsNullOrEmpty(json)) continue;
+                    var bucket = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, SearchIndex.IndexEntry>>(json);
+                    if (bucket == null) continue;
+                    foreach (var kv in bucket) idx.Objects[kv.Key] = kv.Value;
+                }
+                catch (Exception ex) { Logger.Warn(string.Format("Shard {0} load failed ({1}): {2}", id, shardPath, ex.Message)); }
+            }
+            return idx;
         }
 
         public bool LooksLikeAttributeName(string term)
@@ -1186,7 +1282,8 @@ namespace GxMcp.Worker.Services
             {
                 EnsureInitialized();
                 v.BodyPresent = (!string.IsNullOrEmpty(_indexPathGz) && File.Exists(_indexPathGz))
-                                 || (!string.IsNullOrEmpty(_indexPath) && File.Exists(_indexPath));
+                                 || (!string.IsNullOrEmpty(_indexPath) && File.Exists(_indexPath))
+                                 || (!string.IsNullOrEmpty(_shardManifestPath) && File.Exists(_shardManifestPath));
                 string metaPath = _metaPath;
                 v.MetaPresent = !string.IsNullOrEmpty(metaPath) && File.Exists(metaPath);
                 Logger.Info(string.Format("[INDEX-CACHE-PATHS] validate: bodyPresent={0} metaPresent={1} gz={2} meta={3}", v.BodyPresent, v.MetaPresent, _indexPathGz, metaPath));
@@ -1207,9 +1304,53 @@ namespace GxMcp.Worker.Services
             return v;
         }
 
+        // Plan 003: small sidecar recording that the shard directory is a complete,
+        // trustworthy sharded snapshot (as opposed to a legacy single-file body).
+        // Written only after a flush round that wrote EVERY shard it attempted
+        // successfully — never on a partial round — so its mere presence means
+        // "load from shards", same certification spirit as WriteMetaSidecar.
+        private sealed class ShardManifest
+        {
+            public int ShardCount { get; set; }
+            public int SchemaVersion { get; set; }
+            public int ObjectCount { get; set; }
+            public string CapturedAtUtc { get; set; }
+        }
+
+        private void WriteShardManifest(int objectCount)
+        {
+            string manifestPath = _shardManifestPath;
+            if (string.IsNullOrEmpty(manifestPath)) return;
+            try
+            {
+                var manifest = new ShardManifest
+                {
+                    ShardCount = ShardCount,
+                    SchemaVersion = CurrentSchemaVersion,
+                    ObjectCount = objectCount,
+                    CapturedAtUtc = DateTime.UtcNow.ToString("o")
+                };
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(manifest);
+                string dir = Path.GetDirectoryName(manifestPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string tmp = manifestPath + ".tmp";
+                File.WriteAllText(tmp, json, new UTF8Encoding(false));
+                if (File.Exists(manifestPath)) File.Delete(manifestPath);
+                File.Move(tmp, manifestPath);
+            }
+            catch (Exception ex) { Logger.Warn("WriteShardManifest failed: " + ex.Message); }
+        }
+
         // Returns true when this call wrote a snapshot to disk that is at least as new
         // as the dirty generation captured before serialization started; false when it
         // skipped (flush already in flight / no index) or failed. Never throws.
+        //
+        // Plan 003 (sharded flush): only shards dirtied since the last successful flush
+        // are (re)serialized — clean shards are left untouched on disk, so cost scales
+        // with dirty-entry count rather than total index size. Each dirty shard id is
+        // popped from _dirtyShards BEFORE its content is read/written, so any mutation
+        // landing concurrently (even mid-write) re-marks the shard dirty for the next
+        // round instead of being silently dropped by an end-of-round clear.
         private bool FlushToDisk()
         {
             if (_savingInProgress) return false;
@@ -1231,9 +1372,13 @@ namespace GxMcp.Worker.Services
             // success the on-disk body provably contains generation `gen`.
             long gen = System.Threading.Interlocked.Read(ref _dirtyGeneration);
 
+            var idsToWrite = new List<int>();
+            foreach (var id in _dirtyShards.Keys.ToArray())
+                if (_dirtyShards.TryRemove(id, out _)) idsToWrite.Add(id);
+
             try
             {
-                string dir = Path.GetDirectoryName(_indexPathGz);
+                string dir = _shardDirPath;
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
                 var settings = new Newtonsoft.Json.JsonSerializerSettings {
@@ -1241,44 +1386,79 @@ namespace GxMcp.Worker.Services
                     DefaultValueHandling = Newtonsoft.Json.DefaultValueHandling.Ignore,
                     Formatting = Newtonsoft.Json.Formatting.None
                 };
+                var serializer = Newtonsoft.Json.JsonSerializer.Create(settings);
+
+                // Single O(N) pass bucketing entries into the shards we're about to write
+                // (clean shards are never even visited for bucketing, let alone written).
+                var buckets = new Dictionary<int, Dictionary<string, SearchIndex.IndexEntry>>();
+                foreach (var id in idsToWrite) buckets[id] = new Dictionary<string, SearchIndex.IndexEntry>(StringComparer.OrdinalIgnoreCase);
+                if (idsToWrite.Count > 0)
+                {
+                    foreach (var kv in snapshot.Objects)
+                    {
+                        if (buckets.TryGetValue(ShardOf(kv.Key), out var bucket)) bucket[kv.Key] = kv.Value;
+                    }
+                }
 
                 var flushSw = System.Diagnostics.Stopwatch.StartNew();
+                bool allOk = true;
+                long totalGzBytes = 0;
 
-                // PERFORMANCE (W-A3): write gzipped via a temp file + atomic move so partial
-                // writes never leave a corrupt snapshot on disk.
-                // LOH fix: stream the serializer straight through gzip instead of building
-                // the whole index as one ~45MB JSON string first — the intermediate string
-                // landed on the Large Object Heap on every flush.
-                string tmpPath = _indexPathGz + ".tmp";
-                // CompressionLevel.Fastest: file isn't transmitted, the ~5% ratio improvement
-                // from Optimal isn't worth the extra CPU on every flush.
-                var serializer = Newtonsoft.Json.JsonSerializer.Create(settings);
-                using (var fs = File.Create(tmpPath))
-                using (var gz = new GZipStream(fs, CompressionLevel.Fastest))
-                using (var writer = new StreamWriter(gz, new UTF8Encoding(false)))
-                using (var jsonWriter = new Newtonsoft.Json.JsonTextWriter(writer))
+                foreach (var id in idsToWrite)
                 {
-                    serializer.Serialize(jsonWriter, snapshot);
+                    try
+                    {
+                        string shardPath = ShardFilePath(id);
+                        string tmpPath = shardPath + ".tmp";
+                        // PERFORMANCE (W-A3): write gzipped via a temp file + atomic move so
+                        // partial writes never leave a corrupt shard on disk. LOH fix carried
+                        // over from the single-file design: stream straight through gzip
+                        // instead of building the whole shard as one JSON string first.
+                        using (var fs = File.Create(tmpPath))
+                        using (var gz = new GZipStream(fs, CompressionLevel.Fastest))
+                        using (var writer = new StreamWriter(gz, new UTF8Encoding(false)))
+                        using (var jsonWriter = new Newtonsoft.Json.JsonTextWriter(writer))
+                        {
+                            serializer.Serialize(jsonWriter, buckets[id]);
+                        }
+                        try { totalGzBytes += new FileInfo(tmpPath).Length; } catch { }
+                        if (File.Exists(shardPath)) File.Delete(shardPath);
+                        File.Move(tmpPath, shardPath);
+                        _shardWriteCounts.AddOrUpdate(id, 1, (k, v) => v + 1);
+                    }
+                    catch (Exception exShard)
+                    {
+                        allOk = false;
+                        _dirtyShards[id] = 1; // not durable yet — retry this shard next round
+                        Logger.Error(string.Format("[INDEX-SAVE] shard {0} flush failed: {1}", id, exShard.Message));
+                    }
                 }
-                long serializeGzipMs = flushSw.ElapsedMilliseconds;
-                long gzBytes = 0;
-                try { gzBytes = new FileInfo(tmpPath).Length; } catch { }
 
-                flushSw.Restart();
-                if (File.Exists(_indexPathGz)) File.Delete(_indexPathGz);
-                File.Move(tmpPath, _indexPathGz);
-                long moveMs = flushSw.ElapsedMilliseconds;
-
-                // Clean up the legacy plain-JSON file once we have a valid gzipped snapshot.
-                try { if (File.Exists(_indexPath)) File.Delete(_indexPath); } catch { }
-
-                long sizeKb = gzBytes / 1024;
+                long totalMs = flushSw.ElapsedMilliseconds;
                 int entryCount = snapshot.Objects?.Count ?? 0;
                 // Fase 3 measurement: piggyback the running enrichment sub-step split on the
                 // throttled flush so the SDK-bound (refScan/typeExtract) vs CPU-only
                 // (embedding/textualScan) proportion is observable without waiting for the
                 // (pathologically slow) full drain to reach [ENRICH-DONE].
-                Logger.Info($"[INDEX-SAVE] gzKB={sizeKb} serializeGzipMs={serializeGzipMs} moveMs={moveMs} totalMs={serializeGzipMs + moveMs} entries={entryCount} gen={gen} | {GetEnrichTimingSummary()}");
+                Logger.Info($"[INDEX-SAVE] shardsWritten={idsToWrite.Count}/{ShardCount} gzKB={totalGzBytes / 1024} totalMs={totalMs} entries={entryCount} gen={gen} | {GetEnrichTimingSummary()}");
+
+                if (!allOk)
+                {
+                    // Partial round: some shards durable, some not. Don't certify `gen`,
+                    // don't touch the legacy files or manifest — the next flush retries
+                    // only the shards still marked dirty above.
+                    int nFail = System.Threading.Interlocked.Increment(ref _consecutiveFlushFailures);
+                    _lastFlushErrorMessage = "partial shard flush failure";
+                    Logger.Error($"Flush Error (consecutive={nFail}): {_lastFlushErrorMessage}");
+                    return false;
+                }
+
+                WriteShardManifest(entryCount);
+                // Migration cleanup: once the sharded body is confirmed fully durable, the
+                // legacy single-file snapshot (if any) is no longer needed for warm start.
+                try { if (File.Exists(_indexPathGz)) File.Delete(_indexPathGz); } catch { }
+                try { if (File.Exists(_indexPath)) File.Delete(_indexPath); } catch { }
+
                 System.Threading.Interlocked.Exchange(ref _consecutiveFlushFailures, 0);
                 _lastFlushSuccessUtc = DateTime.UtcNow;
                 _lastFlushErrorMessage = null;
@@ -1290,6 +1470,9 @@ namespace GxMcp.Worker.Services
                 return true;
             }
             catch (Exception ex) {
+                // Round-level failure (e.g. directory creation) before/around the per-shard
+                // loop — restore every popped id so nothing is lost.
+                foreach (var id in idsToWrite) _dirtyShards[id] = 1;
                 int n = System.Threading.Interlocked.Increment(ref _consecutiveFlushFailures);
                 _lastFlushErrorMessage = ex.Message;
                 Logger.Error($"Flush Error (consecutive={n}): {ex.Message}");
