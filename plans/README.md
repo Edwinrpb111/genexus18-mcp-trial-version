@@ -18,7 +18,7 @@ update your row when done.
 | 001 | Index flush-count instrumentation + regression test | P1 | S | — | DONE |
 | 002 | Secondary type/domain indexes for search & list | P1 | M | — | DONE |
 | 003 | Incremental / sharded index flush | P2 | L | 001 | DONE |
-| 004 | Batch COM property reads in the lite index walk | P2 | L | 001 | TODO |
+| 004 | Batch COM property reads in the lite index walk | P2 | L | 001 | REJECTED |
 | 005 | Replace CommandDispatcher switch with a dispatch table | P2 | M | — | DONE |
 | 006 | Shared filter-predicate builder for SearchService/ListService | P2 | S-M | 002 | DONE |
 | 007 | Decompose WriteService (6982 lines) | P3 | L | 009-style char tests | DONE |
@@ -139,6 +139,12 @@ verification — and should become numbered plans (012+) before execution:
 
 ## Findings considered and rejected
 
+- **004 (batch COM property reads)**: REJECTED — superseded / not worth doing. A spike found
+  the GeneXus SDK exposes no batched property accessor for the lite walk, and the existing
+  delta-index system already avoids the redundant reads the plan targeted. Prior measurement
+  also put the lite-walk COM reads at ~0.72ms/obj (not the cold-start bottleneck); the real
+  flush cost was addressed by plan 003 (sharded flush). Revisit only if a batched SDK accessor
+  appears or profiling re-implicates per-object COM reads.
 - **SEC (kb_import/kb_diff arbitrary-directory resolve)**: NOT A FIX HERE — by-design.
   `ResolveKbPath` (`Program.cs:4930`) intentionally falls back to any existing directory
   because `genexus_kb_diff kbA/kbB` and `genexus_kb_import to` are **documented** as
