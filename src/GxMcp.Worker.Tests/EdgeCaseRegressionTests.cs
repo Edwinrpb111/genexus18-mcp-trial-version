@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Services;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace GxMcp.Worker.Tests
@@ -186,18 +187,40 @@ namespace GxMcp.Worker.Tests
         }
 
         [Fact]
-        public void WriteService_JObjectFacade_ValidateOnly_MapsToDryRun_ViaConvention()
+        public void WriteService_JObjectFacade_ValidateOnly_MapsToDryRun()
         {
-            // Mirror at the WriteService(JObject) facade so callers that bypass
-            // the dispatcher (BatchService, EditAndBuildOrchestrator) inherit
-            // the same contract.
-            string writeSrc = System.IO.File.ReadAllText(
-                System.IO.Path.Combine(
-                    System.AppDomain.CurrentDomain.BaseDirectory,
-                    "..", "..", "..", "..", "GxMcp.Worker", "Services",
-                    "WriteService.cs"));
-            Assert.Contains("facadeValidate", writeSrc);
-            Assert.Contains("string.Equals(facadeValidate, \"only\"", writeSrc);
+            // Behavioral replacement for the old source-text guard: mirror at the
+            // WriteService(JObject) facade so callers that bypass the dispatcher
+            // (BatchService, EditAndBuildOrchestrator) inherit the same contract.
+            // NormalizeFacadeArgs is the pure function backing that facade — no
+            // live KB/SDK needed to exercise it.
+            var normalized = WriteService.NormalizeFacadeArgs(new JObject
+            {
+                ["part"] = "WebForm",
+                ["content"] = "<GxMultiForm/>",
+                ["validate"] = "only"
+            });
+
+            Assert.True(normalized.DryRun);
+            Assert.Equal("only", normalized.Validate);
+
+            // dryRun=false + validate=only must still force dry-run (OR semantics).
+            var normalizedExplicitFalse = WriteService.NormalizeFacadeArgs(new JObject
+            {
+                ["part"] = "WebForm",
+                ["content"] = "<GxMultiForm/>",
+                ["dryRun"] = false,
+                ["validate"] = "only"
+            });
+            Assert.True(normalizedExplicitFalse.DryRun);
+
+            // Baseline: no validate=only, no dryRun → not forced into dry-run.
+            var normalizedLive = WriteService.NormalizeFacadeArgs(new JObject
+            {
+                ["part"] = "WebForm",
+                ["content"] = "<GxMultiForm/>"
+            });
+            Assert.False(normalizedLive.DryRun);
         }
 
         [Fact]
