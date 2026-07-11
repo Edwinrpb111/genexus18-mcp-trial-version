@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "test": "node --test cli/run.test.js",
+    "lint": "eslint cli scripts eslint.config.js",
     "prepack": "node scripts/clean-package.js"
   },
   "bin": {
@@ -56,5 +57,9 @@
   "bugs": {
     "url": "https://github.com/lennix1337/Genexus18MCP/issues"
   },
-  "homepage": "https://github.com/lennix1337/Genexus18MCP#readme"
+  "homepage": "https://github.com/lennix1337/Genexus18MCP#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5"
+  }
 }

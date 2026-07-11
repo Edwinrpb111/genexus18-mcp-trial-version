@@ -30,6 +30,9 @@ jobs:
       - name: CLI tests
         run: npm test
 
+      - name: Root lint
+        run: npm run lint
+
       - name: Install Nexus IDE deps
         working-directory: src/nexus-ide
         run: npm ci
