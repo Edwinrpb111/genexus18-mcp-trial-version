@@ -131,6 +131,8 @@ namespace GxMcp.Worker.Services
         // genexus_profile: runtime profiler XML bridge (file-only ingest v1).
         private readonly ProfileService _profileService;
 
+        private readonly Dictionary<string, CommandHandler> _commandTable;
+
         private CommandDispatcher()
         {
             // Phase 1: Creation
@@ -248,6 +250,8 @@ namespace GxMcp.Worker.Services
             _objectService.SetUIService(_uiService);
             _objectService.SetPatternAnalysisService(_patternAnalysisService);
             _linterService.SetWriteService(_writeService);
+
+            _commandTable = BuildCommandTable();
         }
 
         public static CommandDispatcher Instance
@@ -444,1244 +448,28 @@ namespace GxMcp.Worker.Services
                 using (GxMcp.Worker.Helpers.WorkerCancellationRegistry.Register(commandCancelToken, out _))
                 using (GxMcp.Worker.Helpers.ProgressContext.Use(progressToken))
                 {
-                switch (method?.ToLower())
-                {
-                    case "ping": return Models.McpResponse.Ok(code: "Pong", result: new JObject { ["message"] = "pong" });
-                    case "control":
-                        // v2.3.8 (post-Task 7.2 fix): IPC cancellation side-channel.
-                        // Gateway sends this on the thread-safe path so it can interleave
-                        // with a sibling SDK call. Signals the registered CTS keyed by
-                        // cancelToken (typically the BackgroundJobRegistry job_id).
-                        if (string.Equals(action, "Cancel", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string ct = args?["cancelToken"]?.ToString() ?? target;
-                            bool ok = GxMcp.Worker.Helpers.WorkerCancellationRegistry.Cancel(ct);
-                            // Item 11: wrap in canonical McpResponse envelope.
-                            return ok
-                                ? Models.McpResponse.Ok(code: "Cancelled", result: new JObject
-                                    {
-                                        ["cancelToken"] = ct,
-                                        ["message"] = "Cancellation signalled to in-flight command. The handler may still take a few iterations to terminate."
-                                    })
-                                : Models.McpResponse.Err(code: "NotFound",
-                                    message: "No active command with that cancelToken (already finished or never started).",
-                                    hint: "The cancelToken may have already expired or the command completed.");
-                        }
-                        break;
-                    case "kb":
-                        if (action == "Open")
-                        {
-                            string result = _kbService.OpenKB(target);
-                            try
-                            {
-                                var openResult = JObject.Parse(result);
-                                // v2.8.0 — KbService.OpenKB now emits the canonical envelope
-                                // (status:"ok"). Recognize only the canonical shape; legacy
-                                // emissions were removed in this release.
-                                if (string.Equals(openResult["status"]?.ToString(), "ok", StringComparison.Ordinal))
-                                {
-                                    Environment.SetEnvironmentVariable("GX_KB_PATH", target);
-                                }
-                            }
-                            catch
-                            {
-                            }
-
-                            return result;
-                        }
-                        if (action == "BulkIndex")
-                        {
-                            bool force = args?["force"]?.ToObject<bool?>() ?? false;
-                            bool indexDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            if (indexDryRun)
-                            {
-                                string kbPathForDry = null;
-                                try { kbPathForDry = _kbService.GetKbPath(); } catch { }
-                                return Models.McpResponse.Ok(
-                                    code: "DryRun",
-                                    result: new JObject
-                                    {
-                                        ["preview"] = new JObject
-                                        {
-                                            ["action"] = "index",
-                                            ["force"] = force,
-                                            ["kbPath"] = kbPathForDry,
-                                            ["note"] = "dryRun=true: index rebuild not executed."
-                                        }
-                                    });
-                            }
-                            return _kbService.BulkIndex(force);
-                        }
-                        if (action == "SelfTest") return _selfTestService.RunAllTests();
-                        if (action == "GetDatabaseInfo")
-                        {
-                            return _databaseInfoService.GetInfo();
-                        }
-                        // v2.6.6 Stream H (FR#26) — surface active-environment metadata
-                        // so the gateway can populate KbHandle.ActiveEnvironment on
-                        // cache miss. Pure SDK read, no side effects.
-                        if (action == "GetActiveEnvironment")
-                        {
-                            string env = _kbService.GetActiveEnvironment();
-                            string ver = _kbService.GetActiveEnvironmentVersion();
-                            return new JObject
-                            {
-                                ["environment"] = env,
-                                ["version"] = ver
-                            }.ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        // v2.6.6 Stream H (FR#25) — F5 launcher resolver. Returns the KB's
-                        // configured startup object (or first IsMain-tagged WebPanel/SDPanel/Procedure).
-                        if (action == "GetLauncherObject")
-                        {
-                            string launcherObj = _kbService.GetLauncherObjectName();
-                            return new JObject { ["name"] = launcherObj }.ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        // Wave-3: IDE "Set As Startup Object" parity. Read goes
-                        // through the same SDK shapes as GetLauncherObjectName so
-                        // get/set agree on the field name the IDE writes to .gxw.
-                        if (action == "GetStartupObject") return _kbStartupService.GetStartup();
-                        if (action == "SetStartupObject")
-                        {
-                            string startupName = target ?? args?["name"]?.ToString();
-                            return _kbStartupService.SetStartup(startupName);
-                        }
-                        if (action == "GetIndexStatus")
-                        {
-                            // issue #25 #1: event-driven wait. When `wait` is given, block
-                            // until the index state transitions away from `since` (or a walk
-                            // progress tick lands, or the timeout fires) and return early —
-                            // no more polling loops. Runs on the non-SDK parallel path so
-                            // blocking here never stalls the STA thread.
-                            int waitSec = args?["wait"]?.ToObject<int?>() ?? 0;
-                            string since = args?["since"]?.ToString();
-                            if (waitSec > 0)
-                            {
-                                // Issue #27 item 3 (DX): two block modes.
-                                //  - since given  → return the moment the state LEAVES `since`
-                                //    (event-driven progress poll; legacy behaviour).
-                                //  - since absent → block until the index reaches "Ready"
-                                //    (or timeout), so an agent can just say "wait until usable"
-                                //    without hand-rolling a since-chained poll loop. A Cold+idle
-                                //    index simply times out at its current state — the caller
-                                //    then knows to trigger an index build.
-                                bool waitForReady = string.IsNullOrEmpty(since);
-                                var sw = System.Diagnostics.Stopwatch.StartNew();
-                                long budgetMs = waitSec * 1000L;
-                                while (true)
-                                {
-                                    _indexCacheService.ArmStateSignal();
-                                    string cur = _indexCacheService.GetState()?.Status ?? "Cold";
-                                    bool done = waitForReady
-                                        ? string.Equals(cur, "Ready", StringComparison.OrdinalIgnoreCase)
-                                        : !string.Equals(cur, since, StringComparison.OrdinalIgnoreCase);
-                                    if (done) break;
-                                    long remaining = budgetMs - sw.ElapsedMilliseconds;
-                                    if (remaining <= 0) break;
-                                    // Cap each wait so a missed signal still re-checks promptly.
-                                    _indexCacheService.WaitStateSignal((int)Math.Min(remaining, 2000));
-                                }
-                            }
-                            // Merge the state-machine status so callers have a stable field
-                            // to pass back as `since` (the legacy `status` string is descriptive
-                            // prose, not a stable enum).
-                            var statusJson = Newtonsoft.Json.Linq.JObject.Parse(_kbService.GetIndexStatus());
-                            statusJson["indexStatus"] = _indexCacheService.GetState()?.Status ?? "Cold";
-                            // Issue #27 item 1: attach the most-recent terminal build outcome so
-                            // this plain status call answers "did my last build pass?" without a jobId.
-                            var lastBuild = BuildService.GetLatestBuildSummary();
-                            if (lastBuild != null) statusJson["lastBuild"] = lastBuild;
-                            return statusJson.ToString();
-                        }
-                        if (action == "GetIndexState")
-                        {
-                            // v2.3.8 Task 1.2: surface unified IndexState from IndexCacheService.
-                            // Gateway uses this to populate the `index` block in whoami.
-                            //
-                            // issue #28 item 4: hydrate the on-disk cache BEFORE reading the
-                            // state. On a warm/reconnected worker _state starts "Cold" until
-                            // something calls GetIndex() (lazy disk load → MarkIndexComplete →
-                            // "Ready"). Because the gateway's SDK-bound short-circuit fast-fails
-                            // edits on a Cold mirror BEFORE they reach the worker, GetIndex()
-                            // never ran on the edit path and the state stayed Cold forever
-                            // ("Index loaded. Objects: 1191" in the log, yet edits blocked with
-                            // IndexNotReady). Triggering the lazy load here promotes the state to
-                            // reflect the loaded cache on the first whoami/refresh after reconnect.
-                            try { _indexCacheService.GetIndex(); } catch { /* load is best-effort; GetState still returns Cold/0 */ }
-                            var st = _indexCacheService.GetState();
-                            // v2.8.0 — index state shape is the tool's payload (not an envelope).
-                            // Renamed top-level "status" to "indexStatus" to avoid colliding with
-                            // the canonical envelope's "status" once wrapped in McpResponse.Ok.
-                            var j = new JObject
-                            {
-                                ["indexStatus"] = st.Status ?? "Cold",
-                                ["totalObjects"] = st.TotalObjects,
-                                ["lastIndexedAt"] = st.LastIndexedAt.HasValue
-                                    ? (JToken)st.LastIndexedAt.Value.ToUniversalTime().ToString("o")
-                                    : JValue.CreateNull(),
-                                ["progress"] = st.Progress.HasValue ? (JToken)st.Progress.Value : JValue.CreateNull(),
-                                ["etaMs"] = st.EtaMs.HasValue ? (JToken)st.EtaMs.Value : JValue.CreateNull(),
-                                // PERFORMANCE (W-M2): expose flush-failure telemetry so a silently
-                                // failing snapshot (disk full / permission) is visible via whoami.
-                                ["flushFailuresConsecutive"] = IndexCacheService.ConsecutiveFlushFailures,
-                                ["flushLastSuccessUtc"] = IndexCacheService.LastFlushSuccessUtc == DateTime.MinValue
-                                    ? JValue.CreateNull()
-                                    : (JToken)IndexCacheService.LastFlushSuccessUtc.ToString("o"),
-                                ["flushLastError"] = IndexCacheService.LastFlushErrorMessage != null
-                                    ? (JToken)IndexCacheService.LastFlushErrorMessage
-                                    : JValue.CreateNull()
-                            };
-
-                            // v2.6.8: top-5 recently-changed projection. Cheap O(n) scan
-                            // over the in-memory index; gateway forwards this into the
-                            // `whoami.index.recentlyChanged` block so the agent gets a
-                            // "what's hot" hint on the first call.
-                            try
-                            {
-                                var idx = _indexCacheService.GetIndex();
-                                if (idx != null && idx.Objects.Count > 0)
-                                {
-                                    var top = idx.Objects.Values
-                                        .Where(e => e.LastUpdate > DateTime.MinValue)
-                                        .OrderByDescending(e => e.LastUpdate)
-                                        .Take(5)
-                                        .ToList();
-                                    if (top.Count > 0)
-                                    {
-                                        var arr = new JArray();
-                                        foreach (var e in top)
-                                        {
-                                            arr.Add(new JObject
-                                            {
-                                                ["name"] = e.Name,
-                                                ["type"] = e.Type,
-                                                ["lastUpdate"] = e.LastUpdate.ToUniversalTime().ToString("o"),
-                                                ["lastModifiedBy"] = e.LastModifiedBy ?? string.Empty
-                                            });
-                                        }
-                                        j["recentlyChanged"] = arr;
-                                    }
-                                }
-                            }
-                            catch (Exception ex) { Logger.Debug("[GetIndexState] recentlyChanged failed: " + ex.Message); }
-
-                            return Models.McpResponse.Ok(code: "IndexState", result: j);
-                        }
-                        if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
-                        if (action == "ListPatternSnapshots") return _kbValidationService.ListPatternSnapshots(target);
-                        if (action == "RestorePatternSnapshot") return _kbValidationService.RestorePatternSnapshot(target, args?["snapshotPath"]?.ToString(), _writeService);
-                        break;
-                    case "batch":
-                        if (action == "BatchRead") return _batchService.BatchRead(args?["items"] as JArray, args?["part"]?.ToString() ?? "Source");
-                        if (action == "BatchEdit") return _batchService.BatchEdit(target, args?["changes"] as JArray);
-                        if (action == "MultiEdit") return _batchService.MultiEdit(args?["items"] as JArray);
-                        if (action == "Process") return _batchService.ProcessBatch(args?["batchAction"]?.ToString(), target, payload);
-                        break;
-                    case "search":
-                        if (action == "Query")
-                        {
-                            DateTime sinceArgQ = default(DateTime);
-                            DateTime modifiedBeforeArgQ = default(DateTime);
-                            string sinceTokQ = args?["since"]?.ToString();
-                            string mbTokQ = args?["modifiedBefore"]?.ToString();
-                            if (!string.IsNullOrEmpty(sinceTokQ))
-                                DateTime.TryParse(sinceTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArgQ);
-                            if (!string.IsNullOrEmpty(mbTokQ))
-                                DateTime.TryParse(mbTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArgQ);
-
-                            string searchResult = _searchService.Search(
-                                target,
-                                args?["typeFilter"]?.ToString(),
-                                args?["domainFilter"]?.ToString(),
-                                args?["limit"]?.ToObject<int?>() ?? 50,
-                                args?["exactMatch"]?.ToObject<bool?>() ?? false,
-                                args?["sort"]?.ToString(),
-                                sinceArgQ,
-                                modifiedBeforeArgQ,
-                                args?["cursor"]?.ToString()
-                            );
-                            int inlineTopSearch = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
-                            return inlineTopSearch > 0
-                                ? AppendInlineReads(searchResult, inlineTopSearch)
-                                : searchResult;
-                        }
-                        if (action == "SearchSource")
-                        {
-                            var criteria = new SourceSearchCriteria
-                            {
-                                Callee = args?["callee"]?.ToString(),
-                                Pattern = args?["pattern"]?.ToString(),
-                                TypeFilter = args?["typeFilter"]?.ToString(),
-                                CaseSensitive = args?["caseSensitive"]?.ToObject<bool?>() ?? false,
-                                IncludeComments = args?["includeComments"]?.ToObject<bool?>() ?? false,
-                                MaxResults = args?["maxResults"]?.ToObject<int?>() ?? 50,
-                                // Issue #27 item 4: object scope + tunable timeout + resume cursor.
-                                ObjectName = args?["objectName"]?.ToString(),
-                                StartIndex = args?["startIndex"]?.ToObject<int?>() ?? 0,
-                                TimeoutMs = args?["timeoutMs"]?.ToObject<int?>() ?? 30000
-                            };
-                            if (args?["scope"] is JArray scopeArr)
-                                criteria.Scope = scopeArr.Select(t => t.ToString()).ToList();
-                            // Item 22: fields=[source,caption,description,parmNames]
-                            if (args?["fields"] is JArray fieldsArr)
-                                criteria.Fields = fieldsArr.Select(t => t.ToString()).ToList();
-                            if (args?["argMatches"] is JObject am)
-                            {
-                                criteria.ArgMatches = new Dictionary<int, string>();
-                                foreach (var prop in am.Properties())
-                                {
-                                    if (int.TryParse(prop.Name, out int idx))
-                                        criteria.ArgMatches[idx] = prop.Value?.ToString();
-                                }
-                            }
-                            // v2.3.8 (post-Task 7.2 fix): register cancellation if the caller
-                            // supplied a cancelToken so a sibling Control:Cancel can stop the
-                            // scan mid-loop. Token typically matches the gateway's job_id.
-                            string ssCancelToken = args?["cancelToken"]?.ToString();
-                            string sourceSearchResult;
-                            using (GxMcp.Worker.Helpers.WorkerCancellationRegistry.Register(ssCancelToken, out var ssCt))
-                            {
-                                sourceSearchResult = _sourceSearchService.SearchAsJson(criteria, ssCt);
-                            }
-                            int inlineTopSearchSource = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
-                            return inlineTopSearchSource > 0
-                                ? AppendInlineReadsForSourceSearch(sourceSearchResult, inlineTopSearchSource)
-                                : sourceSearchResult;
-                        }
-                        break;
-                    case "list":
-                        if (action == "Objects")
-                        {
-                            DateTime sinceArg = default(DateTime);
-                            DateTime modifiedBeforeArg = default(DateTime);
-                            string sinceTok = args?["since"]?.ToString();
-                            string mbTok = args?["modifiedBefore"]?.ToString();
-                            if (!string.IsNullOrEmpty(sinceTok))
-                                DateTime.TryParse(sinceTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArg);
-                            if (!string.IsNullOrEmpty(mbTok))
-                                DateTime.TryParse(mbTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArg);
-
-                            string listResult = _listService.ListObjects(
-                                target,
-                                args?["limit"]?.ToObject<int?>() ?? 5000,
-                                args?["offset"]?.ToObject<int?>() ?? 0,
-                                args?["parent"]?.ToString(),
-                                args?["typeFilter"]?.ToString(),
-                                args?["parentPath"]?.ToString(),
-                                args?["verbose"]?.ToObject<bool?>() ?? false,
-                                args?["nameFilter"]?.ToString(),
-                                args?["descriptionFilter"]?.ToString(),
-                                args?["pathPrefix"]?.ToString(),
-                                args?["sort"]?.ToString(),
-                                sinceArg,
-                                modifiedBeforeArg,
-                                args?["cursor"]?.ToString()
-                            );
-                            int inlineTopList = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
-                            return inlineTopList > 0
-                                ? AppendInlineReads(listResult, inlineTopList)
-                                : listResult;
-                        }
-                        break;
-                    case "read":
-                        if (action == "ExtractSource") return _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp", false, args?["type"]?.ToString());
-                        if (action == "ExtractParts")
-                        {
-                            var partsTok = args?["parts"] as JArray;
-                            var requestedParts = partsTok?.Select(p => p.ToString()) ?? Enumerable.Empty<string>();
-                            return _objectService.ReadObjectSourceParts(target, requestedParts, args?["type"]?.ToString());
-                        }
-                        if (action == "GetVariables") return _analyzeService.GetVariables(target);
-                        if (action == "GetAttribute") return _analyzeService.GetAttributeMetadata(target);
-                        break;
-                    case "object":
-                        if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
-                        if (action == "Create")
-                        {
-                            // Item 21 (friction 2026-05-22): dryRun=true returns the planned
-                            // shape without calling newObj.Save(). args carries the flag.
-                            return _objectService.CreateObject(args?["type"]?.ToString(), target, args);
-                        }
-                        if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false, args?["dryRun"]?.ToObject<bool?>() ?? false);
-                        if (action == "SaveAs") return _saveAsService.SaveAs(args ?? new JObject());
-                        if (action == "WorkerReload")
-                        {
-                            // FR#20 (v2.6.6 Stream B): mode=soft is the new default — drain
-                            // in-flight commands and exit code 0 so the gateway respawns
-                            // without losing JobRegistry state. mode=hard preserves the
-                            // legacy copy-binaries-and-kill flow (still required when the
-                            // caller passed a sourceDir of fresh bits to lay down).
-                            string mode = args?["mode"]?.ToString()?.Trim().ToLowerInvariant();
-                            string srcDir = args?["sourceDir"]?.ToString();
-                            if (string.IsNullOrEmpty(mode))
-                            {
-                                // Negotiate: hard when sourceDir is supplied (copy-binaries
-                                // intent), otherwise soft (clean respawn for state reset).
-                                mode = string.IsNullOrWhiteSpace(srcDir) ? "soft" : "hard";
-                            }
-                            if (mode == "soft")
-                            {
-                                int drainMs = args?["drainTimeoutMs"]?.ToObject<int?>() ?? 30000;
-                                return GxMcp.Worker.Program.PerformSoftReload(drainMs);
-                            }
-                            // Item 51 (Tier-S, EXPERIMENTAL) — warm reload. Persist the
-                            // IndexCacheService state to <kb>/.gx/index-snapshot.bin
-                            // gated by the worker DLL SHA, then do a soft reload. On
-                            // the next boot the gateway respawns this worker and a
-                            // future TryRestoreWarmIndex hook can pick it back up.
-                            if (mode == "warm")
-                            {
-                                int drainMs = args?["drainTimeoutMs"]?.ToObject<int?>() ?? 30000;
-                                var warmAck = TryCaptureWarmSnapshot();
-                                var softResp = GxMcp.Worker.Program.PerformSoftReload(drainMs);
-                                // Stitch warm metadata into the soft-reload ack so the
-                                // caller sees both outcomes in a single response.
-                                try
-                                {
-                                    var jo = Newtonsoft.Json.Linq.JObject.Parse(softResp);
-                                    jo["mode"] = "warm";
-                                    jo["warmSnapshot"] = warmAck;
-                                    return jo.ToString(Newtonsoft.Json.Formatting.None);
-                                }
-                                catch { return softResp; }
-                            }
-                            return _objectService.WorkerReload(srcDir);
-                        }
-                        if (action == "ReadLogs") return _objectService.ReadLogs(
-                            args?["lines"]?.ToObject<int?>() ?? 100,
-                            args?["filterCorrelation"]?.ToString(),
-                            args?["grep"]?.ToString(),
-                            args?["since"]?.ToString(),
-                            // Item 32: objectFilter = target param for object-name filtering.
-                            args?["objectFilter"]?.ToString());
-                        if (action == "ExportText")
-                        {
-                            return _objectService.ExportObjectToText(
-                                target,
-                                args?["outputPath"]?.ToString() ?? args?["path"]?.ToString(),
-                                args?["part"]?.ToString(),
-                                args?["type"]?.ToString(),
-                                args?["overwrite"]?.ToObject<bool?>() ?? false);
-                        }
-                        if (action == "ImportText") return _objectService.ImportObjectFromText(target, args?["inputPath"]?.ToString() ?? args?["path"]?.ToString(), args?["part"]?.ToString(), args?["type"]?.ToString());
-                        break;
-                    case "write":
-                        if (action == "AddVariable")
-                        {
-                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _writeService.AddVariable(
-                                target,
-                                args?["varName"]?.ToString(),
-                                args?["typeName"]?.ToString(),
-                                varDryRun,
-                                args?["length"]?.ToObject<int?>(),
-                                args?["decimals"]?.ToObject<int?>(),
-                                args?["collection"]?.ToObject<bool?>());
-                        }
-                        if (action == "DeleteVariable")
-                        {
-                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _writeService.DeleteVariable(
-                                target,
-                                args?["varName"]?.ToString(),
-                                varDryRun);
-                        }
-                        if (action == "ModifyVariable")
-                        {
-                            bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _writeService.ModifyVariable(
-                                target,
-                                args?["varName"]?.ToString(),
-                                args?["typeName"]?.ToString(),
-                                args?["basedOn"]?.ToString(),
-                                varDryRun,
-                                args?["length"]?.ToObject<int?>(),
-                                args?["decimals"]?.ToObject<int?>(),
-                                args?["collection"]?.ToObject<bool?>());
-                        }
-                        if (action == "ValidatePayload")
-                        {
-                            return _validatePayloadService.Validate(
-                                target,
-                                args?["part"]?.ToString(),
-                                payload);
-                        }
-                        if (action == "Bulk")
-                        {
-                            return _writeService.BulkWrite(args ?? request);
-                        }
-                        if (action == "ApplyTemplate")
-                        {
-                            return _applyTemplateService.Apply(
-                                args?["template"]?.ToString(),
-                                target,
-                                args,
-                                args?["dryRun"]?.ToObject<bool?>() ?? false);
-                        }
-                        if (action == "ListTemplates")
-                        {
-                            return _applyTemplateService.ListTemplates();
-                        }
-                        {
-                            // Friction 2026-05-26 — validate=only is the LLM-facing
-                            // contract for "run the write in-memory, do NOT persist".
-                            // Already plumbed for mode=patch and mode=ops; mirror it
-                            // here so PatternInstance / WebForm full-XML writes can
-                            // probe SDK validation without touching disk.
-                            string writeValidate = args?["validate"]?.ToString();
-                            bool writeDryRun = (args?["dryRun"]?.ToObject<bool?>() ?? false)
-                                || string.Equals(writeValidate, "only", StringComparison.OrdinalIgnoreCase);
-                            var writeResp = _writeService.WriteObject(
-                                target,
-                                action,
-                                payload,
-                                args?["type"]?.ToString(),
-                                true,
-                                false,
-                                true,
-                                writeDryRun);
-                            return VisualVerifyResponseHook.MaybeAttach(args, writeResp, _visualVerifyService);
-                        }
-                    case "editandbuild":
-                        if (action == "Orchestrate")
-                        {
-                            var orchResp = _editAndBuildOrchestrator.Orchestrate(args ?? new JObject());
-                            return VisualVerifyResponseHook.MaybeAttach(args, orchResp, _visualVerifyService);
-                        }
-                        break;
-                    case "semanticops":
-                        if (action == "Apply")
-                        {
-                            var soResp = _writeService.ApplySemanticOps(args ?? request);
-                            return VisualVerifyResponseHook.MaybeAttach(args ?? request, soResp, _visualVerifyService);
-                        }
-                        break;
-                    case "jsonpatch":
-                        if (action == "Apply")
-                        {
-                            var jpResp = _writeService.ApplyJsonPatch(args ?? request);
-                            return VisualVerifyResponseHook.MaybeAttach(args ?? request, jpResp, _visualVerifyService);
-                        }
-                        break;
-                    case "patch":
-                        if (action == "Apply")
-                        {
-                            // v2.6.6 FR#13 follow-up: validate=only is the LLM-facing
-                            // contract for "run the patch in-memory, do NOT persist".
-                            // Stream A only plumbed validate through ApplySemanticOps
-                            // (mode=ops). For mode=patch, validate=only maps to
-                            // dryRun=true — the PatchService.ApplyPatch dryRun branch
-                            // returns the exact "Applied / write skipped" envelope the
-                            // validate=only schema promises. validate=best-effort and
-                            // validate=strict (the default) both fall through to the
-                            // current strict path: IsPatchWriteSafe already refuses
-                            // unsafe writes on NoMatch and surfaces the diagnostic
-                            // envelope, so the two are observationally equivalent in
-                            // mode=patch and we don't need a third branch.
-                            string validateMode = args?["validate"]?.ToString();
-                            bool dryRunArg = args?["dryRun"]?.ToObject<bool?>() ?? false;
-                            bool validateOnly = string.Equals(validateMode, "only", StringComparison.OrdinalIgnoreCase)
-                                                || string.Equals(validateMode, "validate-only", StringComparison.OrdinalIgnoreCase);
-                            var patchResp = _patchService.ApplyPatch(
-                                target,
-                                args?["part"]?.ToString(),
-                                args?["operation"]?.ToString(),
-                                payload,
-                                args?["context"]?.ToString(),
-                                args?["expectedCount"]?.ToObject<int?>() ?? 1,
-                                args?["type"]?.ToString(),
-                                dryRunArg || validateOnly,
-                                args?["verifyRollback"]?.ToObject<bool?>() ?? false,
-                                args?["return_post_state"]?.ToObject<bool?>() ?? true,
-                                args?["verbose"]?.ToObject<bool?>() ?? false,
-                                args?["replaceAll"]?.ToObject<bool?>() ?? false);
-                            return VisualVerifyResponseHook.MaybeAttach(args, patchResp, _visualVerifyService);
-                        }
-                        break;
-                    case "analyze":
-                        var analyzeType = args?["type"]?.ToString();
-                        if (action == "GetNavigation") return _navigationService.GetNavigation(target);
-                        if (action == "GetSqlForNavigation")
-                        {
-                            int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
-                            bool includeExecutionPlan = args?["includeExecutionPlan"]?.ToObject<bool?>() ?? false;
-                            bool includeIndexAdvisor = args?["includeIndexAdvisor"]?.ToObject<bool?>() ?? false;
-                            return _navigationSqlService.Generate(target, levelNumber, includeExecutionPlan, includeIndexAdvisor);
-                        }
-                        if (action == "GenerateSampleData")
-                        {
-                            int rows = args?["rows"]?.ToObject<int?>() ?? 5;
-                            return _sampleDataService.Generate(target, rows);
-                        }
-                        if (action == "TranslationsImport")
-                        {
-                            return _translationsService.Import(payload);
-                        }
-                        if (action == "GetParameters") return _analyzeService.GetSignature(target, analyzeType);
-                        if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target, analyzeType);
-                        if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
-                        if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType);
-                        if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
-                        if (action == "Summarize") return _summarizeService.Summarize(target, analyzeType);
-                        if (action == "GetSQL")
-                        {
-                            bool includeSub = args?["includeSubordinated"]?.ToObject<bool?>() ?? false;
-                            return _dataInsightService.GetTableDDL(target, includeSub);
-                        }
-                        if (action == "ExplainCode") return _analyzeService.ExplainCode(target, payload);
-                        if (action == "ParentContext") return _analyzeService.ParentContext(target);
-                        // Wave-3 SOTA: mode=cross_platform_impact — Web vs SmartDevices divergence.
-                        if (action == "CrossPlatformImpact") return _analyzeService.CrossPlatformImpact(target);
-                        // Item 24: mode=callers — per-call-site detail with line + context.
-                        if (action == "FindCallerSites") return _analyzeService.FindCallerSites(target);
-                        if (action == "GetEventFlow") return _analyzeService.GetEventFlow(target, analyzeType);
-                        // Wave-3 item 87: KB-wide dependency heat rankings.
-                        if (action == "DependencyHeatmap")
-                        {
-                            string heatFormat = args?["format"]?.ToString();
-                            return _analyzeService.DependencyHeatmap(_kbService.GetKbPath(), heatFormat);
-                        }
-                        if (action == "ImpactAnalysis")
-                        {
-                            // v2.3.8 (Task 1.4): index-aware impact with optional wait-for-index.
-                            // v2.3.8 (post-Task 7.2): honour cancelToken via WorkerCancellationRegistry
-                            // so a parallel Control:Cancel stops the BFS mid-walk.
-                            bool waitForIndex = args?["waitForIndex"]?.ToObject<bool?>() ?? true;
-                            int waitTimeoutMs = args?["waitTimeoutMs"]?.ToObject<int?>() ?? 30000;
-                            string ctToken = args?["cancelToken"]?.ToString();
-                            using (GxMcp.Worker.Helpers.WorkerCancellationRegistry.Register(ctToken, out var iaCt))
-                            {
-                                return _analyzeService.ImpactAnalysis(target, waitForIndex, waitTimeoutMs, iaCt);
-                            }
-                        }
-                        if (action == "InjectContext")
-                        {
-                            bool recursive = args?["recursive"]?.ToObject<bool>() ?? false;
-                            return _injectionService.InjectContext(target, recursive, analyzeType);
-                        }
-                        return _analyzeService.Analyze(target, analyzeType);
-                    case "buildplan":
-                        // Wave-3 item 30: GeneratePlan walks the callee graph and emits
-                        // {nodes, edges, totalEstimatedSeconds, ascii?}.
-                        if (action == "Generate")
-                        {
-                            string planFormat = args?["format"]?.ToString();
-                            JObject toolStatsP95 = args?["toolStatsP95"] as JObject;
-                            int maxNodes = args?["maxNodes"]?.ToObject<int?>() ?? 100;
-                            return _buildPlanService.GeneratePlan(target, planFormat, toolStatsP95, maxNodes);
-                        }
-                        break;
-                    case "future":
-                        // Wave-3 doc-flagged long-term / speculative items. The schema is
-                        // shipped via tool_definitions.json + FutureItemRouter; the body
-                        // is a single typed deferred envelope. See FutureItemStub.cs.
-                        if (action == "Deferred")
-                        {
-                            int itemNumber = args?["itemNumber"]?.ToObject<int?>() ?? 0;
-                            string hint = args?["hint"]?.ToString();
-                            return FutureItemStub.Deferred(itemNumber, hint);
-                        }
-                        break;
-                    case "linter":
-                        bool linterFix = args?["fix"]?.ToObject<bool?>() ?? false;
-                        if (linterFix) return _linterService.LintAndFix(target);
-                        return _linterService.Lint(target);
-                    case "diff":
-                        return _diffService.Diff(
-                            args?["mode"]?.ToString() ?? action,
-                            target,
-                            args?["part"]?.ToString(),
-                            args?["left"]?.ToString(),
-                            args?["right"]?.ToString(),
-                            args?["context"]?.ToObject<int?>() ?? 3);
-                    case "export":
-                        if (action == "Unified" || action == "Full")
-                            return _exportObjectService.Export(target, args?["type"]?.ToString());
-                        break;
-                    case "forge":
-                        if (action == "Scaffold")
-                        {
-                            var properties = new JObject();
-                            if (!string.IsNullOrEmpty(args?["description"]?.ToString())) properties["description"] = args["description"]?.ToString();
-                            if (!string.IsNullOrEmpty(args?["code"]?.ToString())) properties["code"] = args["code"]?.ToString();
-
-                            string scaffoldType = args?["type"]?.ToString() ?? target;
-                            string scaffoldName = args?["name"]?.ToString() ?? payload;
-                            return _forgeService.Scaffold(scaffoldType, scaffoldName, properties);
-                        }
-                        break;
-                    case "conversion":
-                        if (action == "TranslateTo") return _conversionService.TranslateTo(target, args?["language"]?.ToString());
-                        break;
-                    case "pattern":
-                        if (action == "GetSample") return _patternService.GetSample(target);
-                        if (action == "Apply")
-                        {
-                            bool reapply = args?["reapply"]?.ToObject<bool?>() ?? false;
-                            var patSettings = args?["settings"] as JObject;
-                            string patKey = args?["pattern"]?.ToString();
-                            if (reapply) return _patternApplyService.ReapplyPattern(target, patSettings);
-                            return _patternApplyService.ApplyPattern(target, patKey, patSettings);
-                        }
-                        if (action == "Diagnose")
-                        {
-                            // Item 45: read-only preflight — returns structured reasons without mutating.
-                            var patSettings = args?["settings"] as JObject;
-                            string patKey = args?["pattern"]?.ToString();
-                            return _patternApplyService.DiagnosePattern(target, patKey, patSettings);
-                        }
-                        break;
-                    case "sdkprobe":
-                        if (action == "Run")
-                        {
-                            try
-                            {
-                                var probe = Services.SdkSurfaceProbe.Run(args?["outputDir"]?.ToString());
-                                return Models.McpResponse.Ok(
-                                    code: "SdkProbeCompleted",
-                                    result: new JObject
-                                    {
-                                        ["rawJsonPath"] = probe.RawJsonPath,
-                                        ["indexMdPath"] = probe.IndexMdPath,
-                                        ["generatorsMdPath"] = probe.GeneratorsMdPath,
-                                        ["rawSizeBytes"] = probe.RawSizeBytes,
-                                        ["assembliesScanned"] = probe.AssembliesScanned,
-                                        ["typesScanned"] = probe.TypesScanned,
-                                        ["generatorCandidates"] = probe.GeneratorCandidates,
-                                        ["warnings"] = new JArray(probe.Warnings),
-                                        ["note"] = "Inspect rawJsonPath with jq, or read INDEX.md / generators.md for navigable views. See docs/sdk-probe/README.md."
-                                    });
-                            }
-                            catch (Exception ex)
-                            {
-                                return Models.McpResponse.Err(code: "SdkProbeError", message: ex.Message, hint: "Check worker logs for the full stack trace.");
-                            }
-                        }
-                        break;
-                    case "ui":
-                        if (action == "GetUIContext") return _uiService.GetUIContext(target);
-                        break;
-                    case "layout":
-                        if (action == "GetTree")
-                        {
-                            return _layoutService.GetTree(
-                                target,
-                                args?["control"]?.ToString(),
-                                args?["limit"]?.ToObject<int?>() ?? 500);
-                        }
-                        if (action == "FindControls")
-                        {
-                            return _layoutService.FindControls(
-                                target,
-                                args?["propertyName"]?.ToString(),
-                                args?["query"]?.ToString(),
-                                args?["limit"]?.ToObject<int?>() ?? 200);
-                        }
-                        if (action == "SetProperty")
-                        {
-                            return _layoutService.SetProperty(
-                                target,
-                                args?["control"]?.ToString(),
-                                args?["propertyName"]?.ToString(),
-                                args?["value"]?.ToString());
-                        }
-                        if (action == "SetProperties")
-                        {
-                            return _layoutService.SetProperties(
-                                target,
-                                args?["changes"] as JArray);
-                        }
-                        if (action == "InspectSurface")
-                        {
-                            return _layoutService.InspectSurface(target, args?["limit"]?.ToObject<int?>() ?? 50);
-                        }
-                        if (action == "GetVisualPreview")
-                        {
-                            return _layoutService.GetVisualPreview(target);
-                        }
-                        if (action == "ScanMutators")
-                        {
-                            return _layoutService.ScanMutators(target, args?["limit"]?.ToObject<int?>() ?? 100);
-                        }
-                        if (action == "RenamePrintBlock")
-                        {
-                            return _layoutService.RenamePrintBlock(
-                                target,
-                                args?["currentName"]?.ToString(),
-                                args?["newName"]?.ToString());
-                        }
-                        if (action == "AddPrintBlock")
-                        {
-                            return _layoutService.AddPrintBlock(
-                                target,
-                                args?["printBlockName"]?.ToString(),
-                                args?["height"]?.ToObject<int?>());
-                        }
-                        break;
-                    case "structure":
-                        if (action == "GetVisualStructure") return _structureService.GetVisualStructure(target);
-                        if (action == "UpdateVisualStructure") return _structureService.UpdateVisualStructure(target, payload);
-                        if (action == "GetVisualIndexes") return _structureService.GetVisualIndexes(target);
-                        if (action == "GetLogicStructure") return _structureService.GetLogicStructure(target);
-                        break;
-                    case "build":
-                        if (action == "Status")
-                        {
-                            // v2.6.6 Stream F: event-driven long-poll. When `wait` is 0/absent
-                            // GetStatusWait short-circuits to the legacy GetStatus shape; >0
-                            // blocks on the per-task StateChangeSignal up to 300s.
-                            int wait = args?["wait"]?.ToObject<int?>() ?? 0;
-                            string since = args?["since"]?.ToString();
-                            return _buildService.GetStatusWait(
-                                target,
-                                wait,
-                                since,
-                                args?["page"]?.ToObject<int?>() ?? 1,
-                                args?["pageSize"]?.ToObject<int?>() ?? 50,
-                                args?["compact"]?.ToObject<bool?>() ?? false);
-                        }
-                        if (action == "Result") return _buildService.GetResult(
-                            target,
-                            args?["page"]?.ToObject<int?>() ?? 1,
-                            args?["pageSize"]?.ToObject<int?>() ?? 50);
-                        if (action == "Cancel") return _buildService.Cancel(target);
-                        // issue #28 item 12: spec-check only (Spec+Gen, no Compile/deploy).
-                        if (action == "Specify") return _buildService.Specify(target);
-                        // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.
-                        if (action == "ReorgPreview") return _buildService.ReorgPreview(target);
-                        {
-                            // v2.3.8 (Task 5.2): forward includeCallees + buildPlanCap from gateway.
-                            var includeCallees = args?["includeCallees"]?.ToString();
-                            var cap = args?["buildPlanCap"]?.ToObject<int?>() ?? 200;
-                            if (string.IsNullOrWhiteSpace(includeCallees)) includeCallees = "transitive";
-                            bool skipFullDeploy = args?["skipFullDeploy"]?.ToObject<bool?>() ?? false;
-                            // Item 72 (friction 2026-05-22) — failure-webhook URL plumbed through to BuildService.
-                            string notifyOnFailure = args?["notifyOnFailure"]?.ToString();
-                            // Item 28 (Tier-S, EXPERIMENTAL) — fastIncremental opt-in.
-                            bool fastIncremental = args?["fastIncremental"]?.ToObject<bool?>() ?? false;
-                            bool buildDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            if (buildDryRun)
-                                return _buildService.BuildDryRun(action, target, includeCallees, cap);
-                            return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy, notifyOnFailure, fastIncremental);
-                        }
-                    case "validation":
-                        // The routed `action` here is the umbrella verb ("Check"), NOT a part
-                        // name — passing it through as partName made GetPart(obj,"Check") miss
-                        // every time and the tool always returned ValidationSkipped. Validate
-                        // the requested part (default Source; e.g. Rules) instead.
-                        return _validationService.ValidateCode(target, args?["part"]?.ToString() ?? "Source", payload);
-                    case "test":
-                        return _testService.RunTest(target);
-                    case "wiki":
-                        return _wikiService.Generate(target);
-                    case "visualizer":
-                        return _visualizerService.GenerateGraph(payload ?? target);
-                    case "health":
-                        return _healthService.GetHealthReport();
-                    case "history":
-                        {
-                            int verId = args?["versionId"]?.ToObject<int?>() ?? 0;
-                            // v2.6.6 Stream H (FR#28) — forward discard + snapshot + part
-                            // so HistoryService can route restore through EditSnapshotStore.
-                            string partName = args?["part"]?.ToString();
-                            string snapshotToken = args?["snapshot"]?.ToString();
-                            bool discard = args?["discard"]?.ToObject<bool?>() ?? false;
-                            // Item 21 (friction 2026-05-22): dryRun=true returns the
-                            // would-be diff without writing.
-                            bool historyDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _historyService.Execute(target, action, verId, partName, snapshotToken, discard, historyDryRun);
-                        }
-                    // Item 16 — genexus_undo last=N
-                    case "undo":
-                        {
-                            int last = args?["last"]?.ToObject<int?>() ?? 1;
-                            bool undoDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _undoService.Undo(last, undoDryRun);
-                        }
-                    // Items 50 + 48 — genexus_security action=audit_gam|scan_secrets
-                    case "security":
-                        if (string.Equals(action, "audit_gam", StringComparison.OrdinalIgnoreCase))
-                            return _securityAuditService.AuditGam();
-                        if (string.Equals(action, "scan_secrets", StringComparison.OrdinalIgnoreCase))
-                            return _securityAuditService.ScanSecrets();
-                        return Models.McpResponse.Err(
-                            code: "UnknownAction",
-                            message: $"Unsupported security action '{action}'.",
-                            hint: "Call genexus_security with no action to see the supported list.",
-                            nextSteps: new JArray(
-                                Models.McpResponse.NextStep(
-                                    tool: "genexus_orient",
-                                    args: new JObject(),
-                                    why: "Shows the tool catalog so the right action can be chosen.")),
-                            target: target);
-                    // Item 65 — genexus_orient welcome card
-                    case "orient":
-                        if (string.Equals(action, "Welcome", StringComparison.OrdinalIgnoreCase))
-                            return _orientService.Welcome();
-                        return Models.McpResponse.Err(
-                            code: "UnknownAction",
-                            message: $"Unsupported orient action '{action}'.",
-                            hint: "Call genexus_orient with no action to see the supported list.",
-                            nextSteps: new JArray(
-                                Models.McpResponse.NextStep(
-                                    tool: "genexus_orient",
-                                    args: new JObject(),
-                                    why: "Shows the tool catalog so the right action can be chosen.")),
-                            target: target);
-                    case "property":
-                        var propType = args?["type"]?.ToString();
-                        if (action == "Set")
-                        {
-                            return _propertyService.SetProperty(
-                                target,
-                                args?["propertyName"]?.ToString(),
-                                args?["value"]?.ToString(),
-                                args?["control"]?.ToString(),
-                                propType);
-                        }
-                        return _propertyService.GetProperties(target, args?["control"]?.ToString(), propType);
-                    case "asset":
-                        if (action == "Find")
-                        {
-                            return _assetService.Find(
-                                args?["pattern"]?.ToString(),
-                                args?["relativeRoot"]?.ToString(),
-                                args?["limit"]?.ToObject<int?>() ?? 20);
-                        }
-
-                        if (action == "Read")
-                        {
-                            return _assetService.Read(
-                                target,
-                                args?["includeContent"]?.ToObject<bool?>() ?? false,
-                                args?["maxBytes"]?.ToObject<int?>());
-                        }
-
-                        if (action == "Write")
-                        {
-                            return _assetService.Write(
-                                target,
-                                args?["contentBase64"]?.ToString());
-                        }
-
-                        break;
-                    case "formatting":
-                        if (action == "Format") return _formatService.Format(payload);
-                        break;
-                    case "refactor":
+                    // Dispatch-table lookup (Plan 005): replaces the former switch(method) with
+                    // ~83 cases. Each entry routes to the exact same handler with the exact same
+                    // args as before; a null result means "no matching action for this method"
+                    // (equivalent to the old per-case `break;`) and falls through to the shared
+                    // UnknownMethodOrAction response below.
+                    string methodKey = method?.ToLower() ?? string.Empty;
+                    if (_commandTable.TryGetValue(methodKey, out var handler))
                     {
-                        bool refactorDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                        return _refactorService.Refactor(target, action, payload, refactorDryRun);
+                        string handlerResult = handler(request, method, action, target, payload, args);
+                        if (handlerResult != null) return handlerResult;
                     }
-                    case "popup":
-                        if (action == "Create")
-                        {
-                            string popupName = target ?? args?["name"]?.ToString();
-                            var popupSpec = args?["spec"] as JObject;
-                            // Item 21 (friction 2026-05-22): dryRun=true previews layout XML without persisting.
-                            bool popupDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _popupTemplateService.CreatePopup(popupName, popupSpec, popupDryRun);
-                        }
-                        break;
-                    case "dbdrift":
-                        // Item 41 (mcp-improvements-2026-05-22) — Transaction ↔ DB drift.
-                        if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
-                            return _dbDriftService.Check(target);
-                        if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
-                            return _dbDriftService.Report(target);
-                        break;
-                    case "dboptimize":
-                        // SOTA — static index advisor. Walks For each blocks and proposes
-                        // covering indexes for hot Transaction × where-signature paths.
-                        if (string.Equals(action, "Analyze", StringComparison.OrdinalIgnoreCase))
-                            return _dbOptimizeService.Analyze(target);
-                        if (string.Equals(action, "SuggestIndexes", StringComparison.OrdinalIgnoreCase))
-                            return _dbOptimizeService.SuggestIndexes(target);
-                        if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
-                            return _dbOptimizeService.Report(args?["format"]?.ToString());
-                        break;
-                    case "webformedit":
-                        // Item 19 (mcp-improvements-2026-05-22) — semantic WebForm edits.
-                        return _webFormEditService.Execute(action, args);
-                    case "runobject":
-                        // Item 11 (mcp-improvements-2026-05-22) — runtime URL + optional GAM cookies.
-                        if (string.Equals(action, "Resolve", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string roName = target ?? args?["name"]?.ToString();
-                            var roArgs = args?["args"] as JArray;
-                            var gamToken = args?["gamSession"];
-                            bool roDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
-                            return _runObjectService.Resolve(roName, roArgs, gamToken, roDryRun);
-                        }
-                        break;
-                    case "explain":
-                        // Item 68 — PM-readable deterministic summary.
-                        if (string.Equals(action, "Explain", StringComparison.OrdinalIgnoreCase))
-                            return _explainService.Explain(target, args?["type"]?.ToString(), args?["depth"]?.ToString());
-                        break;
-                    case "generateddiff":
-                        // Item 12 — unified diff of generated artifacts vs baseline.
-                        if (string.Equals(action, "Diff", StringComparison.OrdinalIgnoreCase))
-                            return _generatedDiffService.Diff(target, args?["against"]?.ToString());
-                        break;
-                    case "kbreadme":
-                        // Item 90 — Markdown README generation.
-                        if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
-                            return _kbReadmeService.Generate("generate", args?["outputPath"]?.ToString());
-                        break;
-                    case "ocr":
-                        if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
-                            return _ocrScreenshotService.Run(args?["path"]?.ToString());
-                        break;
-                    case "prdescription":
-                        if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
-                        {
-                            int last = args?["last"]?.ToObject<int?>() ?? 10;
-                            return _prDescriptionService.Generate(last, args?["workingDir"]?.ToString());
-                        }
-                        break;
-                    case "screenshotpublish":
-                        if (string.Equals(action, "Publish", StringComparison.OrdinalIgnoreCase))
-                            return _screenshotPublishService.Publish(args?["path"]?.ToString());
-                        break;
-                    case "frictionlog":
-                        if (string.Equals(action, "Append", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return _frictionLogService.Append(
-                                args?["tool"]?.ToString(),
-                                args?["message"]?.ToString(),
-                                args?["severity"]?.ToString());
-                        }
-                        if (string.Equals(action, "Tail", StringComparison.OrdinalIgnoreCase))
-                        {
-                            int n = args?["n"]?.ToObject<int?>() ?? 20;
-                            return _frictionLogService.Tail(n);
-                        }
-                        break;
-                    case "wcagcheck":
-                        if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
-                            return _wcagCheckService.Check(target ?? args?["target"]?.ToString() ?? args?["name"]?.ToString());
-                        break;
-                    case "learning":
-                        if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
-                            return _learningReportService.Report(args?["since"]?.ToString(), args?["until"]?.ToString());
-                        break;
-                    case "gxserver":
-                        // genexus_gxserver — GxServer sync state (SDK-backed) plus
-                        // write actions (commit/update/lock/resolve), routed inside
-                        // GxServerSyncService.Run to the sibling GxServerWriteService.
-                        return _gxServerSyncService.Run(args ?? new JObject());
-                    case "compare":
-                        // genexus_compare — read-only IDE "Compare Objects" parity over
-                        // the SDK's IComparerService. See docs/sdk_coverage_gap_matrix.md P0 #2.
-                        return _compareService.Run(args ?? new JObject());
-                    case "module":
-                        // genexus_module — GeneXus Module Manager (install/update) over
-                        // the SDK's IModuleManagerService. See ModuleService for the
-                        // feasibility-gate notes on which overloads are wired.
-                        return _moduleService.Run(args ?? new JObject());
-                    case "gam":
-                        // genexus_gam — GAM / integrated-security provisioning over the
-                        // SDK's IIntegratedSecurityService. action=status is read-only;
-                        // define_api/deploy are destructive (see GamService for guards).
-                        return _gamService.Run(args ?? new JObject());
-                    case "merge":
-                        // genexus_merge — WRITE surface over the SDK's IMergeService.
-                        // dryRun defaults true (see MergeToolService). destructiveHint=true.
-                        return _mergeToolService.Run(args ?? new JObject());
-                    case "kbversion":
-                        // genexus_kb_version — KB model-version management
-                        // (Create Version / Branch / Activate / Revert) over
-                        // Artech.Architecture.Common.Helpers.KBVersionHelper.
-                        return _kbVersionService.Run(args ?? new JObject());
-                    case "sdpanel":
-                        return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
-                    case "multiagentlock":
-                        return _multiAgentLockService.Dispatch(
-                            action,
-                            target ?? args?["target"]?.ToString(),
-                            args?["part"]?.ToString(),
-                            args?["ownerId"]?.ToString(),
-                            args?["ttlSec"]?.ToObject<int?>() ?? 300,
-                            kbPathOverride: null,
-                            dryRun: request["dryRun"]?.ToObject<bool?>() ?? false);
-                    case "whatif":
-                        if (string.Equals(action, "Simulate", StringComparison.OrdinalIgnoreCase))
-                            return _whatIfService.Simulate(args?["change"] as JObject);
-                        break;
-                    case "tutorial":
-                        if (string.Equals(action, "Step", StringComparison.OrdinalIgnoreCase))
-                            return _tutorialService.GetStep(args?["step"]?.ToObject<int?>() ?? 1);
-                        break;
-                    case "playbook":
-                        if (string.Equals(action, "Read", StringComparison.OrdinalIgnoreCase))
-                            return _playbookService.Read(
-                                args?["topic"]?.ToString(),
-                                args?["list"]?.ToObject<bool?>() == true);
-                        break;
-                    case "doctor":
-                        // genexus_doctor — health/triage envelope. No args.
-                        return _doctorService.Diagnose();
-                    case "api":
-                        // genexus_api — REST endpoint introspection + diff vs baseline.
-                        // Single Run() switches on args.action (list/describe/diff_baseline/snapshot).
-                        return _apiIntrospectService.Run(args ?? new JObject());
-                    case "profile":
-                        // genexus_profile — runtime profiler XML bridge.
-                        // Single Run() switches on args.action (analyze/hotspots/correlate).
-                        return _profileService.Run(args ?? new JObject());
-                    case "types":
-                        // genexus_types — Domain/SDT introspection + value validation.
-                        // Run() switches on args.action (list/describe/validate_value).
-                        return _typeIntrospectService.Run(args ?? new JObject());
-                    case "github":
-                        if (string.Equals(action, "CreatePr", StringComparison.OrdinalIgnoreCase))
-                            return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString(), request["dryRun"]?.ToObject<bool?>() ?? false);
-                        break;
-                    case "aicomplete":
-                        if (string.Equals(action, "Complete", StringComparison.OrdinalIgnoreCase))
-                            return _aiCompleteService.Complete(args?["name"]?.ToString(), args?["part"]?.ToString(), args?["context"]?.ToString(), args?["maxTokens"]?.ToObject<int?>() ?? 200).ToString(Newtonsoft.Json.Formatting.None);
-                        break;
-                    case "timetravel":
-                        if (string.Equals(action, "Recover", StringComparison.OrdinalIgnoreCase))
-                            return _timeTravelService.Recover(target ?? args?["name"]?.ToString(), args?["at"]?.ToString());
-                        break;
-                    case "voice":
-                        if (string.Equals(action, "Intent", StringComparison.OrdinalIgnoreCase))
-                            return _voiceIntentService.Map(args?["transcript"]?.ToString()).ToString(Newtonsoft.Json.Formatting.None);
-                        break;
-                    case "autotest":
-                        if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
-                            return _autoTestService.Generate(args?["path"]?.ToString());
-                        break;
-                    case "reversepattern":
-                        if (string.Equals(action, "Infer", StringComparison.OrdinalIgnoreCase))
-                            return _reversePatternService.Infer(args?["source"] as JArray);
-                        break;
-                    case "crossbrowser":
-                        if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
-                            return _crossBrowserService.Run(target ?? args?["target"]?.ToString(), args?["browsers"] as JArray, args?["capture"] as JArray);
-                        break;
-                    case "preview":
-                        if (action == "Render" || action == "Run")
-                        {
-                            string previewName = target ?? args?["name"]?.ToString();
-                            var previewParms = args?["parms"] as JObject;
-                            string launcher = args?["launcher"]?.ToString() ?? "auto";
-                            bool buildFirst = args?["buildFirst"]?.ToObject<bool?>() ?? false;
-                            int waitMs = args?["waitMs"]?.ToObject<int?>() ?? 3000;
-                            string[] capture = (args?["capture"] as JArray)?.Select(t => t.ToString()).ToArray();
-                            bool diffBaseline = args?["diffBaseline"]?.ToObject<bool?>() ?? false;
-                            bool updateBaseline = args?["updateBaseline"]?.ToObject<bool?>() ?? false;
-                            // Stream G (v2.6.6): GX-aware fill/click + GAM auth.
-                            var fill = args?["fill"] as JObject;
-                            string click = args?["click"]?.ToString();
-                            var auth = args?["auth"] as JObject;
-                            // Items 39/97: device emulation + network throttle, passed
-                            // through to chrome-devtools-axi via --emulate / --throttle.
-                            string emulate = args?["emulate"]?.ToString();
-                            string network = args?["network"]?.ToString();
-                            // v2.6.6 Stream H (FR#25): action=Run resolves the
-                            // KB launcher object when target is omitted; action=Render
-                            // requires an explicit target as before.
-                            var previewTask = action == "Run"
-                                ? _previewService.RunAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network)
-                                : _previewService.PreviewAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network);
-                            previewTask.Wait();
-                            return previewTask.Result.ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        break;
-                    // Wave-3: IDE right-click parity tools.
-                    case "kbexplorer":
-                        if (string.Equals(action, "Locate", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string locName = target ?? args?["name"]?.ToString();
-                            return _kbExplorerService.Locate(locName);
-                        }
-                        return Models.McpResponse.Err(
-                            code: "UnknownAction",
-                            message: $"Unsupported kbexplorer action '{action}'.",
-                            hint: "Call genexus_kbexplorer with no action to see the supported list.",
-                            nextSteps: new JArray(
-                                Models.McpResponse.NextStep(
-                                    tool: "genexus_orient",
-                                    args: new JObject(),
-                                    why: "Shows the tool catalog so the right action can be chosen.")),
-                            target: target);
-                    case "navigation":
-                        if (string.Equals(action, "View", StringComparison.OrdinalIgnoreCase))
-                        {
-                            string navName = target ?? args?["name"]?.ToString();
-                            bool latest = args?["latest"]?.ToObject<bool?>() ?? false;
-                            return _navigationViewService.View(navName, latest);
-                        }
-                        return Models.McpResponse.Err(
-                            code: "UnknownAction",
-                            message: $"Unsupported navigation action '{action}'.",
-                            hint: "Call genexus_navigation with no action to see the supported list.",
-                            nextSteps: new JArray(
-                                Models.McpResponse.NextStep(
-                                    tool: "genexus_orient",
-                                    args: new JObject(),
-                                    why: "Shows the tool catalog so the right action can be chosen.")),
-                            target: target);
-                    case "blame":
-                        if (string.Equals(action, "Get", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var blameReq = new BlameService.BlameRequest
-                            {
-                                Name = target ?? args?["name"]?.ToString(),
-                                Part = args?["part"]?.ToString(),
-                                FilePath = args?["filePath"]?.ToString(),
-                                Line = args?["line"]?.ToObject<int?>() ?? 0,
-                                Context = args?["context"]?.ToObject<int?>() ?? 2
-                            };
-                            return _blameService.Blame(blameReq);
-                        }
-                        return Models.McpResponse.Err(
-                            code: "UnknownAction",
-                            message: $"Unsupported blame action '{action}'.",
-                            hint: "Call genexus_blame with no action to see the supported list.",
-                            nextSteps: new JArray(
-                                Models.McpResponse.NextStep(
-                                    tool: "genexus_orient",
-                                    args: new JObject(),
-                                    why: "Shows the tool catalog so the right action can be chosen.")),
-                            target: target);
-                    case "browser_capture":
-                        if (action == "Capture")
-                        {
-                            string bcTarget = target ?? args?["name"]?.ToString();
-                            var bcKinds = args?["capture"] as JArray;
-                            return _browserCaptureService.Capture(bcTarget, bcKinds).ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        break;
-                    case "smoke_test":
-                        if (action == "Run")
-                        {
-                            string stTarget = target ?? args?["name"]?.ToString();
-                            return _smokeTestService.Run(stTarget).ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        break;
-                    case "a11y_audit":
-                        if (action == "Audit")
-                        {
-                            string aaTarget = target ?? args?["name"]?.ToString();
-                            return _a11yAuditService.Audit(aaTarget).ToString(Newtonsoft.Json.Formatting.None);
-                        }
-                        break;
-                }
 
-                return Models.McpResponse.Err(
-                    code: "UnknownMethodOrAction",
-                    message: string.Format("Unsupported dispatch combination. Method='{0}', Action='{1}'.", method ?? "", action ?? ""),
-                    hint: "Call genexus_help action=route goal=<intent> for the right tool, or genexus_orient for an overview.",
-                    nextSteps: new JArray(
-                        Models.McpResponse.NextStep(
-                            tool: "genexus_orient",
-                            args: new JObject(),
-                            why: "Shows the tool catalog so the right action can be chosen.")),
-                    target: target);
+                    return Models.McpResponse.Err(
+                        code: "UnknownMethodOrAction",
+                        message: string.Format("Unsupported dispatch combination. Method='{0}', Action='{1}'.", method ?? "", action ?? ""),
+                        hint: "Call genexus_help action=route goal=<intent> for the right tool, or genexus_orient for an overview.",
+                        nextSteps: new JArray(
+                            Models.McpResponse.NextStep(
+                                tool: "genexus_orient",
+                                args: new JObject(),
+                                why: "Shows the tool catalog so the right action can be chosen.")),
+                        target: target);
                 } // end using ProgressContext
             }
             catch (Exception ex)
@@ -1692,6 +480,1573 @@ namespace GxMcp.Worker.Services
                     hint: "Inspect worker logs for the full exception chain; this is an unhandled dispatcher error.");
             }
         }
+
+        private delegate string CommandHandler(JObject request, string method, string action, string target, string payload, JObject args);
+
+        private Dictionary<string, CommandHandler> BuildCommandTable()
+        {
+            return new Dictionary<string, CommandHandler>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ping"] = Handle_Ping,
+                ["control"] = Handle_Control,
+                ["kb"] = Handle_Kb,
+                ["batch"] = Handle_Batch,
+                ["search"] = Handle_Search,
+                ["list"] = Handle_List,
+                ["read"] = Handle_Read,
+                ["object"] = Handle_Object,
+                ["write"] = Handle_Write,
+                ["editandbuild"] = Handle_EditAndBuild,
+                ["semanticops"] = Handle_SemanticOps,
+                ["jsonpatch"] = Handle_JsonPatch,
+                ["patch"] = Handle_Patch,
+                ["analyze"] = Handle_Analyze,
+                ["buildplan"] = Handle_BuildPlan,
+                ["future"] = Handle_Future,
+                ["linter"] = Handle_Linter,
+                ["diff"] = Handle_Diff,
+                ["export"] = Handle_Export,
+                ["forge"] = Handle_Forge,
+                ["conversion"] = Handle_Conversion,
+                ["pattern"] = Handle_Pattern,
+                ["sdkprobe"] = Handle_SdkProbe,
+                ["ui"] = Handle_Ui,
+                ["layout"] = Handle_Layout,
+                ["structure"] = Handle_Structure,
+                ["build"] = Handle_Build,
+                ["validation"] = Handle_Validation,
+                ["test"] = Handle_Test,
+                ["wiki"] = Handle_Wiki,
+                ["visualizer"] = Handle_Visualizer,
+                ["health"] = Handle_Health,
+                ["history"] = Handle_History,
+                ["undo"] = Handle_Undo,
+                ["security"] = Handle_Security,
+                ["orient"] = Handle_Orient,
+                ["property"] = Handle_Property,
+                ["asset"] = Handle_Asset,
+                ["formatting"] = Handle_Formatting,
+                ["refactor"] = Handle_Refactor,
+                ["popup"] = Handle_Popup,
+                ["dbdrift"] = Handle_DbDrift,
+                ["dboptimize"] = Handle_DbOptimize,
+                ["webformedit"] = Handle_WebFormEdit,
+                ["runobject"] = Handle_RunObject,
+                ["explain"] = Handle_Explain,
+                ["generateddiff"] = Handle_GeneratedDiff,
+                ["kbreadme"] = Handle_KbReadme,
+                ["ocr"] = Handle_Ocr,
+                ["prdescription"] = Handle_PrDescription,
+                ["screenshotpublish"] = Handle_ScreenshotPublish,
+                ["frictionlog"] = Handle_FrictionLog,
+                ["wcagcheck"] = Handle_WcagCheck,
+                ["learning"] = Handle_Learning,
+                ["gxserver"] = Handle_GxServer,
+                ["compare"] = Handle_Compare,
+                ["module"] = Handle_Module,
+                ["gam"] = Handle_Gam,
+                ["merge"] = Handle_Merge,
+                ["kbversion"] = Handle_KbVersion,
+                ["sdpanel"] = Handle_SdPanel,
+                ["multiagentlock"] = Handle_MultiAgentLock,
+                ["whatif"] = Handle_WhatIf,
+                ["tutorial"] = Handle_Tutorial,
+                ["playbook"] = Handle_Playbook,
+                ["doctor"] = Handle_Doctor,
+                ["api"] = Handle_Api,
+                ["profile"] = Handle_Profile,
+                ["types"] = Handle_Types,
+                ["github"] = Handle_Github,
+                ["aicomplete"] = Handle_AiComplete,
+                ["timetravel"] = Handle_TimeTravel,
+                ["voice"] = Handle_Voice,
+                ["autotest"] = Handle_AutoTest,
+                ["reversepattern"] = Handle_ReversePattern,
+                ["crossbrowser"] = Handle_CrossBrowser,
+                ["preview"] = Handle_Preview,
+                ["kbexplorer"] = Handle_KbExplorer,
+                ["navigation"] = Handle_Navigation,
+                ["blame"] = Handle_Blame,
+                ["browser_capture"] = Handle_BrowserCapture,
+                ["smoke_test"] = Handle_SmokeTest,
+                ["a11y_audit"] = Handle_A11yAudit,
+            };
+        }
+
+        private string Handle_Ping(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return Models.McpResponse.Ok(code: "Pong", result: new JObject { ["message"] = "pong" });
+        }
+
+        private string Handle_Control(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // v2.3.8 (post-Task 7.2 fix): IPC cancellation side-channel.
+            // Gateway sends this on the thread-safe path so it can interleave
+            // with a sibling SDK call. Signals the registered CTS keyed by
+            // cancelToken (typically the BackgroundJobRegistry job_id).
+            if (string.Equals(action, "Cancel", StringComparison.OrdinalIgnoreCase))
+            {
+                string ct = args?["cancelToken"]?.ToString() ?? target;
+                bool ok = GxMcp.Worker.Helpers.WorkerCancellationRegistry.Cancel(ct);
+                // Item 11: wrap in canonical McpResponse envelope.
+                return ok
+                    ? Models.McpResponse.Ok(code: "Cancelled", result: new JObject
+                        {
+                            ["cancelToken"] = ct,
+                            ["message"] = "Cancellation signalled to in-flight command. The handler may still take a few iterations to terminate."
+                        })
+                    : Models.McpResponse.Err(code: "NotFound",
+                        message: "No active command with that cancelToken (already finished or never started).",
+                        hint: "The cancelToken may have already expired or the command completed.");
+            }
+            return null;
+        }
+
+        private string Handle_Kb(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Open")
+            {
+                string result = _kbService.OpenKB(target);
+                try
+                {
+                    var openResult = JObject.Parse(result);
+                    // v2.8.0 — KbService.OpenKB now emits the canonical envelope
+                    // (status:"ok"). Recognize only the canonical shape; legacy
+                    // emissions were removed in this release.
+                    if (string.Equals(openResult["status"]?.ToString(), "ok", StringComparison.Ordinal))
+                    {
+                        Environment.SetEnvironmentVariable("GX_KB_PATH", target);
+                    }
+                }
+                catch
+                {
+                }
+
+                return result;
+            }
+            if (action == "BulkIndex")
+            {
+                bool force = args?["force"]?.ToObject<bool?>() ?? false;
+                bool indexDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                if (indexDryRun)
+                {
+                    string kbPathForDry = null;
+                    try { kbPathForDry = _kbService.GetKbPath(); } catch { }
+                    return Models.McpResponse.Ok(
+                        code: "DryRun",
+                        result: new JObject
+                        {
+                            ["preview"] = new JObject
+                            {
+                                ["action"] = "index",
+                                ["force"] = force,
+                                ["kbPath"] = kbPathForDry,
+                                ["note"] = "dryRun=true: index rebuild not executed."
+                            }
+                        });
+                }
+                return _kbService.BulkIndex(force);
+            }
+            if (action == "SelfTest") return _selfTestService.RunAllTests();
+            if (action == "GetDatabaseInfo")
+            {
+                return _databaseInfoService.GetInfo();
+            }
+            // v2.6.6 Stream H (FR#26) — surface active-environment metadata
+            // so the gateway can populate KbHandle.ActiveEnvironment on
+            // cache miss. Pure SDK read, no side effects.
+            if (action == "GetActiveEnvironment")
+            {
+                string env = _kbService.GetActiveEnvironment();
+                string ver = _kbService.GetActiveEnvironmentVersion();
+                return new JObject
+                {
+                    ["environment"] = env,
+                    ["version"] = ver
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            // v2.6.6 Stream H (FR#25) — F5 launcher resolver. Returns the KB's
+            // configured startup object (or first IsMain-tagged WebPanel/SDPanel/Procedure).
+            if (action == "GetLauncherObject")
+            {
+                string launcherObj = _kbService.GetLauncherObjectName();
+                return new JObject { ["name"] = launcherObj }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            // Wave-3: IDE "Set As Startup Object" parity. Read goes
+            // through the same SDK shapes as GetLauncherObjectName so
+            // get/set agree on the field name the IDE writes to .gxw.
+            if (action == "GetStartupObject") return _kbStartupService.GetStartup();
+            if (action == "SetStartupObject")
+            {
+                string startupName = target ?? args?["name"]?.ToString();
+                return _kbStartupService.SetStartup(startupName);
+            }
+            if (action == "GetIndexStatus")
+            {
+                // issue #25 #1: event-driven wait. When `wait` is given, block
+                // until the index state transitions away from `since` (or a walk
+                // progress tick lands, or the timeout fires) and return early —
+                // no more polling loops. Runs on the non-SDK parallel path so
+                // blocking here never stalls the STA thread.
+                int waitSec = args?["wait"]?.ToObject<int?>() ?? 0;
+                string since = args?["since"]?.ToString();
+                if (waitSec > 0)
+                {
+                    // Issue #27 item 3 (DX): two block modes.
+                    //  - since given  → return the moment the state LEAVES `since`
+                    //    (event-driven progress poll; legacy behaviour).
+                    //  - since absent → block until the index reaches "Ready"
+                    //    (or timeout), so an agent can just say "wait until usable"
+                    //    without hand-rolling a since-chained poll loop. A Cold+idle
+                    //    index simply times out at its current state — the caller
+                    //    then knows to trigger an index build.
+                    bool waitForReady = string.IsNullOrEmpty(since);
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    long budgetMs = waitSec * 1000L;
+                    while (true)
+                    {
+                        _indexCacheService.ArmStateSignal();
+                        string cur = _indexCacheService.GetState()?.Status ?? "Cold";
+                        bool done = waitForReady
+                            ? string.Equals(cur, "Ready", StringComparison.OrdinalIgnoreCase)
+                            : !string.Equals(cur, since, StringComparison.OrdinalIgnoreCase);
+                        if (done) break;
+                        long remaining = budgetMs - sw.ElapsedMilliseconds;
+                        if (remaining <= 0) break;
+                        // Cap each wait so a missed signal still re-checks promptly.
+                        _indexCacheService.WaitStateSignal((int)Math.Min(remaining, 2000));
+                    }
+                }
+                // Merge the state-machine status so callers have a stable field
+                // to pass back as `since` (the legacy `status` string is descriptive
+                // prose, not a stable enum).
+                var statusJson = Newtonsoft.Json.Linq.JObject.Parse(_kbService.GetIndexStatus());
+                statusJson["indexStatus"] = _indexCacheService.GetState()?.Status ?? "Cold";
+                // Issue #27 item 1: attach the most-recent terminal build outcome so
+                // this plain status call answers "did my last build pass?" without a jobId.
+                var lastBuild = BuildService.GetLatestBuildSummary();
+                if (lastBuild != null) statusJson["lastBuild"] = lastBuild;
+                return statusJson.ToString();
+            }
+            if (action == "GetIndexState")
+            {
+                // v2.3.8 Task 1.2: surface unified IndexState from IndexCacheService.
+                // Gateway uses this to populate the `index` block in whoami.
+                //
+                // issue #28 item 4: hydrate the on-disk cache BEFORE reading the
+                // state. On a warm/reconnected worker _state starts "Cold" until
+                // something calls GetIndex() (lazy disk load → MarkIndexComplete →
+                // "Ready"). Because the gateway's SDK-bound short-circuit fast-fails
+                // edits on a Cold mirror BEFORE they reach the worker, GetIndex()
+                // never ran on the edit path and the state stayed Cold forever
+                // ("Index loaded. Objects: 1191" in the log, yet edits blocked with
+                // IndexNotReady). Triggering the lazy load here promotes the state to
+                // reflect the loaded cache on the first whoami/refresh after reconnect.
+                try { _indexCacheService.GetIndex(); } catch { /* load is best-effort; GetState still returns Cold/0 */ }
+                var st = _indexCacheService.GetState();
+                // v2.8.0 — index state shape is the tool's payload (not an envelope).
+                // Renamed top-level "status" to "indexStatus" to avoid colliding with
+                // the canonical envelope's "status" once wrapped in McpResponse.Ok.
+                var j = new JObject
+                {
+                    ["indexStatus"] = st.Status ?? "Cold",
+                    ["totalObjects"] = st.TotalObjects,
+                    ["lastIndexedAt"] = st.LastIndexedAt.HasValue
+                        ? (JToken)st.LastIndexedAt.Value.ToUniversalTime().ToString("o")
+                        : JValue.CreateNull(),
+                    ["progress"] = st.Progress.HasValue ? (JToken)st.Progress.Value : JValue.CreateNull(),
+                    ["etaMs"] = st.EtaMs.HasValue ? (JToken)st.EtaMs.Value : JValue.CreateNull(),
+                    // PERFORMANCE (W-M2): expose flush-failure telemetry so a silently
+                    // failing snapshot (disk full / permission) is visible via whoami.
+                    ["flushFailuresConsecutive"] = IndexCacheService.ConsecutiveFlushFailures,
+                    ["flushLastSuccessUtc"] = IndexCacheService.LastFlushSuccessUtc == DateTime.MinValue
+                        ? JValue.CreateNull()
+                        : (JToken)IndexCacheService.LastFlushSuccessUtc.ToString("o"),
+                    ["flushLastError"] = IndexCacheService.LastFlushErrorMessage != null
+                        ? (JToken)IndexCacheService.LastFlushErrorMessage
+                        : JValue.CreateNull()
+                };
+
+                // v2.6.8: top-5 recently-changed projection. Cheap O(n) scan
+                // over the in-memory index; gateway forwards this into the
+                // `whoami.index.recentlyChanged` block so the agent gets a
+                // "what's hot" hint on the first call.
+                try
+                {
+                    var idx = _indexCacheService.GetIndex();
+                    if (idx != null && idx.Objects.Count > 0)
+                    {
+                        var top = idx.Objects.Values
+                            .Where(e => e.LastUpdate > DateTime.MinValue)
+                            .OrderByDescending(e => e.LastUpdate)
+                            .Take(5)
+                            .ToList();
+                        if (top.Count > 0)
+                        {
+                            var arr = new JArray();
+                            foreach (var e in top)
+                            {
+                                arr.Add(new JObject
+                                {
+                                    ["name"] = e.Name,
+                                    ["type"] = e.Type,
+                                    ["lastUpdate"] = e.LastUpdate.ToUniversalTime().ToString("o"),
+                                    ["lastModifiedBy"] = e.LastModifiedBy ?? string.Empty
+                                });
+                            }
+                            j["recentlyChanged"] = arr;
+                        }
+                    }
+                }
+                catch (Exception ex) { Logger.Debug("[GetIndexState] recentlyChanged failed: " + ex.Message); }
+
+                return Models.McpResponse.Ok(code: "IndexState", result: j);
+            }
+            if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
+            if (action == "ListPatternSnapshots") return _kbValidationService.ListPatternSnapshots(target);
+            if (action == "RestorePatternSnapshot") return _kbValidationService.RestorePatternSnapshot(target, args?["snapshotPath"]?.ToString(), _writeService);
+            return null;
+        }
+
+        private string Handle_Batch(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "BatchRead") return _batchService.BatchRead(args?["items"] as JArray, args?["part"]?.ToString() ?? "Source");
+            if (action == "BatchEdit") return _batchService.BatchEdit(target, args?["changes"] as JArray);
+            if (action == "MultiEdit") return _batchService.MultiEdit(args?["items"] as JArray);
+            if (action == "Process") return _batchService.ProcessBatch(args?["batchAction"]?.ToString(), target, payload);
+            return null;
+        }
+
+        private string Handle_Search(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Query")
+            {
+                DateTime sinceArgQ = default(DateTime);
+                DateTime modifiedBeforeArgQ = default(DateTime);
+                string sinceTokQ = args?["since"]?.ToString();
+                string mbTokQ = args?["modifiedBefore"]?.ToString();
+                if (!string.IsNullOrEmpty(sinceTokQ))
+                    DateTime.TryParse(sinceTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArgQ);
+                if (!string.IsNullOrEmpty(mbTokQ))
+                    DateTime.TryParse(mbTokQ, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArgQ);
+
+                string searchResult = _searchService.Search(
+                    target,
+                    args?["typeFilter"]?.ToString(),
+                    args?["domainFilter"]?.ToString(),
+                    args?["limit"]?.ToObject<int?>() ?? 50,
+                    args?["exactMatch"]?.ToObject<bool?>() ?? false,
+                    args?["sort"]?.ToString(),
+                    sinceArgQ,
+                    modifiedBeforeArgQ,
+                    args?["cursor"]?.ToString()
+                );
+                int inlineTopSearch = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
+                return inlineTopSearch > 0
+                    ? AppendInlineReads(searchResult, inlineTopSearch)
+                    : searchResult;
+            }
+            if (action == "SearchSource")
+            {
+                var criteria = new SourceSearchCriteria
+                {
+                    Callee = args?["callee"]?.ToString(),
+                    Pattern = args?["pattern"]?.ToString(),
+                    TypeFilter = args?["typeFilter"]?.ToString(),
+                    CaseSensitive = args?["caseSensitive"]?.ToObject<bool?>() ?? false,
+                    IncludeComments = args?["includeComments"]?.ToObject<bool?>() ?? false,
+                    MaxResults = args?["maxResults"]?.ToObject<int?>() ?? 50,
+                    // Issue #27 item 4: object scope + tunable timeout + resume cursor.
+                    ObjectName = args?["objectName"]?.ToString(),
+                    StartIndex = args?["startIndex"]?.ToObject<int?>() ?? 0,
+                    TimeoutMs = args?["timeoutMs"]?.ToObject<int?>() ?? 30000
+                };
+                if (args?["scope"] is JArray scopeArr)
+                    criteria.Scope = scopeArr.Select(t => t.ToString()).ToList();
+                // Item 22: fields=[source,caption,description,parmNames]
+                if (args?["fields"] is JArray fieldsArr)
+                    criteria.Fields = fieldsArr.Select(t => t.ToString()).ToList();
+                if (args?["argMatches"] is JObject am)
+                {
+                    criteria.ArgMatches = new Dictionary<int, string>();
+                    foreach (var prop in am.Properties())
+                    {
+                        if (int.TryParse(prop.Name, out int idx))
+                            criteria.ArgMatches[idx] = prop.Value?.ToString();
+                    }
+                }
+                // v2.3.8 (post-Task 7.2 fix): register cancellation if the caller
+                // supplied a cancelToken so a sibling Control:Cancel can stop the
+                // scan mid-loop. Token typically matches the gateway's job_id.
+                string ssCancelToken = args?["cancelToken"]?.ToString();
+                string sourceSearchResult;
+                using (GxMcp.Worker.Helpers.WorkerCancellationRegistry.Register(ssCancelToken, out var ssCt))
+                {
+                    sourceSearchResult = _sourceSearchService.SearchAsJson(criteria, ssCt);
+                }
+                int inlineTopSearchSource = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
+                return inlineTopSearchSource > 0
+                    ? AppendInlineReadsForSourceSearch(sourceSearchResult, inlineTopSearchSource)
+                    : sourceSearchResult;
+            }
+            return null;
+        }
+
+        private string Handle_List(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Objects")
+            {
+                DateTime sinceArg = default(DateTime);
+                DateTime modifiedBeforeArg = default(DateTime);
+                string sinceTok = args?["since"]?.ToString();
+                string mbTok = args?["modifiedBefore"]?.ToString();
+                if (!string.IsNullOrEmpty(sinceTok))
+                    DateTime.TryParse(sinceTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out sinceArg);
+                if (!string.IsNullOrEmpty(mbTok))
+                    DateTime.TryParse(mbTok, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out modifiedBeforeArg);
+
+                string listResult = _listService.ListObjects(
+                    target,
+                    args?["limit"]?.ToObject<int?>() ?? 5000,
+                    args?["offset"]?.ToObject<int?>() ?? 0,
+                    args?["parent"]?.ToString(),
+                    args?["typeFilter"]?.ToString(),
+                    args?["parentPath"]?.ToString(),
+                    args?["verbose"]?.ToObject<bool?>() ?? false,
+                    args?["nameFilter"]?.ToString(),
+                    args?["descriptionFilter"]?.ToString(),
+                    args?["pathPrefix"]?.ToString(),
+                    args?["sort"]?.ToString(),
+                    sinceArg,
+                    modifiedBeforeArg,
+                    args?["cursor"]?.ToString()
+                );
+                int inlineTopList = Math.Min(3, args?["inline_read_top"]?.ToObject<int?>() ?? 0);
+                return inlineTopList > 0
+                    ? AppendInlineReads(listResult, inlineTopList)
+                    : listResult;
+            }
+            return null;
+        }
+
+        private string Handle_Read(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "ExtractSource") return _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp", false, args?["type"]?.ToString());
+            if (action == "ExtractParts")
+            {
+                var partsTok = args?["parts"] as JArray;
+                var requestedParts = partsTok?.Select(p => p.ToString()) ?? Enumerable.Empty<string>();
+                return _objectService.ReadObjectSourceParts(target, requestedParts, args?["type"]?.ToString());
+            }
+            if (action == "GetVariables") return _analyzeService.GetVariables(target);
+            if (action == "GetAttribute") return _analyzeService.GetAttributeMetadata(target);
+            return null;
+        }
+
+        private string Handle_Object(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
+            if (action == "Create")
+            {
+                // Item 21 (friction 2026-05-22): dryRun=true returns the planned
+                // shape without calling newObj.Save(). args carries the flag.
+                return _objectService.CreateObject(args?["type"]?.ToString(), target, args);
+            }
+            if (action == "Delete") return _objectService.DeleteObject(target, args?["type"]?.ToString(), args?["confirm"]?.ToObject<bool?>() ?? false, args?["dryRun"]?.ToObject<bool?>() ?? false);
+            if (action == "SaveAs") return _saveAsService.SaveAs(args ?? new JObject());
+            if (action == "WorkerReload")
+            {
+                // FR#20 (v2.6.6 Stream B): mode=soft is the new default — drain
+                // in-flight commands and exit code 0 so the gateway respawns
+                // without losing JobRegistry state. mode=hard preserves the
+                // legacy copy-binaries-and-kill flow (still required when the
+                // caller passed a sourceDir of fresh bits to lay down).
+                string mode = args?["mode"]?.ToString()?.Trim().ToLowerInvariant();
+                string srcDir = args?["sourceDir"]?.ToString();
+                if (string.IsNullOrEmpty(mode))
+                {
+                    // Negotiate: hard when sourceDir is supplied (copy-binaries
+                    // intent), otherwise soft (clean respawn for state reset).
+                    mode = string.IsNullOrWhiteSpace(srcDir) ? "soft" : "hard";
+                }
+                if (mode == "soft")
+                {
+                    int drainMs = args?["drainTimeoutMs"]?.ToObject<int?>() ?? 30000;
+                    return GxMcp.Worker.Program.PerformSoftReload(drainMs);
+                }
+                // Item 51 (Tier-S, EXPERIMENTAL) — warm reload. Persist the
+                // IndexCacheService state to <kb>/.gx/index-snapshot.bin
+                // gated by the worker DLL SHA, then do a soft reload. On
+                // the next boot the gateway respawns this worker and a
+                // future TryRestoreWarmIndex hook can pick it back up.
+                if (mode == "warm")
+                {
+                    int drainMs = args?["drainTimeoutMs"]?.ToObject<int?>() ?? 30000;
+                    var warmAck = TryCaptureWarmSnapshot();
+                    var softResp = GxMcp.Worker.Program.PerformSoftReload(drainMs);
+                    // Stitch warm metadata into the soft-reload ack so the
+                    // caller sees both outcomes in a single response.
+                    try
+                    {
+                        var jo = Newtonsoft.Json.Linq.JObject.Parse(softResp);
+                        jo["mode"] = "warm";
+                        jo["warmSnapshot"] = warmAck;
+                        return jo.ToString(Newtonsoft.Json.Formatting.None);
+                    }
+                    catch { return softResp; }
+                }
+                return _objectService.WorkerReload(srcDir);
+            }
+            if (action == "ReadLogs") return _objectService.ReadLogs(
+                args?["lines"]?.ToObject<int?>() ?? 100,
+                args?["filterCorrelation"]?.ToString(),
+                args?["grep"]?.ToString(),
+                args?["since"]?.ToString(),
+                // Item 32: objectFilter = target param for object-name filtering.
+                args?["objectFilter"]?.ToString());
+            if (action == "ExportText")
+            {
+                return _objectService.ExportObjectToText(
+                    target,
+                    args?["outputPath"]?.ToString() ?? args?["path"]?.ToString(),
+                    args?["part"]?.ToString(),
+                    args?["type"]?.ToString(),
+                    args?["overwrite"]?.ToObject<bool?>() ?? false);
+            }
+            if (action == "ImportText") return _objectService.ImportObjectFromText(target, args?["inputPath"]?.ToString() ?? args?["path"]?.ToString(), args?["part"]?.ToString(), args?["type"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Write(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "AddVariable")
+            {
+                bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                return _writeService.AddVariable(
+                    target,
+                    args?["varName"]?.ToString(),
+                    args?["typeName"]?.ToString(),
+                    varDryRun,
+                    args?["length"]?.ToObject<int?>(),
+                    args?["decimals"]?.ToObject<int?>(),
+                    args?["collection"]?.ToObject<bool?>());
+            }
+            if (action == "DeleteVariable")
+            {
+                bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                return _writeService.DeleteVariable(
+                    target,
+                    args?["varName"]?.ToString(),
+                    varDryRun);
+            }
+            if (action == "ModifyVariable")
+            {
+                bool varDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                return _writeService.ModifyVariable(
+                    target,
+                    args?["varName"]?.ToString(),
+                    args?["typeName"]?.ToString(),
+                    args?["basedOn"]?.ToString(),
+                    varDryRun,
+                    args?["length"]?.ToObject<int?>(),
+                    args?["decimals"]?.ToObject<int?>(),
+                    args?["collection"]?.ToObject<bool?>());
+            }
+            if (action == "ValidatePayload")
+            {
+                return _validatePayloadService.Validate(
+                    target,
+                    args?["part"]?.ToString(),
+                    payload);
+            }
+            if (action == "Bulk")
+            {
+                return _writeService.BulkWrite(args ?? request);
+            }
+            if (action == "ApplyTemplate")
+            {
+                return _applyTemplateService.Apply(
+                    args?["template"]?.ToString(),
+                    target,
+                    args,
+                    args?["dryRun"]?.ToObject<bool?>() ?? false);
+            }
+            if (action == "ListTemplates")
+            {
+                return _applyTemplateService.ListTemplates();
+            }
+            {
+                // Friction 2026-05-26 — validate=only is the LLM-facing
+                // contract for "run the write in-memory, do NOT persist".
+                // Already plumbed for mode=patch and mode=ops; mirror it
+                // here so PatternInstance / WebForm full-XML writes can
+                // probe SDK validation without touching disk.
+                string writeValidate = args?["validate"]?.ToString();
+                bool writeDryRun = (args?["dryRun"]?.ToObject<bool?>() ?? false)
+                    || string.Equals(writeValidate, "only", StringComparison.OrdinalIgnoreCase);
+                var writeResp = _writeService.WriteObject(
+                    target,
+                    action,
+                    payload,
+                    args?["type"]?.ToString(),
+                    true,
+                    false,
+                    true,
+                    writeDryRun);
+                return VisualVerifyResponseHook.MaybeAttach(args, writeResp, _visualVerifyService);
+            }
+        }
+
+        private string Handle_EditAndBuild(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Orchestrate")
+            {
+                var orchResp = _editAndBuildOrchestrator.Orchestrate(args ?? new JObject());
+                return VisualVerifyResponseHook.MaybeAttach(args, orchResp, _visualVerifyService);
+            }
+            return null;
+        }
+
+        private string Handle_SemanticOps(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Apply")
+            {
+                var soResp = _writeService.ApplySemanticOps(args ?? request);
+                return VisualVerifyResponseHook.MaybeAttach(args ?? request, soResp, _visualVerifyService);
+            }
+            return null;
+        }
+
+        private string Handle_JsonPatch(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Apply")
+            {
+                var jpResp = _writeService.ApplyJsonPatch(args ?? request);
+                return VisualVerifyResponseHook.MaybeAttach(args ?? request, jpResp, _visualVerifyService);
+            }
+            return null;
+        }
+
+        private string Handle_Patch(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Apply")
+            {
+                // v2.6.6 FR#13 follow-up: validate=only is the LLM-facing
+                // contract for "run the patch in-memory, do NOT persist".
+                // Stream A only plumbed validate through ApplySemanticOps
+                // (mode=ops). For mode=patch, validate=only maps to
+                // dryRun=true — the PatchService.ApplyPatch dryRun branch
+                // returns the exact "Applied / write skipped" envelope the
+                // validate=only schema promises. validate=best-effort and
+                // validate=strict (the default) both fall through to the
+                // current strict path: IsPatchWriteSafe already refuses
+                // unsafe writes on NoMatch and surfaces the diagnostic
+                // envelope, so the two are observationally equivalent in
+                // mode=patch and we don't need a third branch.
+                string validateMode = args?["validate"]?.ToString();
+                bool dryRunArg = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                bool validateOnly = string.Equals(validateMode, "only", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(validateMode, "validate-only", StringComparison.OrdinalIgnoreCase);
+                var patchResp = _patchService.ApplyPatch(
+                    target,
+                    args?["part"]?.ToString(),
+                    args?["operation"]?.ToString(),
+                    payload,
+                    args?["context"]?.ToString(),
+                    args?["expectedCount"]?.ToObject<int?>() ?? 1,
+                    args?["type"]?.ToString(),
+                    dryRunArg || validateOnly,
+                    args?["verifyRollback"]?.ToObject<bool?>() ?? false,
+                    args?["return_post_state"]?.ToObject<bool?>() ?? true,
+                    args?["verbose"]?.ToObject<bool?>() ?? false,
+                    args?["replaceAll"]?.ToObject<bool?>() ?? false);
+                return VisualVerifyResponseHook.MaybeAttach(args, patchResp, _visualVerifyService);
+            }
+            return null;
+        }
+
+        private string Handle_Analyze(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            var analyzeType = args?["type"]?.ToString();
+            if (action == "GetNavigation") return _navigationService.GetNavigation(target);
+            if (action == "GetSqlForNavigation")
+            {
+                int? levelNumber = args?["levelNumber"]?.ToObject<int?>();
+                bool includeExecutionPlan = args?["includeExecutionPlan"]?.ToObject<bool?>() ?? false;
+                bool includeIndexAdvisor = args?["includeIndexAdvisor"]?.ToObject<bool?>() ?? false;
+                return _navigationSqlService.Generate(target, levelNumber, includeExecutionPlan, includeIndexAdvisor);
+            }
+            if (action == "GenerateSampleData")
+            {
+                int rows = args?["rows"]?.ToObject<int?>() ?? 5;
+                return _sampleDataService.Generate(target, rows);
+            }
+            if (action == "TranslationsImport")
+            {
+                return _translationsService.Import(payload);
+            }
+            if (action == "GetParameters") return _analyzeService.GetSignature(target, analyzeType);
+            if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target, analyzeType);
+            if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
+            if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType);
+            if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
+            if (action == "Summarize") return _summarizeService.Summarize(target, analyzeType);
+            if (action == "GetSQL")
+            {
+                bool includeSub = args?["includeSubordinated"]?.ToObject<bool?>() ?? false;
+                return _dataInsightService.GetTableDDL(target, includeSub);
+            }
+            if (action == "ExplainCode") return _analyzeService.ExplainCode(target, payload);
+            if (action == "ParentContext") return _analyzeService.ParentContext(target);
+            // Wave-3 SOTA: mode=cross_platform_impact — Web vs SmartDevices divergence.
+            if (action == "CrossPlatformImpact") return _analyzeService.CrossPlatformImpact(target);
+            // Item 24: mode=callers — per-call-site detail with line + context.
+            if (action == "FindCallerSites") return _analyzeService.FindCallerSites(target);
+            if (action == "GetEventFlow") return _analyzeService.GetEventFlow(target, analyzeType);
+            // Wave-3 item 87: KB-wide dependency heat rankings.
+            if (action == "DependencyHeatmap")
+            {
+                string heatFormat = args?["format"]?.ToString();
+                return _analyzeService.DependencyHeatmap(_kbService.GetKbPath(), heatFormat);
+            }
+            if (action == "ImpactAnalysis")
+            {
+                // v2.3.8 (Task 1.4): index-aware impact with optional wait-for-index.
+                // v2.3.8 (post-Task 7.2): honour cancelToken via WorkerCancellationRegistry
+                // so a parallel Control:Cancel stops the BFS mid-walk.
+                bool waitForIndex = args?["waitForIndex"]?.ToObject<bool?>() ?? true;
+                int waitTimeoutMs = args?["waitTimeoutMs"]?.ToObject<int?>() ?? 30000;
+                string ctToken = args?["cancelToken"]?.ToString();
+                using (GxMcp.Worker.Helpers.WorkerCancellationRegistry.Register(ctToken, out var iaCt))
+                {
+                    return _analyzeService.ImpactAnalysis(target, waitForIndex, waitTimeoutMs, iaCt);
+                }
+            }
+            if (action == "InjectContext")
+            {
+                bool recursive = args?["recursive"]?.ToObject<bool>() ?? false;
+                return _injectionService.InjectContext(target, recursive, analyzeType);
+            }
+            return _analyzeService.Analyze(target, analyzeType);
+        }
+
+        private string Handle_BuildPlan(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Wave-3 item 30: GeneratePlan walks the callee graph and emits
+            // {nodes, edges, totalEstimatedSeconds, ascii?}.
+            if (action == "Generate")
+            {
+                string planFormat = args?["format"]?.ToString();
+                JObject toolStatsP95 = args?["toolStatsP95"] as JObject;
+                int maxNodes = args?["maxNodes"]?.ToObject<int?>() ?? 100;
+                return _buildPlanService.GeneratePlan(target, planFormat, toolStatsP95, maxNodes);
+            }
+            return null;
+        }
+
+        private string Handle_Future(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Wave-3 doc-flagged long-term / speculative items. The schema is
+            // shipped via tool_definitions.json + FutureItemRouter; the body
+            // is a single typed deferred envelope. See FutureItemStub.cs.
+            if (action == "Deferred")
+            {
+                int itemNumber = args?["itemNumber"]?.ToObject<int?>() ?? 0;
+                string hint = args?["hint"]?.ToString();
+                return FutureItemStub.Deferred(itemNumber, hint);
+            }
+            return null;
+        }
+
+        private string Handle_Linter(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            bool linterFix = args?["fix"]?.ToObject<bool?>() ?? false;
+            if (linterFix) return _linterService.LintAndFix(target);
+            return _linterService.Lint(target);
+        }
+
+        private string Handle_Diff(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _diffService.Diff(
+                args?["mode"]?.ToString() ?? action,
+                target,
+                args?["part"]?.ToString(),
+                args?["left"]?.ToString(),
+                args?["right"]?.ToString(),
+                args?["context"]?.ToObject<int?>() ?? 3);
+        }
+
+        private string Handle_Export(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Unified" || action == "Full")
+                return _exportObjectService.Export(target, args?["type"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Forge(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Scaffold")
+            {
+                var properties = new JObject();
+                if (!string.IsNullOrEmpty(args?["description"]?.ToString())) properties["description"] = args["description"]?.ToString();
+                if (!string.IsNullOrEmpty(args?["code"]?.ToString())) properties["code"] = args["code"]?.ToString();
+
+                string scaffoldType = args?["type"]?.ToString() ?? target;
+                string scaffoldName = args?["name"]?.ToString() ?? payload;
+                return _forgeService.Scaffold(scaffoldType, scaffoldName, properties);
+            }
+            return null;
+        }
+
+        private string Handle_Conversion(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "TranslateTo") return _conversionService.TranslateTo(target, args?["language"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Pattern(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "GetSample") return _patternService.GetSample(target);
+            if (action == "Apply")
+            {
+                bool reapply = args?["reapply"]?.ToObject<bool?>() ?? false;
+                var patSettings = args?["settings"] as JObject;
+                string patKey = args?["pattern"]?.ToString();
+                if (reapply) return _patternApplyService.ReapplyPattern(target, patSettings);
+                return _patternApplyService.ApplyPattern(target, patKey, patSettings);
+            }
+            if (action == "Diagnose")
+            {
+                // Item 45: read-only preflight — returns structured reasons without mutating.
+                var patSettings = args?["settings"] as JObject;
+                string patKey = args?["pattern"]?.ToString();
+                return _patternApplyService.DiagnosePattern(target, patKey, patSettings);
+            }
+            return null;
+        }
+
+        private string Handle_SdkProbe(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Run")
+            {
+                try
+                {
+                    var probe = Services.SdkSurfaceProbe.Run(args?["outputDir"]?.ToString());
+                    return Models.McpResponse.Ok(
+                        code: "SdkProbeCompleted",
+                        result: new JObject
+                        {
+                            ["rawJsonPath"] = probe.RawJsonPath,
+                            ["indexMdPath"] = probe.IndexMdPath,
+                            ["generatorsMdPath"] = probe.GeneratorsMdPath,
+                            ["rawSizeBytes"] = probe.RawSizeBytes,
+                            ["assembliesScanned"] = probe.AssembliesScanned,
+                            ["typesScanned"] = probe.TypesScanned,
+                            ["generatorCandidates"] = probe.GeneratorCandidates,
+                            ["warnings"] = new JArray(probe.Warnings),
+                            ["note"] = "Inspect rawJsonPath with jq, or read INDEX.md / generators.md for navigable views. See docs/sdk-probe/README.md."
+                        });
+                }
+                catch (Exception ex)
+                {
+                    return Models.McpResponse.Err(code: "SdkProbeError", message: ex.Message, hint: "Check worker logs for the full stack trace.");
+                }
+            }
+            return null;
+        }
+
+        private string Handle_Ui(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "GetUIContext") return _uiService.GetUIContext(target);
+            return null;
+        }
+
+        private string Handle_Layout(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "GetTree")
+            {
+                return _layoutService.GetTree(
+                    target,
+                    args?["control"]?.ToString(),
+                    args?["limit"]?.ToObject<int?>() ?? 500);
+            }
+            if (action == "FindControls")
+            {
+                return _layoutService.FindControls(
+                    target,
+                    args?["propertyName"]?.ToString(),
+                    args?["query"]?.ToString(),
+                    args?["limit"]?.ToObject<int?>() ?? 200);
+            }
+            if (action == "SetProperty")
+            {
+                return _layoutService.SetProperty(
+                    target,
+                    args?["control"]?.ToString(),
+                    args?["propertyName"]?.ToString(),
+                    args?["value"]?.ToString());
+            }
+            if (action == "SetProperties")
+            {
+                return _layoutService.SetProperties(
+                    target,
+                    args?["changes"] as JArray);
+            }
+            if (action == "InspectSurface")
+            {
+                return _layoutService.InspectSurface(target, args?["limit"]?.ToObject<int?>() ?? 50);
+            }
+            if (action == "GetVisualPreview")
+            {
+                return _layoutService.GetVisualPreview(target);
+            }
+            if (action == "ScanMutators")
+            {
+                return _layoutService.ScanMutators(target, args?["limit"]?.ToObject<int?>() ?? 100);
+            }
+            if (action == "RenamePrintBlock")
+            {
+                return _layoutService.RenamePrintBlock(
+                    target,
+                    args?["currentName"]?.ToString(),
+                    args?["newName"]?.ToString());
+            }
+            if (action == "AddPrintBlock")
+            {
+                return _layoutService.AddPrintBlock(
+                    target,
+                    args?["printBlockName"]?.ToString(),
+                    args?["height"]?.ToObject<int?>());
+            }
+            return null;
+        }
+
+        private string Handle_Structure(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "GetVisualStructure") return _structureService.GetVisualStructure(target);
+            if (action == "UpdateVisualStructure") return _structureService.UpdateVisualStructure(target, payload);
+            if (action == "GetVisualIndexes") return _structureService.GetVisualIndexes(target);
+            if (action == "GetLogicStructure") return _structureService.GetLogicStructure(target);
+            return null;
+        }
+
+        private string Handle_Build(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Status")
+            {
+                // v2.6.6 Stream F: event-driven long-poll. When `wait` is 0/absent
+                // GetStatusWait short-circuits to the legacy GetStatus shape; >0
+                // blocks on the per-task StateChangeSignal up to 300s.
+                int wait = args?["wait"]?.ToObject<int?>() ?? 0;
+                string since = args?["since"]?.ToString();
+                return _buildService.GetStatusWait(
+                    target,
+                    wait,
+                    since,
+                    args?["page"]?.ToObject<int?>() ?? 1,
+                    args?["pageSize"]?.ToObject<int?>() ?? 50,
+                    args?["compact"]?.ToObject<bool?>() ?? false);
+            }
+            if (action == "Result") return _buildService.GetResult(
+                target,
+                args?["page"]?.ToObject<int?>() ?? 1,
+                args?["pageSize"]?.ToObject<int?>() ?? 50);
+            if (action == "Cancel") return _buildService.Cancel(target);
+            // issue #28 item 12: spec-check only (Spec+Gen, no Compile/deploy).
+            if (action == "Specify") return _buildService.Specify(target);
+            // Item 43 (friction 2026-05-22) — DDL diff/preview pre-reorg.
+            if (action == "ReorgPreview") return _buildService.ReorgPreview(target);
+            {
+                // v2.3.8 (Task 5.2): forward includeCallees + buildPlanCap from gateway.
+                var includeCallees = args?["includeCallees"]?.ToString();
+                var cap = args?["buildPlanCap"]?.ToObject<int?>() ?? 200;
+                if (string.IsNullOrWhiteSpace(includeCallees)) includeCallees = "transitive";
+                bool skipFullDeploy = args?["skipFullDeploy"]?.ToObject<bool?>() ?? false;
+                // Item 72 (friction 2026-05-22) — failure-webhook URL plumbed through to BuildService.
+                string notifyOnFailure = args?["notifyOnFailure"]?.ToString();
+                // Item 28 (Tier-S, EXPERIMENTAL) — fastIncremental opt-in.
+                bool fastIncremental = args?["fastIncremental"]?.ToObject<bool?>() ?? false;
+                bool buildDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                if (buildDryRun)
+                    return _buildService.BuildDryRun(action, target, includeCallees, cap);
+                return _buildService.Build(action, target, includeCallees, cap, skipFullDeploy, notifyOnFailure, fastIncremental);
+            }
+        }
+
+        private string Handle_Validation(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // The routed `action` here is the umbrella verb ("Check"), NOT a part
+            // name — passing it through as partName made GetPart(obj,"Check") miss
+            // every time and the tool always returned ValidationSkipped. Validate
+            // the requested part (default Source; e.g. Rules) instead.
+            return _validationService.ValidateCode(target, args?["part"]?.ToString() ?? "Source", payload);
+        }
+
+        private string Handle_Test(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _testService.RunTest(target);
+        }
+
+        private string Handle_Wiki(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _wikiService.Generate(target);
+        }
+
+        private string Handle_Visualizer(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _visualizerService.GenerateGraph(payload ?? target);
+        }
+
+        private string Handle_Health(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _healthService.GetHealthReport();
+        }
+
+        private string Handle_History(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            {
+                int verId = args?["versionId"]?.ToObject<int?>() ?? 0;
+                // v2.6.6 Stream H (FR#28) — forward discard + snapshot + part
+                // so HistoryService can route restore through EditSnapshotStore.
+                string partName = args?["part"]?.ToString();
+                string snapshotToken = args?["snapshot"]?.ToString();
+                bool discard = args?["discard"]?.ToObject<bool?>() ?? false;
+                // Item 21 (friction 2026-05-22): dryRun=true returns the
+                // would-be diff without writing.
+                bool historyDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                return _historyService.Execute(target, action, verId, partName, snapshotToken, discard, historyDryRun);
+            }
+                    // Item 16 — genexus_undo last=N
+        }
+
+        private string Handle_Undo(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            {
+                int last = args?["last"]?.ToObject<int?>() ?? 1;
+                bool undoDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                return _undoService.Undo(last, undoDryRun);
+            }
+                    // Items 50 + 48 — genexus_security action=audit_gam|scan_secrets
+        }
+
+        private string Handle_Security(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "audit_gam", StringComparison.OrdinalIgnoreCase))
+                return _securityAuditService.AuditGam();
+            if (string.Equals(action, "scan_secrets", StringComparison.OrdinalIgnoreCase))
+                return _securityAuditService.ScanSecrets();
+            return Models.McpResponse.Err(
+                code: "UnknownAction",
+                message: $"Unsupported security action '{action}'.",
+                hint: "Call genexus_security with no action to see the supported list.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_orient",
+                        args: new JObject(),
+                        why: "Shows the tool catalog so the right action can be chosen.")),
+                target: target);
+                    // Item 65 — genexus_orient welcome card
+        }
+
+        private string Handle_Orient(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Welcome", StringComparison.OrdinalIgnoreCase))
+                return _orientService.Welcome();
+            return Models.McpResponse.Err(
+                code: "UnknownAction",
+                message: $"Unsupported orient action '{action}'.",
+                hint: "Call genexus_orient with no action to see the supported list.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_orient",
+                        args: new JObject(),
+                        why: "Shows the tool catalog so the right action can be chosen.")),
+                target: target);
+        }
+
+        private string Handle_Property(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            var propType = args?["type"]?.ToString();
+            if (action == "Set")
+            {
+                return _propertyService.SetProperty(
+                    target,
+                    args?["propertyName"]?.ToString(),
+                    args?["value"]?.ToString(),
+                    args?["control"]?.ToString(),
+                    propType);
+            }
+            return _propertyService.GetProperties(target, args?["control"]?.ToString(), propType);
+        }
+
+        private string Handle_Asset(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Find")
+            {
+                return _assetService.Find(
+                    args?["pattern"]?.ToString(),
+                    args?["relativeRoot"]?.ToString(),
+                    args?["limit"]?.ToObject<int?>() ?? 20);
+            }
+
+            if (action == "Read")
+            {
+                return _assetService.Read(
+                    target,
+                    args?["includeContent"]?.ToObject<bool?>() ?? false,
+                    args?["maxBytes"]?.ToObject<int?>());
+            }
+
+            if (action == "Write")
+            {
+                return _assetService.Write(
+                    target,
+                    args?["contentBase64"]?.ToString());
+            }
+
+            return null;
+        }
+
+        private string Handle_Formatting(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Format") return _formatService.Format(payload);
+            return null;
+        }
+
+        private string Handle_Refactor(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+                    {
+            bool refactorDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+            return _refactorService.Refactor(target, action, payload, refactorDryRun);
+                    }
+        }
+
+        private string Handle_Popup(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Create")
+            {
+                string popupName = target ?? args?["name"]?.ToString();
+                var popupSpec = args?["spec"] as JObject;
+                // Item 21 (friction 2026-05-22): dryRun=true previews layout XML without persisting.
+                bool popupDryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                return _popupTemplateService.CreatePopup(popupName, popupSpec, popupDryRun);
+            }
+            return null;
+        }
+
+        private string Handle_DbDrift(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 41 (mcp-improvements-2026-05-22) — Transaction ↔ DB drift.
+            if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
+                return _dbDriftService.Check(target);
+            if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
+                return _dbDriftService.Report(target);
+            return null;
+        }
+
+        private string Handle_DbOptimize(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // SOTA — static index advisor. Walks For each blocks and proposes
+            // covering indexes for hot Transaction × where-signature paths.
+            if (string.Equals(action, "Analyze", StringComparison.OrdinalIgnoreCase))
+                return _dbOptimizeService.Analyze(target);
+            if (string.Equals(action, "SuggestIndexes", StringComparison.OrdinalIgnoreCase))
+                return _dbOptimizeService.SuggestIndexes(target);
+            if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
+                return _dbOptimizeService.Report(args?["format"]?.ToString());
+            return null;
+        }
+
+        private string Handle_WebFormEdit(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 19 (mcp-improvements-2026-05-22) — semantic WebForm edits.
+            return _webFormEditService.Execute(action, args);
+        }
+
+        private string Handle_RunObject(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 11 (mcp-improvements-2026-05-22) — runtime URL + optional GAM cookies.
+            if (string.Equals(action, "Resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                string roName = target ?? args?["name"]?.ToString();
+                var roArgs = args?["args"] as JArray;
+                var gamToken = args?["gamSession"];
+                bool roDryRun = request["dryRun"]?.ToObject<bool?>() ?? false;
+                return _runObjectService.Resolve(roName, roArgs, gamToken, roDryRun);
+            }
+            return null;
+        }
+
+        private string Handle_Explain(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 68 — PM-readable deterministic summary.
+            if (string.Equals(action, "Explain", StringComparison.OrdinalIgnoreCase))
+                return _explainService.Explain(target, args?["type"]?.ToString(), args?["depth"]?.ToString());
+            return null;
+        }
+
+        private string Handle_GeneratedDiff(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 12 — unified diff of generated artifacts vs baseline.
+            if (string.Equals(action, "Diff", StringComparison.OrdinalIgnoreCase))
+                return _generatedDiffService.Diff(target, args?["against"]?.ToString());
+            return null;
+        }
+
+        private string Handle_KbReadme(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // Item 90 — Markdown README generation.
+            if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
+                return _kbReadmeService.Generate("generate", args?["outputPath"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Ocr(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
+                return _ocrScreenshotService.Run(args?["path"]?.ToString());
+            return null;
+        }
+
+        private string Handle_PrDescription(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
+            {
+                int last = args?["last"]?.ToObject<int?>() ?? 10;
+                return _prDescriptionService.Generate(last, args?["workingDir"]?.ToString());
+            }
+            return null;
+        }
+
+        private string Handle_ScreenshotPublish(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Publish", StringComparison.OrdinalIgnoreCase))
+                return _screenshotPublishService.Publish(args?["path"]?.ToString());
+            return null;
+        }
+
+        private string Handle_FrictionLog(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Append", StringComparison.OrdinalIgnoreCase))
+            {
+                return _frictionLogService.Append(
+                    args?["tool"]?.ToString(),
+                    args?["message"]?.ToString(),
+                    args?["severity"]?.ToString());
+            }
+            if (string.Equals(action, "Tail", StringComparison.OrdinalIgnoreCase))
+            {
+                int n = args?["n"]?.ToObject<int?>() ?? 20;
+                return _frictionLogService.Tail(n);
+            }
+            return null;
+        }
+
+        private string Handle_WcagCheck(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Check", StringComparison.OrdinalIgnoreCase))
+                return _wcagCheckService.Check(target ?? args?["target"]?.ToString() ?? args?["name"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Learning(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Report", StringComparison.OrdinalIgnoreCase))
+                return _learningReportService.Report(args?["since"]?.ToString(), args?["until"]?.ToString());
+            return null;
+        }
+
+        private string Handle_GxServer(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_gxserver — GxServer sync state (SDK-backed) plus
+            // write actions (commit/update/lock/resolve), routed inside
+            // GxServerSyncService.Run to the sibling GxServerWriteService.
+            return _gxServerSyncService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Compare(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_compare — read-only IDE "Compare Objects" parity over
+            // the SDK's IComparerService. See docs/sdk_coverage_gap_matrix.md P0 #2.
+            return _compareService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Module(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_module — GeneXus Module Manager (install/update) over
+            // the SDK's IModuleManagerService. See ModuleService for the
+            // feasibility-gate notes on which overloads are wired.
+            return _moduleService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Gam(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_gam — GAM / integrated-security provisioning over the
+            // SDK's IIntegratedSecurityService. action=status is read-only;
+            // define_api/deploy are destructive (see GamService for guards).
+            return _gamService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Merge(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_merge — WRITE surface over the SDK's IMergeService.
+            // dryRun defaults true (see MergeToolService). destructiveHint=true.
+            return _mergeToolService.Run(args ?? new JObject());
+        }
+
+        private string Handle_KbVersion(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_kb_version — KB model-version management
+            // (Create Version / Branch / Activate / Revert) over
+            // Artech.Architecture.Common.Helpers.KBVersionHelper.
+            return _kbVersionService.Run(args ?? new JObject());
+        }
+
+        private string Handle_SdPanel(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _sdPanelService.Dispatch(action, target ?? args?["name"]?.ToString() ?? args?["target"]?.ToString(), args?["params"] as JObject ?? args);
+        }
+
+        private string Handle_MultiAgentLock(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            return _multiAgentLockService.Dispatch(
+                action,
+                target ?? args?["target"]?.ToString(),
+                args?["part"]?.ToString(),
+                args?["ownerId"]?.ToString(),
+                args?["ttlSec"]?.ToObject<int?>() ?? 300,
+                kbPathOverride: null,
+                dryRun: request["dryRun"]?.ToObject<bool?>() ?? false);
+        }
+
+        private string Handle_WhatIf(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Simulate", StringComparison.OrdinalIgnoreCase))
+                return _whatIfService.Simulate(args?["change"] as JObject);
+            return null;
+        }
+
+        private string Handle_Tutorial(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Step", StringComparison.OrdinalIgnoreCase))
+                return _tutorialService.GetStep(args?["step"]?.ToObject<int?>() ?? 1);
+            return null;
+        }
+
+        private string Handle_Playbook(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Read", StringComparison.OrdinalIgnoreCase))
+                return _playbookService.Read(
+                    args?["topic"]?.ToString(),
+                    args?["list"]?.ToObject<bool?>() == true);
+            return null;
+        }
+
+        private string Handle_Doctor(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_doctor — health/triage envelope. No args.
+            return _doctorService.Diagnose();
+        }
+
+        private string Handle_Api(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_api — REST endpoint introspection + diff vs baseline.
+            // Single Run() switches on args.action (list/describe/diff_baseline/snapshot).
+            return _apiIntrospectService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Profile(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_profile — runtime profiler XML bridge.
+            // Single Run() switches on args.action (analyze/hotspots/correlate).
+            return _profileService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Types(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            // genexus_types — Domain/SDT introspection + value validation.
+            // Run() switches on args.action (list/describe/validate_value).
+            return _typeIntrospectService.Run(args ?? new JObject());
+        }
+
+        private string Handle_Github(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "CreatePr", StringComparison.OrdinalIgnoreCase))
+                return _githubService.CreatePr(args?["title"]?.ToString(), args?["body"]?.ToString(), args?["base"]?.ToString(), args?["workingDir"]?.ToString(), request["dryRun"]?.ToObject<bool?>() ?? false);
+            return null;
+        }
+
+        private string Handle_AiComplete(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Complete", StringComparison.OrdinalIgnoreCase))
+                return _aiCompleteService.Complete(args?["name"]?.ToString(), args?["part"]?.ToString(), args?["context"]?.ToString(), args?["maxTokens"]?.ToObject<int?>() ?? 200).ToString(Newtonsoft.Json.Formatting.None);
+            return null;
+        }
+
+        private string Handle_TimeTravel(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Recover", StringComparison.OrdinalIgnoreCase))
+                return _timeTravelService.Recover(target ?? args?["name"]?.ToString(), args?["at"]?.ToString());
+            return null;
+        }
+
+        private string Handle_Voice(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Intent", StringComparison.OrdinalIgnoreCase))
+                return _voiceIntentService.Map(args?["transcript"]?.ToString()).ToString(Newtonsoft.Json.Formatting.None);
+            return null;
+        }
+
+        private string Handle_AutoTest(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Generate", StringComparison.OrdinalIgnoreCase))
+                return _autoTestService.Generate(args?["path"]?.ToString());
+            return null;
+        }
+
+        private string Handle_ReversePattern(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Infer", StringComparison.OrdinalIgnoreCase))
+                return _reversePatternService.Infer(args?["source"] as JArray);
+            return null;
+        }
+
+        private string Handle_CrossBrowser(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase))
+                return _crossBrowserService.Run(target ?? args?["target"]?.ToString(), args?["browsers"] as JArray, args?["capture"] as JArray);
+            return null;
+        }
+
+        private string Handle_Preview(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Render" || action == "Run")
+            {
+                string previewName = target ?? args?["name"]?.ToString();
+                var previewParms = args?["parms"] as JObject;
+                string launcher = args?["launcher"]?.ToString() ?? "auto";
+                bool buildFirst = args?["buildFirst"]?.ToObject<bool?>() ?? false;
+                int waitMs = args?["waitMs"]?.ToObject<int?>() ?? 3000;
+                string[] capture = (args?["capture"] as JArray)?.Select(t => t.ToString()).ToArray();
+                bool diffBaseline = args?["diffBaseline"]?.ToObject<bool?>() ?? false;
+                bool updateBaseline = args?["updateBaseline"]?.ToObject<bool?>() ?? false;
+                // Stream G (v2.6.6): GX-aware fill/click + GAM auth.
+                var fill = args?["fill"] as JObject;
+                string click = args?["click"]?.ToString();
+                var auth = args?["auth"] as JObject;
+                // Items 39/97: device emulation + network throttle, passed
+                // through to chrome-devtools-axi via --emulate / --throttle.
+                string emulate = args?["emulate"]?.ToString();
+                string network = args?["network"]?.ToString();
+                // v2.6.6 Stream H (FR#25): action=Run resolves the
+                // KB launcher object when target is omitted; action=Render
+                // requires an explicit target as before.
+                var previewTask = action == "Run"
+                    ? _previewService.RunAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network)
+                    : _previewService.PreviewAsync(previewName, previewParms, launcher, buildFirst, waitMs, capture, diffBaseline, updateBaseline, fill, click, auth, emulate, network);
+                previewTask.Wait();
+                return previewTask.Result.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            return null;
+                    // Wave-3: IDE right-click parity tools.
+        }
+
+        private string Handle_KbExplorer(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Locate", StringComparison.OrdinalIgnoreCase))
+            {
+                string locName = target ?? args?["name"]?.ToString();
+                return _kbExplorerService.Locate(locName);
+            }
+            return Models.McpResponse.Err(
+                code: "UnknownAction",
+                message: $"Unsupported kbexplorer action '{action}'.",
+                hint: "Call genexus_kbexplorer with no action to see the supported list.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_orient",
+                        args: new JObject(),
+                        why: "Shows the tool catalog so the right action can be chosen.")),
+                target: target);
+        }
+
+        private string Handle_Navigation(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "View", StringComparison.OrdinalIgnoreCase))
+            {
+                string navName = target ?? args?["name"]?.ToString();
+                bool latest = args?["latest"]?.ToObject<bool?>() ?? false;
+                return _navigationViewService.View(navName, latest);
+            }
+            return Models.McpResponse.Err(
+                code: "UnknownAction",
+                message: $"Unsupported navigation action '{action}'.",
+                hint: "Call genexus_navigation with no action to see the supported list.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_orient",
+                        args: new JObject(),
+                        why: "Shows the tool catalog so the right action can be chosen.")),
+                target: target);
+        }
+
+        private string Handle_Blame(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (string.Equals(action, "Get", StringComparison.OrdinalIgnoreCase))
+            {
+                var blameReq = new BlameService.BlameRequest
+                {
+                    Name = target ?? args?["name"]?.ToString(),
+                    Part = args?["part"]?.ToString(),
+                    FilePath = args?["filePath"]?.ToString(),
+                    Line = args?["line"]?.ToObject<int?>() ?? 0,
+                    Context = args?["context"]?.ToObject<int?>() ?? 2
+                };
+                return _blameService.Blame(blameReq);
+            }
+            return Models.McpResponse.Err(
+                code: "UnknownAction",
+                message: $"Unsupported blame action '{action}'.",
+                hint: "Call genexus_blame with no action to see the supported list.",
+                nextSteps: new JArray(
+                    Models.McpResponse.NextStep(
+                        tool: "genexus_orient",
+                        args: new JObject(),
+                        why: "Shows the tool catalog so the right action can be chosen.")),
+                target: target);
+        }
+
+        private string Handle_BrowserCapture(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Capture")
+            {
+                string bcTarget = target ?? args?["name"]?.ToString();
+                var bcKinds = args?["capture"] as JArray;
+                return _browserCaptureService.Capture(bcTarget, bcKinds).ToString(Newtonsoft.Json.Formatting.None);
+            }
+            return null;
+        }
+
+        private string Handle_SmokeTest(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Run")
+            {
+                string stTarget = target ?? args?["name"]?.ToString();
+                return _smokeTestService.Run(stTarget).ToString(Newtonsoft.Json.Formatting.None);
+            }
+            return null;
+        }
+
+        private string Handle_A11yAudit(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            if (action == "Audit")
+            {
+                string aaTarget = target ?? args?["name"]?.ToString();
+                return _a11yAuditService.Audit(aaTarget).ToString(Newtonsoft.Json.Formatting.None);
+            }
+            return null;
+        }
+
 
         public static string EscapeJsonString(string s)
         {
