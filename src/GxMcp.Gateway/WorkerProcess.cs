@@ -19,7 +19,8 @@ namespace GxMcp.Gateway
         GatewayShutdown,
         BusyReject,      // exit code 17 — sibling already owns this KB
         ExplicitClose,   // genexus_kb action=close
-        PlannedReload    // genexus_worker_reload (non-force); gateway is orchestrating drain+respawn
+        PlannedReload,   // genexus_worker_reload (non-force); gateway is orchestrating drain+respawn
+        Wedged           // BUG-03: an in-flight command exceeded WedgedCommandTimeoutMinutes with no response
     }
 
     public class WorkerProcess
@@ -60,6 +61,14 @@ namespace GxMcp.Gateway
         private int _exitNotified;
         private int _inFlightCommands;
         private int _queuedCommands;
+        // BUG-03: start timestamp of each in-flight command, keyed by JSON-RPC id.
+        // Populated when a command that counts as activity is written to the pipe,
+        // removed on normal completion (CompleteInFlight) or send failure. The health
+        // check uses the OLDEST surviving entry to detect a worker wedged mid-command
+        // (crashed processes are already handled elsewhere; this is for a worker that's
+        // alive but never responds).
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _inFlightStartTimes = new();
+        private readonly TimeSpan _wedgedCommandTimeout;
         private long _spawnMs = -1;
         private long _sdkInitMs = -1;
         private System.Diagnostics.Stopwatch? _spawnWatch;
@@ -103,6 +112,7 @@ namespace GxMcp.Gateway
             _config = config;
             Kb = kb;
             _workerIdleTimeout = TimeSpan.FromMinutes(Math.Max(1, _config.Server?.WorkerIdleTimeoutMinutes ?? 5));
+            _wedgedCommandTimeout = TimeSpan.FromMinutes(Math.Max(1, _config.Server?.WedgedCommandTimeoutMinutes ?? 15));
             _writerTask = Task.Run(ProcessQueueAsync);
         }
 
@@ -125,6 +135,22 @@ namespace GxMcp.Gateway
                         if (Volatile.Read(ref _inFlightCommands) <= 0)
                         {
                             await Task.Delay(15000, ct);
+                            continue;
+                        }
+
+                        // BUG-03: a worker that's alive but never responds to an in-flight
+                        // command used to sit forever — ShouldStopForIdle refuses to reap
+                        // while _inFlightCommands > 0, and the gateway op timeout only marks
+                        // the operation as timed out without touching the worker itself.
+                        // HasWedgedCommand only trips once a command has been unanswered past
+                        // _wedgedCommandTimeout (default 15 min — far above the 45s warning
+                        // below and generous enough that legitimate multi-minute builds never
+                        // trigger it). Workers with no in-flight command are unaffected — this
+                        // branch is only reached when _inFlightCommands > 0.
+                        if (HasWedgedCommand(out var oldestAge))
+                        {
+                            Program.Log($"[Gateway] worker_wedged_shutdown pid={_process.Id} oldestInFlightAgeMinutes={oldestAge.TotalMinutes:F1} ceilingMinutes={_wedgedCommandTimeout.TotalMinutes}");
+                            StopProcess(WorkerStopReason.Wedged);
                             continue;
                         }
 
@@ -226,6 +252,7 @@ namespace GxMcp.Gateway
                                 {
                                     MarkActivity();
                                     Interlocked.Increment(ref _inFlightCommands);
+                                    _inFlightStartTimes[id] = DateTime.UtcNow;
                                 }
 
                                 await WaitForPipeReadyAsync(id, _cts.Token);
@@ -251,7 +278,7 @@ namespace GxMcp.Gateway
                                 {
                                     if (countsAsActivity)
                                     {
-                                        CompleteInFlight();
+                                        CompleteInFlight(id);
                                     }
 
                                     Program.Log($"[Gateway] ERROR: Cannot send command {id}, pipe not available after wait.");
@@ -261,7 +288,7 @@ namespace GxMcp.Gateway
                             {
                                 if (countsAsActivity)
                                 {
-                                    CompleteInFlight();
+                                    CompleteInFlight(id);
                                 }
 
                                 Program.Log($"[Gateway] IPC Send Error ({id}): {ex.Message}");
@@ -845,6 +872,7 @@ namespace GxMcp.Gateway
                 _pipeReady.TrySetCanceled();
                 Interlocked.Exchange(ref _queuedCommands, 0);
                 Interlocked.Exchange(ref _inFlightCommands, 0);
+                _inFlightStartTimes.Clear();
 
                 if (_process != null)
                 {
@@ -932,7 +960,7 @@ namespace GxMcp.Gateway
                     // (e.g. an older worker binary that doesn't emit it).
                     _sdkReady.TrySetResult(true);
                     MarkActivity();
-                    CompleteInFlight();
+                    CompleteInFlight(id);
                 }
             }
             catch (Exception ex)
@@ -982,8 +1010,13 @@ namespace GxMcp.Gateway
             }
         }
 
-        private void CompleteInFlight()
+        private void CompleteInFlight(string? id = null)
         {
+            if (!string.IsNullOrEmpty(id))
+            {
+                _inFlightStartTimes.TryRemove(id, out _);
+            }
+
             while (true)
             {
                 var current = Volatile.Read(ref _inFlightCommands);
@@ -998,5 +1031,44 @@ namespace GxMcp.Gateway
                 }
             }
         }
+
+        // BUG-03: true when the oldest in-flight command has been unanswered for
+        // longer than _wedgedCommandTimeout. This is the hard ceiling used by the
+        // health check to force-stop a worker that's alive but will never respond —
+        // distinct from ShouldStopForIdle (which only fires when NOTHING is in flight)
+        // and from the 45s "unresponsive" log warning (informational only, no action).
+        internal bool HasWedgedCommand(out TimeSpan oldestAge)
+        {
+            oldestAge = TimeSpan.Zero;
+            DateTime oldestStart = DateTime.MaxValue;
+            bool any = false;
+            foreach (var kv in _inFlightStartTimes)
+            {
+                if (kv.Value < oldestStart)
+                {
+                    oldestStart = kv.Value;
+                    any = true;
+                }
+            }
+            if (!any) return false;
+            oldestAge = DateTime.UtcNow - oldestStart;
+            return oldestAge >= _wedgedCommandTimeout;
+        }
+
+        // --- Test seams (BUG-03) -------------------------------------------------
+        // RunHealthCheckAsync itself is timer-driven (5s/15s Task.Delay) and gated
+        // behind a live pipe/process, so it isn't practical to exercise end-to-end in
+        // a fast unit test. These seams let tests drive the extracted decision logic
+        // (HasWedgedCommand) and the bookkeeping (CompleteInFlight cleanup) directly,
+        // the same way RegisterForTest/SetDrainingForTest do for WorkerPool.
+        internal void SeedInFlightForTest(string id, DateTime startUtc)
+        {
+            _inFlightStartTimes[id] = startUtc;
+            Interlocked.Increment(ref _inFlightCommands);
+        }
+
+        internal void CompleteInFlightForTest(string id) => CompleteInFlight(id);
+
+        internal int InFlightStartTimesCountForTest => _inFlightStartTimes.Count;
     }
 }

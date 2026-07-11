@@ -206,6 +206,16 @@ namespace GxMcp.Gateway
         public List<string> AllowedOrigins { get; set; } = new List<string>();
         public int SessionIdleTimeoutMinutes { get; set; } = 10;
         public int WorkerIdleTimeoutMinutes { get; set; } = 5;
+        /// <summary>
+        /// BUG-03: hard ceiling on how long a single in-flight command may sit
+        /// unanswered before the worker is force-stopped as wedged. Deliberately
+        /// generous — legitimate builds run for minutes — and clearly separate from
+        /// the per-tool gateway operation timeout and the 45s "unresponsive" log
+        /// warning in WorkerProcess. Only a command that has genuinely exceeded this
+        /// ceiling triggers a reap; workers with no in-flight command are unaffected
+        /// (idle reaping is governed solely by WorkerIdleTimeoutMinutes).
+        /// </summary>
+        public int WedgedCommandTimeoutMinutes { get; set; } = 15;
         public int IdempotencyTtlMinutes { get; set; } = 15;
         public int IdempotencyCacheSize { get; set; } = 1000;
         /// <summary>
