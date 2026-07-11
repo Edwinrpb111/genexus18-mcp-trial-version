@@ -489,6 +489,9 @@ namespace GxMcp.Worker.Services
             // Fase 2: (re)build the Guid → storage-key map alongside the parent index — both
             // derive from a single full pass over Objects, so do them together.
             var guidToKey = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // Plan 002: Type/BusinessDomain derived indexes, built in the same pass.
+            var typeIndex = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var domainIndex = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var kv in index.Objects)
             {
@@ -504,13 +507,64 @@ namespace GxMcp.Worker.Services
                 // PERFORMANCE: Since we are iterating dictionary values, there are NO duplicates.
                 // Using .Add() directly changes this from an O(N^2) operation to O(N).
                 list.Add(entry);
-                keysByParent[parent].Add(GetEntryStorageKey(entry));
+                string storageKey = GetEntryStorageKey(entry);
+                keysByParent[parent].Add(storageKey);
 
                 if (!string.IsNullOrEmpty(entry.Guid)) guidToKey[entry.Guid] = kv.Key;
+
+                if (!string.IsNullOrWhiteSpace(entry.Type))
+                {
+                    typeIndex.GetOrAdd(entry.Type, _ => new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(storageKey);
+                }
+                if (!string.IsNullOrWhiteSpace(entry.BusinessDomain))
+                {
+                    domainIndex.GetOrAdd(entry.BusinessDomain, _ => new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)).Add(storageKey);
+                }
             }
             index.ChildrenByParent = byParent;
             index.ChildKeysByParent = keysByParent;
             index.GuidToKey = guidToKey;
+            index.TypeIndex = typeIndex;
+            index.DomainIndex = domainIndex;
+        }
+
+        // Plan 002: maintain TypeIndex/DomainIndex in the same incremental hooks that
+        // maintain ChildrenByParent (AddOrUpdateEntryInParentIndex / RemoveEntryFromParentIndex),
+        // so every mutation path that already keeps the parent index current (UpdateEntry,
+        // AddOrUpdateBatch, RemoveEntry/RemoveEntryByGuid, the rename-collapse branch) picks
+        // this up for free without touching each call site individually.
+        private void AddOrUpdateEntryInSecondaryIndexes(SearchIndex index, SearchIndex.IndexEntry entry)
+        {
+            if (entry == null) return;
+            string entryKey = GetEntryStorageKey(entry);
+
+            if (index?.TypeIndex != null && !string.IsNullOrWhiteSpace(entry.Type))
+            {
+                var set = index.TypeIndex.GetOrAdd(entry.Type, _ => new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                lock (set) { set.Add(entryKey); }
+            }
+            if (index?.DomainIndex != null && !string.IsNullOrWhiteSpace(entry.BusinessDomain))
+            {
+                var set = index.DomainIndex.GetOrAdd(entry.BusinessDomain, _ => new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                lock (set) { set.Add(entryKey); }
+            }
+        }
+
+        private void RemoveEntryFromSecondaryIndexes(SearchIndex index, SearchIndex.IndexEntry entry)
+        {
+            if (entry == null) return;
+            string entryKey = GetEntryStorageKey(entry);
+
+            if (index?.TypeIndex != null && !string.IsNullOrWhiteSpace(entry.Type)
+                && index.TypeIndex.TryGetValue(entry.Type, out var typeSet))
+            {
+                lock (typeSet) { typeSet.Remove(entryKey); }
+            }
+            if (index?.DomainIndex != null && !string.IsNullOrWhiteSpace(entry.BusinessDomain)
+                && index.DomainIndex.TryGetValue(entry.BusinessDomain, out var domainSet))
+            {
+                lock (domainSet) { domainSet.Remove(entryKey); }
+            }
         }
 
         private string GetEntryStorageKey(SearchIndex.IndexEntry entry)
@@ -635,6 +689,7 @@ namespace GxMcp.Worker.Services
                     list.Add(entry);
                 }
             }
+            AddOrUpdateEntryInSecondaryIndexes(index, entry);
         }
 
         // Fase 2: drop an entry from its parent-children list (used by rename collapse and
@@ -651,6 +706,7 @@ namespace GxMcp.Worker.Services
                 list.RemoveAll(e => string.Equals(GetEntryStorageKey(e), entryKey, StringComparison.OrdinalIgnoreCase));
                 keys?.Remove(entryKey);
             }
+            RemoveEntryFromSecondaryIndexes(index, entry);
         }
 
         // Fase 2: remove an object by its (stable) Guid — used by the warm-start deletion

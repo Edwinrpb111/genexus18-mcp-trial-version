@@ -154,6 +154,10 @@ namespace GxMcp.Worker.Services
                     // typeFilter-miss path already gets, instead of a bare empty page.
                     bool parentMiss = false;
                     string missedParentKey = null;
+                    // Plan 002: true only when `entries` is the unfiltered full Objects.Values
+                    // scan (no parent/parentPath filter already narrowed it) — gates the
+                    // TypeIndex prefilter below.
+                    bool isFullScan = false;
 
                     if (!string.IsNullOrWhiteSpace(parentPathFilter) &&
                         index.ChildrenByParent != null &&
@@ -186,10 +190,31 @@ namespace GxMcp.Worker.Services
                     else
                     {
                         entries = index.Objects.Values;
+                        isFullScan = true;
                     }
 
                     if (filterTypes.Count > 0)
                     {
+                        // Plan 002: when no parent/parentPath filter already narrowed `entries`,
+                        // intersect the derived TypeIndex buckets instead of scanning every
+                        // object. filterTypes here is an EXACT case-insensitive set (unlike
+                        // SearchService's alias-aware IsTypeMatch), so each entry maps directly
+                        // to a TypeIndex bucket key. Falls back to the full scan below when the
+                        // index hasn't built TypeIndex yet (e.g. LoadFromEntries test seam).
+                        if (isFullScan && index.TypeIndex != null)
+                        {
+                            var candidateKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var t in filterTypes)
+                            {
+                                if (index.TypeIndex.TryGetValue(t, out var keys))
+                                {
+                                    lock (keys) { candidateKeys.UnionWith(keys); }
+                                }
+                            }
+                            entries = candidateKeys
+                                .Select(k => index.Objects.TryGetValue(k, out var e) ? e : null)
+                                .Where(e => e != null);
+                        }
                         entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
                     }
 

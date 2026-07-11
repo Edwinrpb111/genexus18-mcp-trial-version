@@ -26,6 +26,19 @@ namespace GxMcp.Worker.Models
         [JsonIgnore]
         public ConcurrentDictionary<string, string> GuidToKey { get; set; }
 
+        // Plan 002: derived secondary indexes so SearchService/ListService can intersect a
+        // candidate set instead of scanning Objects.Values when a type and/or businessDomain
+        // filter is present. Normalized (case-insensitive) key -> set of storage keys. Built
+        // alongside ChildrenByParent/GuidToKey in IndexCacheService.BuildParentIndex and
+        // maintained by the same incremental add/remove hooks. Rebuilt from Objects on
+        // load/replace; not serialized (derivable, would bloat the on-disk snapshot for no
+        // benefit since it's cheap to rebuild).
+        [JsonIgnore]
+        public ConcurrentDictionary<string, HashSet<string>> TypeIndex { get; set; }
+
+        [JsonIgnore]
+        public ConcurrentDictionary<string, HashSet<string>> DomainIndex { get; set; }
+
         public class IndexEntry
         {
             public string Guid { get; set; }

@@ -129,6 +129,9 @@ namespace GxMcp.Worker.Services
                 }
 
                 IEnumerable<SearchIndex.IndexEntry> sourceSet = null;
+                // Plan 002: true only when sourceSet ends up as the unfiltered
+                // index.Objects.Values scan (no parent/parentPath filter already narrowed it).
+                bool sourceIsFullScan = false;
 
                 if (criteria.ParentPathFilter != null && index.ChildrenByParent != null)
                 {
@@ -155,6 +158,60 @@ namespace GxMcp.Worker.Services
                 else
                 {
                     sourceSet = index.Objects.Values;
+                    sourceIsFullScan = true;
+                }
+
+                // Plan 002: when no parent/parentPath filter already narrowed sourceSet,
+                // intersect the derived TypeIndex/DomainIndex buckets instead of scanning
+                // every object. IsTypeMatch is alias-aware ("prc" contains-matches
+                // "Procedure"), so resolve the filter to the concrete Type bucket(s) that
+                // actually match before touching Objects; DomainFilter is an exact
+                // case-insensitive match so its bucket key applies directly. The existing
+                // TypeFilter/DomainFilter .Where() below still runs afterwards (cheap safety
+                // net) — this only shrinks the candidate set that reaches it. Falls back to
+                // the unchanged full scan when TypeIndex/DomainIndex haven't been built yet
+                // (e.g. the LoadFromEntries test seam).
+                if (sourceIsFullScan && index.TypeIndex != null && index.DomainIndex != null
+                    && (!string.IsNullOrEmpty(criteria.TypeFilter) || !string.IsNullOrEmpty(criteria.DomainFilter)))
+                {
+                    HashSet<string> candidateKeys = null;
+
+                    if (!string.IsNullOrEmpty(criteria.TypeFilter))
+                    {
+                        candidateKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var typeKey in index.TypeIndex.Keys)
+                        {
+                            if (!IsTypeMatch(typeKey, criteria.TypeFilter)) continue;
+                            if (index.TypeIndex.TryGetValue(typeKey, out var typeKeys))
+                            {
+                                lock (typeKeys) { candidateKeys.UnionWith(typeKeys); }
+                            }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(criteria.DomainFilter))
+                    {
+                        HashSet<string> domainKeys;
+                        if (index.DomainIndex.TryGetValue(criteria.DomainFilter, out var domainBucket))
+                        {
+                            lock (domainBucket) { domainKeys = new HashSet<string>(domainBucket, StringComparer.OrdinalIgnoreCase); }
+                        }
+                        else
+                        {
+                            domainKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        }
+                        candidateKeys = candidateKeys == null
+                            ? domainKeys
+                            : new HashSet<string>(candidateKeys.Where(domainKeys.Contains), StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    if (candidateKeys != null)
+                    {
+                        sourceSet = candidateKeys
+                            .Select(k => { index.Objects.TryGetValue(k, out var e); return e; })
+                            .Where(e => e != null)
+                            .ToList();
+                    }
                 }
 
                 // PERFORMANCE (W-M4): cap PLINQ parallelism so large KBs (50k+ objects) on
