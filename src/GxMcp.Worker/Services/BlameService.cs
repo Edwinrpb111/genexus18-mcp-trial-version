@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using GxMcp.Worker.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -197,10 +198,10 @@ namespace GxMcp.Worker.Services
                 // back to the caller via the blame envelope's snippetContext.
                 // Anchor every resolved path under the git root (which already
                 // contains kbDir) and refuse anything that escapes it.
-                string rootFull = null;
-                try { rootFull = Path.GetFullPath(gitRoot).TrimEnd('\\', '/') + Path.DirectorySeparatorChar; } catch { }
-                if (string.IsNullOrEmpty(rootFull) ||
-                    !path.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                bool withinRoot;
+                try { withinRoot = PathSafety.TryResolveWithinRoot(gitRoot, path, out path); }
+                catch { withinRoot = false; }
+                if (!withinRoot)
                 {
                     error = new JObject
                     {
@@ -251,17 +252,7 @@ namespace GxMcp.Worker.Services
 
         private static string MakeRelative(string root, string full)
         {
-            try
-            {
-                if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(full)) return full;
-                if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                {
-                    string tail = full.Substring(root.Length).TrimStart('\\', '/');
-                    return tail.Replace('\\', '/');
-                }
-            }
-            catch { }
-            return full;
+            return PathSafety.MakeRelative(root, full);
         }
 
         private static int RunGit(string workingDir, string[] args, out string stdout, out string stderr)

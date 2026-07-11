@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using GxMcp.Worker.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -248,13 +249,7 @@ namespace GxMcp.Worker.Services
 
         private static string MakeRelative(string root, string full)
         {
-            try
-            {
-                var rootUri = new Uri(root.EndsWith("\\") || root.EndsWith("/") ? root : root + Path.DirectorySeparatorChar);
-                var fullUri = new Uri(full);
-                return Uri.UnescapeDataString(rootUri.MakeRelativeUri(fullUri).ToString());
-            }
-            catch { return Path.GetFileName(full); }
+            return PathSafety.MakeRelative(root, full);
         }
 
         private static string SafeRead(string path)

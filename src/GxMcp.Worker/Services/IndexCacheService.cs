@@ -467,6 +467,10 @@ namespace GxMcp.Worker.Services
             // hash across worker runs — otherwise a sidecar written under one path-spelling
             // (trailing slash, casing, forward vs back slashes) isn't found under another and
             // the warm-start delta never engages (metaPresent=False).
+            // NOTE (path-safety consolidation): no PathSafety.TryResolveWithinRoot/MakeRelative call
+            // here — `input` (the KB path itself, from BuildService.GetKBPath()) is being
+            // canonicalized to build a cache-key hash, not resolved against a root or turned into a
+            // relative path. There's no "root" in this operation, so the shared helper doesn't apply.
             string canonical = input ?? string.Empty;
             try { canonical = Path.GetFullPath(canonical); } catch { /* keep raw on malformed paths */ }
             canonical = canonical.TrimEnd('\\', '/').ToLowerInvariant();

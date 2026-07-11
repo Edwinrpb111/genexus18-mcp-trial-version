@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using GxMcp.Worker.Models;
+using GxMcp.Worker.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -154,9 +155,7 @@ namespace GxMcp.Worker.Services
 
         private static string MakeRelative(string root, string full)
         {
-            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var p = Path.GetFullPath(full);
-            return p.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? p.Substring(rootFull.Length).Replace('\\', '/') : full;
+            return PathSafety.MakeRelative(root, full);
         }
 
         private static string Err(string m) => McpResponse.Err(code: "TimeTravelFailed", message: m);

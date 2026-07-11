@@ -1500,6 +1500,10 @@ namespace GxMcp.Worker.Services
                         target: target);
                 }
 
+                // NOTE (path-safety consolidation): `outputPath` is intentionally NOT gated to the
+                // KB root — export_part is designed to write anywhere on disk the caller chooses
+                // (tool_definitions.json example: outputPath="C:\\tmp\\Customer.gxp"). There is no
+                // "root" here to check containment against, so PathSafety doesn't apply.
                 string fullPath = Path.GetFullPath(outputPath);
                 string directory = Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
@@ -1532,6 +1536,10 @@ namespace GxMcp.Worker.Services
                 if (string.IsNullOrWhiteSpace(inputPath))
                     return McpResponse.Err(code: "InputPathRequired", message: "Input path is required.", hint: "Provide a valid inputPath.", target: target);
 
+                // NOTE (path-safety consolidation): `inputPath` is intentionally NOT gated to the
+                // KB root either — import_part reads a text file from wherever the caller points it
+                // (the export/import pair is designed to round-trip through an arbitrary filesystem
+                // location). No "root" to check containment against.
                 string fullPath = Path.GetFullPath(inputPath);
                 if (!File.Exists(fullPath))
                     return McpResponse.Err(code: "InputFileNotFound", message: "Input file not found.", hint: "Verify the inputPath points to an existing file.", target: fullPath);

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using GxMcp.Worker.Utils;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -231,17 +232,7 @@ namespace GxMcp.Worker.Services
                 return kbRoot;
             }
 
-            string candidate = Path.IsPathRooted(path)
-                ? Path.GetFullPath(path)
-                : Path.GetFullPath(Path.Combine(kbRoot, path));
-
-            string rootWithSeparator = kbRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
-                ? kbRoot
-                : kbRoot + Path.DirectorySeparatorChar;
-
-            bool isSamePath = string.Equals(candidate, kbRoot, StringComparison.OrdinalIgnoreCase);
-            bool isChildPath = candidate.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase);
-            if (!isSamePath && !isChildPath)
+            if (!PathSafety.TryResolveWithinRoot(kbRoot, path, out string candidate))
             {
                 throw new InvalidOperationException("The requested asset path points outside the active Knowledge Base.");
             }
@@ -272,16 +263,7 @@ namespace GxMcp.Worker.Services
 
         private static string GetRelativePath(string kbRoot, string fullPath)
         {
-            string normalizedRoot = kbRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            string normalizedPath = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (string.Equals(normalizedRoot, normalizedPath, StringComparison.OrdinalIgnoreCase))
-            {
-                return ".";
-            }
-
-            var rootUri = new Uri(AppendDirectorySeparator(kbRoot));
-            var pathUri = new Uri(fullPath);
-            return Uri.UnescapeDataString(rootUri.MakeRelativeUri(pathUri).ToString()).Replace('\\', '/');
+            return PathSafety.MakeRelative(kbRoot, fullPath);
         }
 
         private static string ComputeSha256(byte[] bytes)
@@ -315,15 +297,5 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private static string AppendDirectorySeparator(string path)
-        {
-            if (path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) ||
-                path.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
-            {
-                return path;
-            }
-
-            return path + Path.DirectorySeparatorChar;
-        }
     }
 }
