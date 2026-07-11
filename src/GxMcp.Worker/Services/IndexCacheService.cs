@@ -108,6 +108,14 @@ namespace GxMcp.Worker.Services
         private string _shardDirPath => string.IsNullOrEmpty(_indexPath) ? null : _indexPath + "_shards";
         private string _shardManifestPath => string.IsNullOrEmpty(_shardDirPath) ? null : Path.Combine(_shardDirPath, "manifest.json");
         private string ShardFilePath(int shardId) => Path.Combine(_shardDirPath, string.Format("shard_{0:00}.json.gz", shardId));
+
+        // Test observability only — lets tests locate on-disk shard/manifest files without
+        // duplicating the path-derivation logic above.
+        internal string ShardDirPathForTest => _shardDirPath;
+        internal string ShardManifestPathForTest => _shardManifestPath;
+        internal string ShardFilePathForTest(int shardId) => ShardFilePath(shardId);
+        internal string IndexPathForTest => _indexPath;
+        internal string IndexPathGzForTest => _indexPathGz;
         private BuildService _buildService;
         private bool _initialized = false;
         private readonly object _lock = new object();
