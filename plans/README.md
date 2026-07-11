@@ -104,10 +104,12 @@ verification — and should become numbered plans (012+) before execution:
     not a normalization.
   `Program.cs` and `IndexCacheService.cs` untouched per assignment guardrails (other work in
   flight there) — their hand-rolled shapes (soft-reload ack, etc.) remain for a future pass.
-- **TECHDEBT-03 — additional god objects.** `LayoutService.cs` (3066), `PatternApplyService.cs`
-  (2285), `ObjectService.cs` (2226), `AnalyzeService.cs` (2191), `PatchService.cs` (1985) —
-  same class of decomposition as the already-planned WriteService/Program.cs splits (007/008),
-  characterization tests first.
+- **TECHDEBT-03 — additional god objects. PARTIAL (Unreleased).** Applied the same verbatim
+  `partial class` split as 007/008. Done so far: `LayoutService` split into `.MutatorScan.cs`,
+  `.VisualContext.cs`, `.SourcePersistence.cs`; `PatternApplyService` pattern-engine adapter
+  types extracted into `PatternEngineAdapter.cs`. Full Worker suite green after each step.
+  REMAINING (not yet split, safe to do later with the same method): the cores of
+  `PatternApplyService.cs`, `ObjectService.cs`, `AnalyzeService.cs`, `PatchService.cs`.
 - **TEST-02 — replace source-text guard tests with behavioral tests.** ~19 test files
   `File.ReadAllText` a `.cs` and `Assert.Contains` a string literal instead of exercising the
   code path (this is the root of the flagged flaky `Dispatcher_PatchApply_ValidateOnly`).
