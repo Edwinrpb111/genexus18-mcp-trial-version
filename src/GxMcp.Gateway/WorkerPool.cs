@@ -324,14 +324,27 @@ namespace GxMcp.Gateway
             _entries.TryRemove(entry.Handle.NormalizedAlias, out _);
         }
 
+        // BUG-04: the per-call cap on how long ConfigureWarmSpares will wait for
+        // pre-spawns to finish before reporting the rest as Skipped. Deliberately
+        // generous (cold-start can be tens of seconds) but bounded so the tool call
+        // itself can't hang indefinitely on a wedged spawn.
+        internal static readonly TimeSpan WarmSpareAwaitCap = TimeSpan.FromSeconds(10);
+
         // Item 53: configure warm-spare count + optionally pre-spawn against the
         // supplied declared KBs. Caps at MaxWarmSpareCount. Returns:
         //   configured  – the count actually persisted (clamped + capped),
         //   requested   – the original requested value (so the agent sees the clamp),
         //   capped      – true if the request exceeded MaxWarmSpareCount,
         //   prespawned  – aliases of KBs the gateway successfully pre-spawned a worker for,
-        //   skipped     – aliases skipped because they were already open or the spawn failed.
-        public WarmSpareResult ConfigureWarmSpares(int requested, System.Collections.Generic.IReadOnlyList<KbHandle> declaredKbs)
+        //   skipped     – aliases skipped because they were already open, the spawn failed,
+        //                 or the spawn was still running when WarmSpareAwaitCap elapsed.
+        //
+        // BUG-04 fix: previously this fired AcquireAsync fire-and-forget and returned
+        // synchronously, so Prespawned/Skipped were built from an empty ConcurrentBag —
+        // the tool call reported nothing while workers were still coming up in the
+        // background. Now the pending spawns are awaited (bounded by WarmSpareAwaitCap)
+        // before the result is built, so the reported lists reflect real outcomes.
+        public async Task<WarmSpareResult> ConfigureWarmSpares(int requested, System.Collections.Generic.IReadOnlyList<KbHandle> declaredKbs)
         {
             int requestedOrig = requested;
             bool capped = false;
@@ -339,9 +352,6 @@ namespace GxMcp.Gateway
             if (requested > MaxWarmSpareCount) { requested = MaxWarmSpareCount; capped = true; }
             Interlocked.Exchange(ref _warmSpareCount, requested);
 
-            // ConcurrentBag: the fire-and-forget continuations below run on thread-pool
-            // threads (TaskScheduler.Default) and can populate these concurrently when
-            // more than one KB is configured — a plain List.Add would corrupt/throw.
             var prespawned = new ConcurrentBag<string>();
             var skipped = new ConcurrentBag<string>();
             if (requested == 0 || declaredKbs == null)
@@ -350,6 +360,10 @@ namespace GxMcp.Gateway
             }
 
             int budget = requested;
+            var pending = new System.Collections.Generic.List<Task>();
+            // Aliases we actually queued a spawn for — used below to tell "still spawning
+            // past the cap" apart from "never queued" when reconciling the result.
+            var queuedAliases = new System.Collections.Generic.List<string>();
             foreach (var kb in declaredKbs)
             {
                 if (budget <= 0) break;
@@ -360,19 +374,17 @@ namespace GxMcp.Gateway
                 }
                 try
                 {
-                    // Fire-and-forget: pre-spawn is a one-shot setup; blocking here
-                    // would deadlock on a synchronisation context. Failures are logged
-                    // in AcquireAsync and the alias is skipped rather than throwing.
                     var capturedKb = kb;
                     var capturedPrespawned = prespawned;
                     var capturedSkipped = skipped;
-                    _ = AcquireAsync(capturedKb, CancellationToken.None).ContinueWith(t =>
+                    pending.Add(AcquireAsync(capturedKb, CancellationToken.None).ContinueWith(t =>
                     {
                         if (t.IsCompletedSuccessfully)
                             capturedPrespawned.Add(capturedKb.Alias);
                         else
                             capturedSkipped.Add(capturedKb.Alias);
-                    }, TaskScheduler.Default);
+                    }, TaskScheduler.Default));
+                    queuedAliases.Add(kb.Alias);
                     budget--;
                 }
                 catch
@@ -380,7 +392,29 @@ namespace GxMcp.Gateway
                     skipped.Add(kb.Alias);
                 }
             }
-            return new WarmSpareResult(requestedOrig, requested, capped, prespawned.ToList(), skipped.ToList());
+
+            if (pending.Count > 0)
+            {
+                var all = Task.WhenAll(pending);
+                await Task.WhenAny(all, Task.Delay(WarmSpareAwaitCap)).ConfigureAwait(false);
+            }
+
+            // Snapshot the bags now: this is the result we return, regardless of whether
+            // any continuation is still pending. Queued spawns that haven't landed in
+            // either bag yet (i.e. exceeded WarmSpareAwaitCap) are reported as Skipped —
+            // the spawn itself is NOT cancelled and keeps running in the background;
+            // it just isn't counted as Prespawned for THIS call's result.
+            var prespawnedSnapshot = new System.Collections.Generic.List<string>(prespawned);
+            var skippedSnapshot = new System.Collections.Generic.List<string>(skipped);
+            var accountedFor = new System.Collections.Generic.HashSet<string>(
+                prespawnedSnapshot.Concat(skippedSnapshot), StringComparer.OrdinalIgnoreCase);
+            foreach (var alias in queuedAliases)
+            {
+                if (accountedFor.Add(alias))
+                    skippedSnapshot.Add(alias);
+            }
+
+            return new WarmSpareResult(requestedOrig, requested, capped, prespawnedSnapshot, skippedSnapshot);
         }
 
         public sealed record WarmSpareResult(
@@ -390,12 +424,13 @@ namespace GxMcp.Gateway
             System.Collections.Generic.IReadOnlyList<string> Prespawned,
             System.Collections.Generic.IReadOnlyList<string> Skipped);
 
-        internal void RegisterForTest(KbHandle h, DateTime? lastActivity = null)
+        internal void RegisterForTest(KbHandle h, DateTime? lastActivity = null, WorkerProcess? worker = null)
         {
             _entries[h.NormalizedAlias] = new Entry
             {
                 Handle = h,
-                LastActivityUtc = lastActivity ?? DateTime.UtcNow
+                LastActivityUtc = lastActivity ?? DateTime.UtcNow,
+                Worker = worker
             };
             // Mirror AcquireAsync: an acquired KB is also durably "known" (issue #26 P3).
             _known[h.NormalizedAlias] = h;

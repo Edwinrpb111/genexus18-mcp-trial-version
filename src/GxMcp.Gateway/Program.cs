@@ -3107,7 +3107,7 @@ namespace GxMcp.Gateway
                         var declared = (_activeConfig?.Environment?.KBs ?? new List<KbEntry>())
                             .Select(k => new KbHandle(k.Alias, k.Path))
                             .ToList();
-                        var result = _workerPool.ConfigureWarmSpares(spareCount, declared);
+                        var result = await _workerPool.ConfigureWarmSpares(spareCount, declared);
                         payload = new JObject
                         {
                             ["status"] = result.Configured == 0 ? "Disabled" : "Configured",
