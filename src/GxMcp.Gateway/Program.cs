@@ -356,18 +356,36 @@ namespace GxMcp.Gateway
                 {
                     Log($"[Gateway] existing_master_detected currentPid={Environment.ProcessId} masterPid={leaseRegistration.Lease.ProcessId}");
                     
-                    if (leaseRegistration.Lease.HttpPort > 0) 
+                    if (leaseRegistration.Lease.HttpPort > 0)
                     {
-                        bool shouldPromote = await RunMcpProxyAsync(leaseRegistration.Lease, config);
-                        if (!shouldPromote) return;
-                        
-                        Log("[Gateway] Starting promotion to Master...");
-                        var forced = GatewayProcessLease.ForceRegisterCurrentProcess(config);
-                        if (!forced.Success) {
-                            Log("[Gateway] Promotion failed: lease acquisition blocked.");
-                            return;
+                        int masterPort = leaseRegistration.Lease.HttpPort;
+                        while (true)
+                        {
+                            bool shouldPromote = await RunMcpProxyAsync(leaseRegistration.Lease, config);
+                            if (!shouldPromote) return;
+
+                            // Defense-in-depth (#2): the proxy asked to promote because it saw
+                            // the master as unresponsive. Before stealing the lease — which via
+                            // port recovery would hard-kill whatever holds the port, tree and all —
+                            // re-verify the master is really down. If it's still accepting
+                            // connections this was a false alarm; stay a proxy rather than cause a
+                            // split-brain that kills a live master's worker.
+                            if (await IsPortListeningAsync(masterPort, 2000))
+                            {
+                                Log($"[Gateway] Promotion aborted — master on port {masterPort} still listening. Resuming proxy mode.");
+                                await Task.Delay(1000);
+                                continue;
+                            }
+
+                            Log("[Gateway] Starting promotion to Master...");
+                            var forced = GatewayProcessLease.ForceRegisterCurrentProcess(config);
+                            if (!forced.Success) {
+                                Log("[Gateway] Promotion failed: lease acquisition blocked.");
+                                return;
+                            }
+                            isMaster = true;
+                            break;
                         }
-                        isMaster = true;
                     }
                     else 
                     {
@@ -567,6 +585,32 @@ namespace GxMcp.Gateway
             }
         }
 
+        // An empty proxy→master response body is legitimate (not a dead master) when the
+        // request was a JSON-RPC notification (no id → no response expected) OR the master
+        // explicitly returned HTTP 204 No Content. Treating those as failures was the trigger
+        // for false "Master unresponsive" promotions that then tree-killed the live master +
+        // its worker. Only an id-bearing request that gets an empty 200 is a real fault.
+        internal static bool ProxyEmptyBodyIsSuccess(bool isNotification, System.Net.HttpStatusCode status)
+            => isNotification || status == System.Net.HttpStatusCode.NoContent;
+
+        // Cheap liveness probe: does anything accept a TCP connection on the port right now?
+        // Used before a forced promotion so a transient hiccup can't make a proxy steal the
+        // lease from — and then kill — a master that is plainly still up. A connection refusal
+        // (master really gone) throws and returns false.
+        private static async Task<bool> IsPortListeningAsync(int port, int timeoutMs)
+        {
+            try
+            {
+                using var client = new System.Net.Sockets.TcpClient();
+                var connectTask = client.ConnectAsync("127.0.0.1", port);
+                var completed = await Task.WhenAny(connectTask, Task.Delay(timeoutMs));
+                if (completed != connectTask) return false; // timed out — treat as down
+                await connectTask; // observe exceptions (connection refused → caught below)
+                return client.Connected;
+            }
+            catch { return false; }
+        }
+
         private static async Task<bool> RunMcpProxyAsync(GatewayLeaseRecord master, Configuration config)
         {
             string baseUrl = $"http://localhost:{master.HttpPort}/mcp";
@@ -596,6 +640,9 @@ namespace GxMcp.Gateway
                         string body = line;
                         var request = JObject.Parse(body);
                         string requestId = request["id"]?.ToString() ?? "unknown";
+                        // A JSON-RPC notification has no id and expects NO response — the
+                        // master answers it with HTTP 204/empty, which is correct, not a fault.
+                        bool isNotification = request["id"] == null || request["id"]!.Type == JTokenType.Null;
                         var content = new StringContent(body, Encoding.UTF8, "application/json");
                         
                         if (sessionId != null) content.Headers.Add("MCP-Session-Id", sessionId);
@@ -622,18 +669,35 @@ namespace GxMcp.Gateway
                             string responseBody = await response.Content.ReadAsStringAsync(ct);
                             if (string.IsNullOrWhiteSpace(responseBody))
                             {
-                                Log($"[Proxy] Master returned empty response for command {requestId}. Retrying...");
-                                throw new Exception("Empty response from master");
+                                // Empty body on a notification (or an explicit 204) is the
+                                // spec-correct "accepted, no response" — NOT a dead master.
+                                // Reading it as failure here was the trigger for a false
+                                // "Master unresponsive" → forced promotion → the promoted
+                                // gateway's port-recovery then hard-killed the real master's
+                                // whole process tree, GeneXus worker included. Every MCP
+                                // client sends id-less notifications routinely, so this fired
+                                // on ordinary traffic. Only an id-bearing REQUEST that gets no
+                                // body is a genuine fault worth retrying/promoting on.
+                                if (ProxyEmptyBodyIsSuccess(isNotification, response.StatusCode))
+                                {
+                                    success = true;
+                                }
+                                else
+                                {
+                                    Log($"[Proxy] Master returned empty response for request {requestId}. Retrying...");
+                                    throw new Exception("Empty response from master");
+                                }
                             }
-
-                            if (!responseBody.Trim().StartsWith("{"))
+                            else if (!responseBody.Trim().StartsWith("{"))
                             {
                                 Log($"[Proxy] Master returned non-JSON response: {responseBody}");
                                 throw new Exception("Invalid response from master");
                             }
-
-                            await TryWriteStdout(responseBody);
-                            success = true;
+                            else
+                            {
+                                await TryWriteStdout(responseBody);
+                                success = true;
+                            }
                         }
                         else
                         {

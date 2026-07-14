@@ -307,9 +307,22 @@ namespace GxMcp.Gateway
                        var pidStr = parts.Last().Trim();
                        if (int.TryParse(pidStr, out int pid) && pid != Environment.ProcessId)
                        {
-                           Log($"[PortRecovery] Found zombie process {pid} on port {port}. Killing it...");
                            try {
                                var zombie = Process.GetProcessById(pid);
+                               // Only reclaim the port from one of OUR OWN processes (a prior
+                               // gateway or its dotnet host). Blindly Kill(true)-ing whatever
+                               // holds the port could nuke an unrelated app — or, in the
+                               // split-brain case, a still-live master gateway's whole tree
+                               // (its GeneXus worker included). If it isn't ours, leave it be.
+                               string pname = zombie.ProcessName;
+                               bool ours = pname.Equals("GxMcp.Gateway", StringComparison.OrdinalIgnoreCase)
+                                        || pname.Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+                               if (!ours)
+                               {
+                                   Log($"[PortRecovery] Process {pid} ({pname}) holds port {port} but is not a GxMcp gateway — not killing. Configure a different HttpPort.");
+                                   continue;
+                               }
+                               Log($"[PortRecovery] Found stale gateway {pid} ({pname}) on port {port}. Killing it...");
                                zombie.Kill(true);
                                zombie.WaitForExit(3000);
                            } catch { } // Process might already be gone

@@ -73,6 +73,13 @@ namespace GxMcp.Gateway
         private long _sdkInitMs = -1;
         private System.Diagnostics.Stopwatch? _spawnWatch;
         private System.Diagnostics.Stopwatch? _sdkInitWatch;
+        // Crash-ledger inputs, captured while the process is still alive so they survive
+        // the Kill/Dispose that zeroes WorkingSet64 and hides the exit code. The health
+        // check refreshes _lastWorkingSetBytes on each tick; the Exited handler and
+        // StopProcess capture the exit code before the Process is disposed.
+        private int _lastExitCode = int.MinValue;
+        private long _lastWorkingSetBytes = -1;
+        private int _lastPid;
 
         public long? SpawnMs { get { var v = System.Threading.Interlocked.Read(ref _spawnMs); return v < 0 ? (long?)null : v; } }
         public long? SdkInitMs { get { var v = System.Threading.Interlocked.Read(ref _sdkInitMs); return v < 0 ? (long?)null : v; } }
@@ -111,7 +118,12 @@ namespace GxMcp.Gateway
         {
             _config = config;
             Kb = kb;
-            _workerIdleTimeout = TimeSpan.FromMinutes(Math.Max(1, _config.Server?.WorkerIdleTimeoutMinutes ?? 5));
+            // A configured value <= 0 means "never idle-reap" — honor it (ShouldStopForIdle
+            // short-circuits on TimeSpan.Zero). The previous Math.Max(1, …) floor forced 0 up
+            // to 1 minute, making the documented disable path dead code AND turning the most
+            // aggressive setting into the worst 90s-tax generator.
+            int idleMin = _config.Server?.WorkerIdleTimeoutMinutes ?? 60;
+            _workerIdleTimeout = idleMin <= 0 ? TimeSpan.Zero : TimeSpan.FromMinutes(idleMin);
             _wedgedCommandTimeout = TimeSpan.FromMinutes(Math.Max(1, _config.Server?.WedgedCommandTimeoutMinutes ?? 15));
             _writerTask = Task.Run(ProcessQueueAsync);
         }
@@ -125,6 +137,7 @@ namespace GxMcp.Gateway
                 {
                     if (_process != null && !_process.HasExited)
                     {
+                        SnapshotVitals();
                         if (ShouldStopForIdle())
                         {
                             Program.Log($"[Gateway] worker_idle_shutdown pid={_process.Id} idleTimeoutMinutes={_workerIdleTimeout.TotalMinutes}");
@@ -313,6 +326,23 @@ namespace GxMcp.Gateway
                     }
                 }
             }
+        }
+
+        // Capture the process vitals that Kill/Dispose destroys (WorkingSet64 → 0, Id →
+        // throws) so the crash ledger can report memory-at-death and pid even for an exit
+        // observed only after teardown. Best-effort; called while the process is alive.
+        private void SnapshotVitals()
+        {
+            try
+            {
+                var p = _process;
+                if (p != null && !p.HasExited)
+                {
+                    _lastWorkingSetBytes = p.WorkingSet64;
+                    _lastPid = p.Id;
+                }
+            }
+            catch { /* process may have exited between the check and the read */ }
         }
 
         private static bool IsProcessRunning(Process? process)
@@ -681,6 +711,7 @@ namespace GxMcp.Gateway
                     catch
                     {
                     }
+                    _lastExitCode = exitCode;
 
                     // FR#19: exit code 17 means a sibling worker already serves this KB
                     // (single-instance reject). Don't respawn — the live worker is authoritative.
@@ -714,6 +745,7 @@ namespace GxMcp.Gateway
                     try
                     {
                         _process.Start();
+                        _lastPid = _process.Id;
                         SpawnedAtUtc = DateTime.UtcNow;
                         _spawnWatch.Stop();
                         System.Threading.Interlocked.Exchange(ref _spawnMs, _spawnWatch.ElapsedMilliseconds);
@@ -842,6 +874,25 @@ namespace GxMcp.Gateway
         private void FireWorkerExitedOnce(WorkerStopReason reason)
         {
             if (Interlocked.Exchange(ref _exitNotified, 1) != 0) return;
+            try
+            {
+                int? exitCode = _lastExitCode == int.MinValue ? (int?)null : _lastExitCode;
+                double? uptimeSec = SpawnedAtUtc.HasValue
+                    ? (DateTime.UtcNow - SpawnedAtUtc.Value).TotalSeconds : (double?)null;
+                long? lastWs = _lastWorkingSetBytes >= 0 ? _lastWorkingSetBytes : (long?)null;
+                CrashLedger.Record(
+                    kbAlias: Kb?.Alias ?? "",
+                    reason: reason,
+                    exitCode: exitCode,
+                    pid: _lastPid > 0 ? _lastPid : (int?)null,
+                    uptimeSec: uptimeSec,
+                    lastWorkingSetBytes: lastWs,
+                    lastOperation: _lastOperationInfo,
+                    spawnMs: SpawnMs,
+                    sdkInitMs: SdkInitMs,
+                    sdkReady: IsSdkReady);
+            }
+            catch (Exception ex) { Program.Log($"[Gateway] CrashLedger.Record threw: {ex.Message}"); }
             try { OnWorkerExited?.Invoke(reason); }
             catch (Exception ex) { Program.Log($"[Gateway] OnWorkerExited handler threw: {ex.Message}"); }
         }
@@ -878,9 +929,17 @@ namespace GxMcp.Gateway
                 {
                     try
                     {
+                        // Capture vitals before Kill zeroes WorkingSet64 / invalidates the
+                        // handle, so the ledger can attribute memory-at-death for reaped
+                        // (idle / wedged) workers too.
+                        SnapshotVitals();
                         if (!_process.HasExited)
                         {
                             _process.Kill(true);
+                        }
+                        else
+                        {
+                            try { _lastExitCode = _process.ExitCode; } catch { }
                         }
 
                         _process.Dispose();
@@ -1070,5 +1129,8 @@ namespace GxMcp.Gateway
         internal void CompleteInFlightForTest(string id) => CompleteInFlight(id);
 
         internal int InFlightStartTimesCountForTest => _inFlightStartTimes.Count;
+
+        // Idle-reap window resolved from config in the ctor. TimeSpan.Zero == disabled.
+        internal TimeSpan IdleTimeoutForTest => _workerIdleTimeout;
     }
 }

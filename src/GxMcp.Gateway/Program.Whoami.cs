@@ -922,6 +922,18 @@ namespace GxMcp.Gateway
                     ["uptimeMin"] = uptimeMin
                 };
                 if (reloadHint != null) workerBlock["reloadHint"] = reloadHint;
+
+                // Durable death history (survives worker log rotation). Lets the agent —
+                // and support — see how often the worker actually dies and why, instead of
+                // guessing. Only attached when at least one death has been recorded.
+                try
+                {
+                    var deaths = CrashLedger.Summarize(recentN: 3);
+                    if ((deaths["total"]?.ToObject<int?>() ?? 0) > 0)
+                        workerBlock["deaths"] = deaths;
+                }
+                catch { /* forensics are best-effort — never break whoami */ }
+
                 return workerBlock;
             }
             catch (Exception ex)

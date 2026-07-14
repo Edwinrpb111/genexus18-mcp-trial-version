@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+Worker-stability pass: the worker stops dying for reasons that have nothing to do with your KB, and when it does die you can finally see why.
+
+### Fixed
+
+- **A second editor/agent no longer kills your live worker.** When more than one client connected at once, a second gateway ran as a proxy to the first. A routine, id-less MCP notification — which the main gateway correctly answers with an empty acknowledgement — was misread as "the main gateway is dead," triggering a takeover whose port-recovery step then force-killed the real gateway *and its GeneXus worker*, mid-edit or mid-build. The proxy now treats an empty acknowledgement to a notification as success, re-verifies the main gateway is actually gone before taking over, and never force-kills a process holding the port unless it is itself one of ours. This removes a whole class of "the worker just died / I had to reconnect" interruptions that were never about your KB.
+
+### Changed
+
+- **The worker stays warm far longer.** An idle worker was reaped after 5 minutes, and the very next tool call then re-paid the full ~90-second cold start (almost all of it the GeneXus Service Manager warmup, which is intrinsic and can't be shortened). The idle window is now 60 minutes and is genuinely disableable: set `Server.WorkerIdleTimeoutMinutes` to `0` to keep the worker up for the whole session. A value of `0` previously did nothing — it was silently forced up to 1 minute. Memory stays bounded by the open-KB limit and by the worker exiting when you disconnect.
+
+### Added
+
+- **`genexus_whoami` reports worker deaths.** The worker health block gains a `deaths` summary — how many times the worker has exited, how many were unexpected (a real crash vs. a planned idle/shutdown), a breakdown by reason and exit code, and the most recent few with memory-at-death and the tool that was running. This history survives worker restarts (the worker's own debug log is wiped on every start), so a recurring crash is finally measurable instead of guesswork.
+
+### Internal
+
+- New `CrashLedger` (gateway) appends every worker exit to a ring-capped `%LOCALAPPDATA%\GenexusMCP\worker-crashes.jsonl`; `WorkerProcess` snapshots exit code + working set + uptime + last-op while the process is alive and records from `FireWorkerExitedOnce`. Idle-timeout resolution now honors `<= 0` as disabled (removed the `Math.Max(1,…)` floor); default `WorkerIdleTimeoutMinutes` 5 → 60. Proxy empty-body decision extracted to `Program.ProxyEmptyBodyIsSuccess`; forced promotion gated on a new `IsPortListeningAsync` liveness probe; `TryKillProcessOnPort` restricted to `GxMcp.Gateway` / `dotnet` processes. The ~88s Service-Manager warmup was investigated and confirmed intrinsic/unshrinkable (single-shot per process, unshareable) — no code change, it only reinforces keeping the worker warm. New tests: `CrashLedgerTests`, `WorkerIdleTimeoutTests`, `ProxyPromotionTests`.
+
 ## v2.19.0 — 2026-07-14
 
 Agentic-DX fixes from a real session authoring a SOAP-exposed Procedure (issue #32).
