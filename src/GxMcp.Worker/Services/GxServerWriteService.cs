@@ -5,10 +5,13 @@ using System.Linq;
 using Artech.Architecture.Common.Objects;
 using Artech.Architecture.Common.Services;
 using Artech.Architecture.Common.Services.TeamDevData.Server;
+using Artech.Architecture.Common.Services.TeamDev;
 using Artech.Udm.Framework;
+using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 using SdkServices = Artech.Architecture.Common.Services.Services;
+using ClientTeamDev = Artech.Architecture.Common.Services.TeamDevData.Client;
 
 namespace GxMcp.Worker.Services
 {
@@ -92,9 +95,9 @@ namespace GxMcp.Worker.Services
             switch (action)
             {
                 case "commit": return DoCommit(tdSvc, model, kbAlias, args);
-                case "update": return DoUpdate(model, kbAlias, args);
+                case "update": return DoUpdate(tdSvc, kb, model, kbAlias, args);
                 case "lock": return DoLock(model, kbAlias, args);
-                case "resolve": return DoResolve(tdSvc, model, args);
+                case "resolve": return DoResolve(tdSvc, kb, model, args);
                 default:
                     return McpResponse.Err(code: "BadAction", message: "Unknown write action '" + action + "'.");
             }
@@ -128,6 +131,25 @@ namespace GxMcp.Worker.Services
                     StringComparer.OrdinalIgnoreCase);
                 if (wanted.Count == 0)
                     return McpResponse.Err(code: "BadArgs", message: "targets must contain at least one non-empty object name.");
+            }
+
+            // Snapshot the pre-commit changelist names for a WHOLE commit so the response can
+            // report exactly which objects went in — the SDK's Commit returns only a success
+            // bool + error string, so without this the caller can't tell what was committed
+            // (the previous response was just {committed:true, message}). Partial commits
+            // already know their set (`wanted`). Read-only; failure only costs the report.
+            List<string> wholeCommitNames = null;
+            if (wanted == null)
+            {
+                try
+                {
+                    wholeCommitNames = (tdSvc.GetLocalChanges(model) ?? Enumerable.Empty<KBObjectHistory>())
+                        .Where(h => h != null)
+                        .Select(h => SafeStr(() => h.ObjectName))
+                        .Where(n => !string.IsNullOrEmpty(n))
+                        .ToList();
+                }
+                catch { /* reporting only — never block the commit */ }
             }
 
             var ignored = new List<KBObjectHistory>();
@@ -197,10 +219,19 @@ namespace GxMcp.Worker.Services
                         hint: "Check for pending conflicts (action=conflicts) before retrying.");
                 }
 
+                var committedList = wanted != null
+                    ? (IEnumerable<string>)wanted
+                    : (wholeCommitNames ?? new List<string>());
+
                 var result = new JObject
                 {
                     ["committed"] = true,
                     ["message"] = message,
+                    ["committedObjects"] = new JArray(committedList),
+                    ["committedCount"] = committedList.Count(),
+                    // The new remote version/revision after the commit lands, so the caller can
+                    // confirm the changelist reached the server (and reference it).
+                    ["remoteVersion"] = SafeStr(() => tdSvc.RemoteVersionName(model)),
                     ["source"] = "sdk:IGXserverService"
                 };
                 if (wanted != null)
@@ -227,11 +258,16 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private string DoUpdate(KBModel model, string kbAlias, JObject args)
+        private string DoUpdate(ITeamDevClientService tdSvc, KnowledgeBase kb, KBModel model, string kbAlias, JObject args)
         {
             IGXserverService svc = GxMcp.Worker.Helpers.SdkServiceResolver.Resolve<IGXserverService>();
             if (svc == null) return ServerServiceUnavailable();
 
+            bool apply = args?["apply"]?.ToObject<bool?>() ?? true;
+            bool exportAll = args?["all"]?.ToObject<bool?>() ?? false;
+
+            // Step 1: fetch the pending-changes package from the server (download).
+            string updateFile;
             try
             {
                 var data = new ServerUpdateData
@@ -239,18 +275,75 @@ namespace GxMcp.Worker.Services
                     Model = model,
                     KBAlias = kbAlias,
                     UpdateStatistics = false,
-                    ExportAll = args?["all"]?.ToObject<bool?>() ?? false
+                    ExportAll = exportAll
                 };
+                updateFile = svc.GetUpdateFile(data);
+            }
+            catch (Exception ex)
+            {
+                return McpResponse.Err(code: "UpdateFailed", message: ex.Message, hint: "Check the worker log for details.");
+            }
 
-                string updateFile = svc.GetUpdateFile(data);
+            // apply=false preserves the old download-only behavior (no local mutation).
+            if (!apply)
+            {
                 return McpResponse.Ok(
                     code: "GxServerUpdateFileRetrieved",
                     result: new JObject
                     {
+                        ["applied"] = false,
                         ["updateFile"] = updateFile ?? string.Empty,
-                        ["note"] = "Downloaded the pending-changes package from the server. Applying it into local KB objects (ITeamDevClientUpdate.Update) is a separate, not-yet-wired step — use the IDE's Team Development > Update to apply.",
+                        ["note"] = "Downloaded the pending-changes package only (apply=false). Pass apply=true (default) to receive the changes into local KB objects.",
                         ["source"] = "sdk:IGXserverService"
                     });
+            }
+
+            // Step 2: apply into local KB objects via ITeamDevClientUpdate (obtained from
+            // ITeamDevClientService.JustReceiveChanges). This hits the server, so it needs
+            // credentials — url auto-resolves from the linked KB; user/password come from args
+            // or GXMCP_TEAMDEV_* env. Conflicting objects are left flagged for action=resolve.
+            var creds = ReadCreds(tdSvc, kb, args);
+            if (string.IsNullOrWhiteSpace(creds.Url))
+                return CredentialsRequired("update");
+
+            try
+            {
+                var rc = new ClientTeamDev.ReceiveChangesData
+                {
+                    Model = model,
+                    Url = creds.Url,
+                    User = creds.User,
+                    Password = creds.Password,
+                    AuthenticationToken = creds.Token,
+                    FilePath = updateFile,
+                    ExportAll = exportAll,
+                    IncludeReferencesDependencies = true
+                };
+
+                ITeamDevClientUpdate updater = tdSvc.JustReceiveChanges(rc);
+                if (updater == null)
+                    return McpResponse.Err(code: "UpdateFailed", message: "JustReceiveChanges returned no updater.", hint: "Verify server credentials and that the KB is linked.");
+
+                bool ok = updater.Update();
+
+                var conflicts = CollectConflictNames(tdSvc, model);
+                var result = new JObject
+                {
+                    ["applied"] = ok,
+                    ["updateFile"] = updateFile ?? string.Empty,
+                    ["conflictCount"] = conflicts.Count,
+                    ["conflicts"] = new JArray(conflicts),
+                    ["source"] = "sdk:ITeamDevClientUpdate"
+                };
+                if (conflicts.Count > 0)
+                    result["hint"] = "Update applied with conflicts. Resolve them: action=resolve, strategy=mine|theirs|automerge, targets=[" + string.Join(",", conflicts) + "].";
+
+                // Conflicts are an expected outcome, not a failure — report them as Ok so the
+                // agent proceeds to resolve. A false `ok` with NO conflicts is a real failure.
+                if (!ok && conflicts.Count == 0)
+                    return McpResponse.Err(code: "UpdateFailed", message: "Update returned false with no conflicts reported.", hint: "Check the worker log; verify credentials and connectivity.");
+
+                return McpResponse.Ok(code: "GxServerUpdateApplied", result: result);
             }
             catch (Exception ex)
             {
@@ -298,7 +391,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private string DoResolve(ITeamDevClientService tdSvc, KBModel model, JObject args)
+        private string DoResolve(ITeamDevClientService tdSvc, KnowledgeBase kb, KBModel model, JObject args)
         {
             var targetsToken = args?["targets"] as JArray;
             if (targetsToken == null || targetsToken.Count == 0)
@@ -306,7 +399,7 @@ namespace GxMcp.Worker.Services
                 return McpResponse.Err(
                     code: "BadArgs",
                     message: "targets (non-empty array of object names) is required for resolve.",
-                    hint: "Pass action=resolve, targets=[\"Customer\", ...].");
+                    hint: "Pass action=resolve, targets=[\"Customer\", ...], strategy=mine|theirs|automerge.");
             }
 
             var wanted = new HashSet<string>(
@@ -317,10 +410,20 @@ namespace GxMcp.Worker.Services
                 return McpResponse.Err(code: "BadArgs", message: "targets must contain at least one non-empty object name.");
             }
 
+            // Strategy chooses which version wins per conflicted object:
+            //  mine      — keep the local object, discard the incoming server version (creds-free);
+            //  theirs    — overwrite local with the server version (needs credentials);
+            //  automerge — 3-way merge base+mine+theirs via IMergeService (needs credentials).
+            // Default is the safe, creds-free "mine" (previous behavior only cleared the flag).
+            string strategy = (args?["strategy"]?.ToString() ?? "mine").Trim().ToLowerInvariant();
+            if (strategy != "mine" && strategy != "theirs" && strategy != "automerge")
+                return McpResponse.Err(code: "BadArgs", message: "strategy must be one of: mine, theirs, automerge.", hint: "Default is 'mine' (keep local).");
+
             try
             {
-                var keys = new List<EntityKey>();
-                var matched = new List<string>();
+                // Collect the conflicted entities matching the requested targets, keyed so we
+                // can fetch base/theirs per object and MarkAsResolved at the end.
+                var matches = new List<(string name, EntityKey key)>();
                 foreach (var ct in new[] { UpdateConflict.YesMustOverwrite, UpdateConflict.YesWithAutoMerge })
                 {
                     IEnumerable<Entity> raw = tdSvc.GetConflictEntities(model, ct);
@@ -329,14 +432,11 @@ namespace GxMcp.Worker.Services
                     {
                         string name = SafeStr(() => e.Name);
                         if (name != null && wanted.Contains(name))
-                        {
-                            keys.Add(e.Key);
-                            matched.Add(name);
-                        }
+                            matches.Add((name, e.Key));
                     }
                 }
 
-                if (keys.Count == 0)
+                if (matches.Count == 0)
                 {
                     return McpResponse.Err(
                         code: "NoMatchingConflicts",
@@ -344,19 +444,96 @@ namespace GxMcp.Worker.Services
                         hint: "Check action=conflicts for current conflict object names.");
                 }
 
-                bool ok = tdSvc.MarkAsResolved(model, keys);
-                if (!ok)
+                var applied = new JArray();
+
+                // theirs / automerge need to fetch the server version → credentials + services.
+                Creds creds = default;
+                IMergeService mergeSvc = null;
+                if (strategy == "theirs" || strategy == "automerge")
                 {
-                    return McpResponse.Err(code: "ResolveFailed", message: "MarkAsResolved returned false.", hint: "Check the worker log for details.");
+                    creds = ReadCreds(tdSvc, kb, args);
+                    if (string.IsNullOrWhiteSpace(creds.Url))
+                        return CredentialsRequired("resolve strategy=" + strategy);
+                    if (strategy == "automerge")
+                    {
+                        mergeSvc = GxMcp.Worker.Helpers.SdkServiceResolver.Resolve<IMergeService>();
+                        if (mergeSvc == null)
+                            return McpResponse.Err(code: "GxServerServiceUnavailable", message: "IMergeService is not registered in this worker session.", hint: "Restart the worker (genexus_worker_reload mode=hard) and retry.");
+                    }
+
+                    foreach (var (name, key) in matches)
+                    {
+                        var outcome = new JObject { ["object"] = name, ["strategy"] = strategy };
+                        try
+                        {
+                            KBObject mine = KBObject.Get(model, key);
+                            KBObject theirs = tdSvc.GetServerObject(new ClientTeamDev.ServerObjectData(model, mine)
+                            {
+                                Url = creds.Url,
+                                User = creds.User,
+                                Password = creds.Password,
+                                AuthenticationToken = creds.Token
+                            });
+
+                            if (theirs == null)
+                            {
+                                outcome["ok"] = false;
+                                outcome["error"] = "Could not fetch the server version of the object.";
+                            }
+                            else if (strategy == "theirs")
+                            {
+                                theirs.EnsureSave();
+                                outcome["ok"] = true;
+                            }
+                            else // automerge
+                            {
+                                KBObject baseObj = SafeObj(() => tdSvc.GetLastSynchedObject(model, key));
+                                KBObject merged = baseObj != null
+                                    ? mergeSvc.MergeObjects(baseObj, mine, theirs, model)
+                                    : mergeSvc.MergeObjects(mine, theirs, model, false);
+                                if (merged == null)
+                                {
+                                    outcome["ok"] = false;
+                                    outcome["error"] = "MergeObjects returned null.";
+                                }
+                                else
+                                {
+                                    merged.EnsureSave();
+                                    outcome["ok"] = true;
+                                    outcome["threeWay"] = baseObj != null;
+                                }
+                            }
+                        }
+                        catch (Exception exObj)
+                        {
+                            outcome["ok"] = false;
+                            outcome["error"] = exObj.Message;
+                        }
+                        applied.Add(outcome);
+                    }
+                }
+                else
+                {
+                    // mine: no object mutation — the local version already wins; just clear the flag.
+                    foreach (var (name, _) in matches)
+                        applied.Add(new JObject { ["object"] = name, ["strategy"] = "mine", ["ok"] = true });
                 }
 
+                // Clear the conflict flags for every matched object (idempotent per the SDK).
+                bool ok = tdSvc.MarkAsResolved(model, matches.Select(m => m.key).ToList());
+                if (!ok)
+                    return McpResponse.Err(code: "ResolveFailed", message: "MarkAsResolved returned false.", hint: "Check the worker log for details.");
+
+                int failed = applied.Count(o => o["ok"]?.ToObject<bool?>() == false);
                 return McpResponse.Ok(
                     code: "GxServerConflictsResolved",
                     result: new JObject
                     {
                         ["resolved"] = true,
-                        ["targets"] = new JArray(matched),
-                        ["count"] = matched.Count,
+                        ["strategy"] = strategy,
+                        ["count"] = matches.Count,
+                        ["failedObjects"] = failed,
+                        ["objects"] = applied,
                         ["source"] = "sdk:ITeamDevClientService"
                     });
             }
@@ -364,6 +541,62 @@ namespace GxMcp.Worker.Services
             {
                 return McpResponse.Err(code: "ResolveFailed", message: ex.Message, hint: "Check the worker log for details.");
             }
+        }
+
+        // --- Team-Dev credential + helper plumbing (mutating server ops) ------------------
+
+        private struct Creds { public string Url; public string User; public string Password; public string Token; }
+
+        // Server credentials for the mutating paths (update-apply, resolve theirs/automerge).
+        // URL auto-resolves from the linked KB; user/password/token come from the call args or
+        // GXMCP_TEAMDEV_{URL,USER,PASSWORD,TOKEN} env. Never logged (secrets — global rule §10).
+        private static Creds ReadCreds(ITeamDevClientService tdSvc, KnowledgeBase kb, JObject args)
+        {
+            string url = args?["url"]?.ToString();
+            if (string.IsNullOrWhiteSpace(url)) url = Environment.GetEnvironmentVariable("GXMCP_TEAMDEV_URL");
+            if (string.IsNullOrWhiteSpace(url)) { try { url = tdSvc.GetServerUrl(kb); } catch { } }
+
+            string user = args?["user"]?.ToString();
+            if (string.IsNullOrWhiteSpace(user)) user = Environment.GetEnvironmentVariable("GXMCP_TEAMDEV_USER");
+            string pass = args?["password"]?.ToString();
+            if (string.IsNullOrWhiteSpace(pass)) pass = Environment.GetEnvironmentVariable("GXMCP_TEAMDEV_PASSWORD");
+            string token = args?["token"]?.ToString();
+            if (string.IsNullOrWhiteSpace(token)) token = Environment.GetEnvironmentVariable("GXMCP_TEAMDEV_TOKEN");
+
+            return new Creds { Url = url, User = user, Password = pass, Token = token };
+        }
+
+        private static string CredentialsRequired(string op)
+        {
+            return McpResponse.Err(
+                code: "CredentialsRequired",
+                message: "Server credentials are required for " + op + " (this operation talks to the GeneXus Server).",
+                hint: "Pass user + password (and optionally url) in the call, or set GXMCP_TEAMDEV_USER / GXMCP_TEAMDEV_PASSWORD (and GXMCP_TEAMDEV_URL if the KB link doesn't resolve it).");
+        }
+
+        private static List<string> CollectConflictNames(ITeamDevClientService tdSvc, KBModel model)
+        {
+            var names = new List<string>();
+            try
+            {
+                foreach (var ct in new[] { UpdateConflict.YesMustOverwrite, UpdateConflict.YesWithAutoMerge })
+                {
+                    IEnumerable<Entity> raw = tdSvc.GetConflictEntities(model, ct);
+                    if (raw == null) continue;
+                    foreach (Entity e in raw)
+                    {
+                        string n = SafeStr(() => e.Name);
+                        if (!string.IsNullOrEmpty(n) && !names.Contains(n)) names.Add(n);
+                    }
+                }
+            }
+            catch { /* best-effort */ }
+            return names;
+        }
+
+        private static KBObject SafeObj(Func<KBObject> f)
+        {
+            try { return f(); } catch { return null; }
         }
 
         private static string ServerServiceUnavailable()

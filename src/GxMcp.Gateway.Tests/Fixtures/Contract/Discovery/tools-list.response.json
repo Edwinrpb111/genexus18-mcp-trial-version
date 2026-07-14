@@ -1178,15 +1178,11 @@
         "openWorldHint": false,
         "readOnlyHint": false
       },
-      "description": "GxServer (Team Development) sync. Read: status|pending|conflicts|history. Write (destructive; requires a GXserver-linked KB): commit (message; optional targets[] = commit ONLY those pending objects, leaving the rest uncommitted) | update | lock (target) | resolve (targets[] via MarkAsResolved). Returns {connected:false} when KB is not linked.",
+      "description": "GxServer (Team Development) sync. Read: status|pending|conflicts|history. Write (destructive; requires a GXserver-linked KB): commit (message; optional targets[] = commit ONLY those pending objects; reports committedObjects + remoteVersion) | update (applies changes into local KB; apply=false = download only; leaves conflicts flagged) | lock (target) | resolve (targets[] + strategy). theirs/automerge/update talk to the server and need creds via GXMCP_TEAMDEV_USER/PASSWORD env (url auto-resolves). Returns {connected:false} when KB is not linked.",
       "inputSchema": {
         "examples": [
           {
             "action": "status"
-          },
-          {
-            "action": "history",
-            "limit": 20
           },
           {
             "action": "commit",
@@ -1200,7 +1196,11 @@
             ]
           },
           {
+            "action": "update"
+          },
+          {
             "action": "resolve",
+            "strategy": "automerge",
             "targets": [
               "Customer"
             ]
@@ -1220,6 +1220,10 @@
             ],
             "type": "string"
           },
+          "apply": {
+            "description": "update: apply changes into local KB (default true); false = download package only.",
+            "type": "boolean"
+          },
           "force": {
             "description": "commit: force commit despite pending server-side changes.",
             "type": "boolean"
@@ -1236,12 +1240,21 @@
             "description": "commit: commit comment.",
             "type": "string"
           },
+          "strategy": {
+            "description": "resolve: which version wins — mine (keep local, default, creds-free), theirs (take server), automerge (3-way merge). theirs/automerge need server creds.",
+            "enum": [
+              "mine",
+              "theirs",
+              "automerge"
+            ],
+            "type": "string"
+          },
           "target": {
             "description": "lock: object name to lock.",
             "type": "string"
           },
           "targets": {
-            "description": "commit: partial commit — object names to commit (all other pending objects are excluded). resolve: object names with an active conflict to mark resolved. Names must appear in action=pending; unknown names refuse the whole commit.",
+            "description": "commit: partial commit — object names to commit (all other pending objects are excluded). resolve: conflicted object names to resolve. Names must appear in action=pending/conflicts.",
             "items": {
               "type": "string"
             },
