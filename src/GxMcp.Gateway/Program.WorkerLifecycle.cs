@@ -265,6 +265,11 @@ namespace GxMcp.Gateway
                 ["action"] = workerCommand["action"]?.DeepClone(),
                 ["target"] = workerCommand["target"]?.DeepClone(),
                 ["payload"] = workerCommand["payload"]?.DeepClone(),
+                // Hoist dryRun alongside action/target/payload: several worker handlers
+                // (Refactor, index, build, run, github) read it from the top level of the
+                // request, but it only ever arrived nested under params — so dryRun was
+                // silently dropped and those previews executed for real. Carry it up too.
+                ["dryRun"] = workerCommand["dryRun"]?.DeepClone(),
                 ["params"] = workerCommand.DeepClone()
             };
 
