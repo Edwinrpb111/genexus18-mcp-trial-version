@@ -29,6 +29,9 @@ namespace GxMcp.Gateway.Tests
             var payload = JObject.Parse(jo["payload"]!.ToString());
             Assert.Equal("ProcOld", payload["oldName"]!.ToString());
             Assert.Equal("ProcNew", payload["newName"]!.ToString());
+            // Bug fix: type must reach the worker payload so RenameObject can
+            // disambiguate same-named objects across types (e.g. Table vs WebPanel).
+            Assert.Equal("Procedure", payload["type"]!.ToString());
         }
 
         [Fact]

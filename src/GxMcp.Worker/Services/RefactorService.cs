@@ -44,12 +44,14 @@ namespace GxMcp.Worker.Services
 
                 string oldName = null;
                 string newName = null;
+                string typeFilter = null;
 
                 if (payload.Trim().StartsWith("{"))
                 {
                     var data = JObject.Parse(payload);
                     oldName = data["oldName"]?.ToString();
                     newName = data["newName"]?.ToString();
+                    typeFilter = data["type"]?.ToString() ?? data["typeFilter"]?.ToString();
                 }
                 else
                 {
@@ -75,7 +77,7 @@ namespace GxMcp.Worker.Services
                     return RenameVariable(target, oldName, newName);
                 }
 
-                if (action == "RenameAttribute" || action == "RenameObject") {
+                if (action == "RenameAttribute") {
                     if (dryRun)
                     {
                         // Count CalledBy edges to show what would be updated.
@@ -100,6 +102,37 @@ namespace GxMcp.Worker.Services
                             });
                     }
                     return RenameAttribute(oldName, newName);
+                }
+
+                if (action == "RenameObject") {
+                    if (dryRun)
+                    {
+                        // Resolve the object first (honoring typeFilter) so the CalledBy
+                        // lookup uses the object's real type, not a hardcoded "Attribute:".
+                        var obj = _objectService.FindObject(oldName, typeFilter);
+                        string objType = obj?.TypeDescriptor?.Name;
+                        var index = _indexCacheService.GetIndex();
+                        int callerCount = 0;
+                        if (obj != null && index != null && index.Objects.TryGetValue(objType + ":" + oldName, out var entry) && entry.CalledBy != null)
+                            callerCount = entry.CalledBy.Count;
+                        return Models.McpResponse.Ok(
+                            target: oldName,
+                            code: "DryRun",
+                            result: new JObject
+                            {
+                                ["preview"] = new JObject
+                                {
+                                    ["wouldRename"] = new JArray(new JObject
+                                    {
+                                        ["from"] = oldName,
+                                        ["to"] = newName,
+                                        ["type"] = objType,
+                                        ["callerCount"] = callerCount
+                                    })
+                                }
+                            });
+                    }
+                    return RenameObject(oldName, newName, typeFilter);
                 }
 
                 return Models.McpResponse.Err(
@@ -444,6 +477,110 @@ namespace GxMcp.Worker.Services
             return Models.McpResponse.Ok(
                 target: oldName,
                 code: "AttributeRenamed",
+                result: resultObj);
+        }
+
+        private string RenameObject(string oldName, string newName, string typeFilter)
+        {
+            if (string.IsNullOrEmpty(oldName) || string.IsNullOrEmpty(newName))
+                return Models.McpResponse.Err(
+                    code: "RenameArgsMissing",
+                    message: "Old and new names are required.",
+                    hint: "Provide both the current name and the replacement name.",
+                    target: oldName);
+            // no-nextStep: missing scalar arguments; no tool call can supply them
+
+            var kb = _kbService.GetKB();
+            if (kb == null) return Models.McpResponse.Err(
+                code: "KbNotOpen",
+                message: "KB not open.",
+                hint: "Open a Knowledge Base before running refactor operations.",
+                nextSteps: new JArray(Models.McpResponse.NextStep(
+                    tool: "genexus_kb",
+                    args: new JObject { ["action"] = "open" },
+                    why: "Opens the configured Knowledge Base so refactor operations can proceed.")),
+                target: oldName);
+
+            var obj = _objectService.FindObject(oldName, typeFilter);
+            if (obj == null)
+                return Models.McpResponse.Err(
+                    code: "ObjectNotFound",
+                    message: "Object not found.",
+                    hint: "Pass type=<WebPanel|Transaction|...> to disambiguate when multiple objects share this name (e.g. a Table and a WebPanel).",
+                    nextSteps: new JArray(Models.McpResponse.NextStep(
+                        tool: "genexus_list_objects",
+                        args: new JObject { ["query"] = oldName },
+                        why: "List objects matching the name to find the correct type/identifier.")),
+                    target: oldName);
+
+            string objType = obj.TypeDescriptor?.Name;
+
+            // Patch callers FIRST (before renaming the object) so that the old
+            // name is still resolvable while we enumerate and save each caller.
+            // Renaming the object before patching callers can cause reference
+            // failures inside EnsureSave for objects that still reference oldName.
+            var index = _indexCacheService.GetIndex();
+            var affectedObjects = new List<string>();
+            // index.Objects is keyed as "Type:Name" via GetEntryStorageKey, not bare Name.
+            if (index != null && index.Objects.TryGetValue(objType + ":" + oldName, out var entry) && entry.CalledBy != null)
+                affectedObjects.AddRange(entry.CalledBy);
+
+            string pattern = @"(?i)\b" + System.Text.RegularExpressions.Regex.Escape(oldName) + @"\b";
+
+            var patched = new List<string>();
+            var failed = new List<JObject>();
+
+            foreach (var objName in affectedObjects.Distinct()) {
+                var caller = _objectService.FindObject(objName);
+                if (caller == null) { failed.Add(new JObject { ["name"] = objName, ["reason"] = "object not found" }); continue; }
+                bool changed = false;
+                try
+                {
+                    foreach (var part in caller.Parts.Cast<KBObjectPart>()) {
+                        if (part is ISource sourcePart) {
+                            string original = sourcePart.Source;
+                            if (!string.IsNullOrEmpty(original)) {
+                                string updated = System.Text.RegularExpressions.Regex.Replace(original, pattern, newName);
+                                if (updated != original) { sourcePart.Source = updated; changed = true; }
+                            }
+                        }
+                    }
+                    if (changed) { caller.EnsureSave(); _indexCacheService.UpdateEntry(caller); patched.Add(objName); }
+                }
+                catch (Exception patchEx)
+                {
+                    failed.Add(new JObject { ["name"] = objName, ["reason"] = patchEx.Message });
+                }
+            }
+
+            // Now rename the object itself.
+            obj.Name = newName;
+            obj.EnsureSave();
+            _indexCacheService.UpdateEntry(obj);
+
+            bool hasFailures = failed.Count > 0;
+            var resultObj = new JObject
+            {
+                ["oldName"] = oldName,
+                ["newName"] = newName,
+                ["type"] = objType,
+                ["patched"] = new JArray(patched.Select(p => (JToken)p).ToArray()),
+                ["failed"] = new JArray(failed.Cast<JToken>().ToArray()),
+                ["affectedObjects"] = patched.Count
+            };
+
+            if (hasFailures)
+            {
+                // Partial success — object was renamed but some callers could not be patched.
+                return Models.McpResponse.Ok(
+                    target: oldName,
+                    code: "ObjectRenamedPartial",
+                    result: resultObj);
+            }
+
+            return Models.McpResponse.Ok(
+                target: oldName,
+                code: "ObjectRenamed",
                 result: resultObj);
         }
 

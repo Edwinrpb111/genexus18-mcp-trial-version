@@ -75,7 +75,8 @@ namespace GxMcp.Gateway.Routers
                         payload = new JObject
                         {
                             ["oldName"] = from,
-                            ["newName"] = to
+                            ["newName"] = to,
+                            ["type"] = type
                         }.ToString()
                     };
                 }
@@ -1030,7 +1031,8 @@ namespace GxMcp.Gateway.Routers
                 payload = new JObject
                 {
                     ["oldName"] = args?["target"]?.ToString(),
-                    ["newName"] = args?["newName"]?.ToString()
+                    ["newName"] = args?["newName"]?.ToString(),
+                    ["type"] = args?["type"]?.ToString()
                 }.ToString()
             };
         }
