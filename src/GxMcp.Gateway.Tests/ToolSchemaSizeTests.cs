@@ -54,7 +54,13 @@ namespace GxMcp.Gateway.Tests
             //   2026-07-14 (issue #32): 13600 → 14100 for genexus_variable batch
             //   `variables[]` add + typeName/VarChar docs and genexus_gxserver commit
             //   `targets[]` (partial commit). Measured ~13856 tokens; ~244 headroom.
-            Assert.True(approxTokens < 14100, $"tool_definitions.json is ~{approxTokens} tokens; budget 14100.");
+            //   2026-07-15 (per-KB memory): 14100 → 14550 for the new genexus_memory
+            //   tool (save/recall/list/forget per-KB fact store). Measured ~14333
+            //   tokens; ~217 headroom.
+            //   2026-07-15 (per-KB memory, Phase 3): added consolidate/promote actions
+            //   + message/dryRun params to genexus_memory. Measured ~14469 tokens;
+            //   ~81 headroom — still under the 14550 budget, no bump needed.
+            Assert.True(approxTokens < 14550, $"tool_definitions.json is ~{approxTokens} tokens; budget 14550.");
         }
     }
 }

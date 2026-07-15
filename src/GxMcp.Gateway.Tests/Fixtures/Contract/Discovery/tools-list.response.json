@@ -1876,6 +1876,87 @@
     },
     {
       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Per-KB fact store. action: save (fact required; optional target/type/tags; dedups on identical fact+object, bumping a hit count) | recall (filter by target/type/tags — ANY match; no filter returns all) | list (all, newest first) | forget (tombstone by id) | promote (lift a friction-log message into a memory, tagged 'friction') | consolidate (dreaming — merge redundant/overlapping facts within scope; dryRun=true previews, dryRun=false compacts memory.jsonl). Persisted to .gx/memory/memory.jsonl.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "examples": [
+          {
+            "action": "save",
+            "fact": "Customer.Email must be unique",
+            "tags": [
+              "validation"
+            ],
+            "target": "Customer",
+            "type": "Transaction"
+          },
+          {
+            "action": "recall",
+            "target": "Customer"
+          },
+          {
+            "action": "consolidate",
+            "dryRun": true
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "save",
+              "recall",
+              "list",
+              "forget",
+              "promote",
+              "consolidate"
+            ],
+            "type": "string"
+          },
+          "dryRun": {
+            "description": "consolidate: true previews proposed merges without writing; false (default) applies and compacts memory.jsonl.",
+            "type": "boolean"
+          },
+          "fact": {
+            "description": "save: the fact to remember.",
+            "type": "string"
+          },
+          "id": "<id>",
+          "kb": {
+            "description": "KB alias.",
+            "type": "string"
+          },
+          "message": {
+            "description": "promote: friction text to promote into a memory.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "labels for filtering.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target": {
+            "description": "object name this memory is about.",
+            "type": "string"
+          },
+          "type": {
+            "description": "object type this memory is about.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "genexus_memory"
+    },
+    {
+      "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false,

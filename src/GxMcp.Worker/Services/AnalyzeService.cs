@@ -810,6 +810,28 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        // Phase 2: genexus_inspect piggyback. Resolves the real object type off the
+        // (already-built) response json when typeFilter wasn't given, so type-scoped
+        // memories match even on a plain `inspect target=Foo` call. Defensive — never
+        // lets memory surfacing break an inspect response.
+        private string AttachRelevantMemory(string json, string objectName, string typeFilter)
+        {
+            try
+            {
+                string kbPath = _kbService?.GetKbPath();
+                string objectType = typeFilter;
+                if (string.IsNullOrEmpty(objectType))
+                {
+                    try { objectType = JObject.Parse(json)?["type"]?.ToString(); } catch { }
+                }
+                return MemoryService.AttachRelevantMemory(kbPath, json, objectName, objectType);
+            }
+            catch
+            {
+                return json;
+            }
+        }
+
         public string GetConversionContext(string name, JArray include = null, string typeFilter = null)
         {
             // v2.6.9 perf: inspect cache. Build a stable key from name + sorted
@@ -827,7 +849,9 @@ namespace GxMcp.Worker.Services
                 bool noConcurrentWrite = !WriteService.WasTargetWrittenSince(name, cached.FilledAtUtc);
                 if (ttlOk && noConcurrentWrite)
                 {
-                    return cached.Json;
+                    // Phase 2: memory piggyback stays OUT of the cached json (always
+                    // fresh) — attach it to a copy on every cache hit instead.
+                    return AttachRelevantMemory(cached.Json, name, typeFilter);
                 }
                 _inspectCache.TryRemove(inspectKey, out _);
             }
@@ -1272,7 +1296,9 @@ namespace GxMcp.Worker.Services
                     Json = json,
                     FilledAtUtc = System.DateTime.UtcNow
                 };
-                return json;
+                // Phase 2: attach memory to a copy returned to the caller — the
+                // cached entry above stays memory-free so it's reused as-is.
+                return AttachRelevantMemory(json, obj.Name, obj.TypeDescriptor.Name);
             }
             catch (Exception ex)
             {

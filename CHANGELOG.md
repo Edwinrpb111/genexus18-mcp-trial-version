@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.21.0 — 2026-07-15
+
+### Added
+
+- **`genexus_memory` — a per-KB fact store you write to explicitly.** Save short facts about the KB — a validation rule, a naming convention, a gotcha about a specific object — and recall them later, scoped to the Knowledge Base you're working in. `action=save` takes a `fact` (optionally tagged with an object `target`, `type`, and free-form `tags`); saving the same fact about the same object again just bumps a hit count and merges tags instead of duplicating. `action=recall` returns facts matching any of a `target` / `type` / `tags` filter (no filter returns everything), ranked by how often they've been reinforced; `action=list` shows them all newest-first; `action=forget` drops one by id. Relevant memories are also surfaced automatically alongside `genexus_inspect`/`genexus_read` results for the same object, and `genexus_whoami` nudges you to recall them once per KB. Facts live under the KB's `.gx/memory/` folder, so they travel with the KB and stay separate across different KBs.
+- **`genexus_memory action=promote`** lifts a friction-log observation into a durable memory — pass the message text from `genexus_friction_log action=tail` and it's saved tagged `friction`, sourced as `promoted-from-friction`.
+- **`genexus_memory action=consolidate`** — "dreaming": merges redundant or overlapping facts within a scope (same object, matching or near-duplicate wording) and compacts the memory file down to the survivors. `dryRun=true` (default recommended first call) previews the proposed merges without writing; `dryRun=false` applies them. `genexus_whoami` suggests this once a KB accumulates 30+ memories, instead of a plain recall.
+
+### Internal
+
+- New `MemoryService` (worker) — append-only JSON-lines at `<kbPath>/.gx/memory/memory.jsonl`; edits/tombstones are new lines sharing the original `id`, folded to the latest non-tombstoned record per id by `LoadLive`. Mirrors the `FrictionLogService` static-Core IO idiom. Routed via `OperationsRouter` (`genexus_memory` → module `Memory`) and `CommandDispatcher.Handle_Memory`. Tool-schema budget bumped 14100 → 14550 (measured ~14333 tokens; ~217 headroom) for the new schema. New tests: `MemoryServiceTests`.
+- Phase 3: `ConsolidateCore` groups live records by `(objectName, objectType)` (case-insensitive) and merges exact-normalized-text duplicates and substring/superset facts, summing `hits`, unioning `tags`, and recording absorbed ids in `supersedes[]`. Non-dryRun rewrites `memory.jsonl` via a temp-file-then-copy (crash-safe compaction). `Promote` reuses `SaveCore` (now takes an optional `source` parameter, defaulting to `"explicit"` to preserve existing callers) with `source="promoted-from-friction"` and an auto-added `friction` tag. AI-assisted synthesis of merged facts (`useAi`) was scoped but not wired: `AiCompleteService` lives in the Worker and could be reached in principle, but doing so from the static, network-free `ConsolidateCore` core would trade a deterministic/testable merge for a live HTTP call with no DI seam — deferred, noted inline in code. `genexus_whoami`'s memory nudge now recommends `action=consolidate dryRun=true` once a KB has 30+ live memories instead of a plain recall (same once-per-alias gate). Schema-token measurement stayed under budget (~14469 of 14550) after adding `consolidate`/`promote` to the action enum plus `message`/`dryRun` params — no bump needed. New tests: 5 added to `MemoryServiceTests` (20 total in the class).
+
 ## v2.20.0 — 2026-07-14
 
 Worker-stability pass: the worker stops dying for reasons that have nothing to do with your KB, and when it does die you can finally see why.

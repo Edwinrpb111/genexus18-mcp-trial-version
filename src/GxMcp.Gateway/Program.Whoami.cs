@@ -750,6 +750,50 @@ namespace GxMcp.Gateway
         // {tool, args, why} suggestions based on observable state. The array
         // is intentionally short (max 3 entries) and ordered by urgency so
         // an LLM that only reads the first item still picks the right call.
+        // Phase 2: once-per-KB-alias gate for the memory orientation suggestion,
+        // mirroring UpdateNotifier._triggered's once-per-process gate.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _memorySuggestionShown
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
+
+        /// <summary>
+        /// Counts live (non-tombstoned, latest-per-id) records in
+        /// &lt;kbPath&gt;/.gx/memory/memory.jsonl. Gateway-side filesystem read —
+        /// mirrors the fold in Worker's MemoryService.LoadLive without depending
+        /// on the Worker assembly. Never throws; returns 0 on any error.
+        /// </summary>
+        private static int CountLiveMemories(string kbPath)
+        {
+            try
+            {
+                string filePath = Path.Combine(kbPath, ".gx", "memory", "memory.jsonl");
+                if (!File.Exists(filePath)) return 0;
+
+                var latestById = new System.Collections.Generic.Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+                foreach (var line in File.ReadAllLines(filePath))
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    JObject entry;
+                    try { entry = JObject.Parse(line); }
+                    catch { continue; }
+
+                    string? id = entry["id"]?.ToString();
+                    if (string.IsNullOrEmpty(id)) continue;
+
+                    if (!latestById.TryGetValue(id!, out var current) ||
+                        string.CompareOrdinal(entry["updatedUtc"]?.ToString(), current["updatedUtc"]?.ToString()) >= 0)
+                    {
+                        latestById[id!] = entry;
+                    }
+                }
+
+                return latestById.Values.Count(e => e["tombstone"]?.Value<bool>() != true);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         internal static JArray BuildSuggestedNextBlock(string? kbPath, bool kbExists, bool kbValid)
         {
             var arr = new JArray();
@@ -813,6 +857,42 @@ namespace GxMcp.Gateway
                     }
                 }
                 catch { /* update check best-effort */ }
+
+                // Phase 2 — memory orientation. Once per KB alias per gateway process
+                // lifetime (mirrors UpdateNotifier._triggered), nudge the agent to
+                // recall saved memories when the KB actually has some. Gateway reads
+                // the memory.jsonl straight off disk — it's a separate net8 assembly
+                // from the Worker, so it can't reuse MemoryService.
+                try
+                {
+                    string? alias = _currentKb.Value?.NormalizedAlias;
+                    if (!string.IsNullOrEmpty(kbPath) && !string.IsNullOrEmpty(alias)
+                        && _memorySuggestionShown.TryAdd(alias!, 0))
+                    {
+                        int liveCount = CountLiveMemories(kbPath!);
+                        if (liveCount >= 30)
+                        {
+                            // Phase 3 — past a certain size, recalling everything is less
+                            // useful than compacting first (dreaming).
+                            arr.Add(new JObject
+                            {
+                                ["tool"] = "genexus_memory",
+                                ["args"] = new JObject { ["action"] = "consolidate", ["dryRun"] = true },
+                                ["why"] = $"This KB has {liveCount} memories — consolidate to merge redundant facts and keep context lean."
+                            });
+                        }
+                        else if (liveCount > 0)
+                        {
+                            arr.Add(new JObject
+                            {
+                                ["tool"] = "genexus_memory",
+                                ["args"] = new JObject { ["action"] = "recall" },
+                                ["why"] = $"This KB has {liveCount} saved memories — recall them for context."
+                            });
+                        }
+                    }
+                }
+                catch { /* memory orientation best-effort */ }
 
                 // Default exploration nudge when everything is healthy — gives
                 // a dumb LLM a deterministic 'what now' instead of guessing.

@@ -79,6 +79,7 @@ namespace GxMcp.Worker.Services
         private readonly PrDescriptionService _prDescriptionService;
         private readonly ScreenshotPublishService _screenshotPublishService;
         private readonly FrictionLogService _frictionLogService;
+        private readonly MemoryService _memoryService;
         private readonly WcagCheckService _wcagCheckService;
         // Wave-3 (items 76 / 78 / 84 / 86): friction-report aggregation, SDPanel proxy,
         // multi-agent file lock, what-if typed-change simulator.
@@ -202,6 +203,7 @@ namespace GxMcp.Worker.Services
             _prDescriptionService = new PrDescriptionService(_kbService);
             _screenshotPublishService = new ScreenshotPublishService(_kbService);
             _frictionLogService = new FrictionLogService(_kbService);
+            _memoryService = new MemoryService(_kbService);
             _wcagCheckService = new WcagCheckService(_objectService);
             _learningReportService = new LearningReportService(_kbService);
             _gxServerSyncService = new GxServerSyncService(_kbService);
@@ -539,6 +541,7 @@ namespace GxMcp.Worker.Services
                 ["prdescription"] = Handle_PrDescription,
                 ["screenshotpublish"] = Handle_ScreenshotPublish,
                 ["frictionlog"] = Handle_FrictionLog,
+                ["memory"] = Handle_Memory,
                 ["wcagcheck"] = Handle_WcagCheck,
                 ["learning"] = Handle_Learning,
                 ["gxserver"] = Handle_GxServer,
@@ -931,7 +934,31 @@ namespace GxMcp.Worker.Services
 
         private string Handle_Read(JObject request, string method, string action, string target, string payload, JObject args)
         {
-            if (action == "ExtractSource") return _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp", false, args?["type"]?.ToString());
+            if (action == "ExtractSource")
+            {
+                string typeFilter = args?["type"]?.ToString();
+                string readJson = _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp", false, typeFilter);
+                // Phase 2: genexus_read piggyback. Attached here (the tool boundary),
+                // not inside ObjectService, so it (a) never pollutes the mcp read
+                // cache (which stores the pre-attach payload) and (b) doesn't burn
+                // the session dedup budget on internal ReadObjectSource callers
+                // (History/Injection/Layout/WriteService/…) that never surface
+                // their reads to the agent.
+                try
+                {
+                    string kbPath = _kbService?.GetKbPath();
+                    string objectType = typeFilter;
+                    if (string.IsNullOrEmpty(objectType))
+                    {
+                        try { objectType = _objectService?.FindObject(target, typeFilter)?.TypeDescriptor?.Name; } catch { }
+                    }
+                    return MemoryService.AttachRelevantMemory(kbPath, readJson, target, objectType);
+                }
+                catch
+                {
+                    return readJson;
+                }
+            }
             if (action == "ExtractParts")
             {
                 var partsTok = args?["parts"] as JArray;
@@ -1745,6 +1772,40 @@ namespace GxMcp.Worker.Services
             {
                 int n = args?["n"]?.ToObject<int?>() ?? 20;
                 return _frictionLogService.Tail(n);
+            }
+            return null;
+        }
+
+        private string Handle_Memory(JObject request, string method, string action, string target, string payload, JObject args)
+        {
+            string objectName = args?["target"]?.ToString();
+            string objectType = args?["type"]?.ToString();
+            string[] tags = (args?["tags"] as JArray)?.Select(t => t.ToString()).ToArray() ?? Array.Empty<string>();
+
+            if (string.Equals(action, "save", StringComparison.OrdinalIgnoreCase))
+            {
+                return _memoryService.Save(args?["fact"]?.ToString(), objectName, objectType, tags);
+            }
+            if (string.Equals(action, "recall", StringComparison.OrdinalIgnoreCase))
+            {
+                return _memoryService.Recall(objectName, objectType, tags);
+            }
+            if (string.Equals(action, "list", StringComparison.OrdinalIgnoreCase))
+            {
+                return _memoryService.List();
+            }
+            if (string.Equals(action, "forget", StringComparison.OrdinalIgnoreCase))
+            {
+                return _memoryService.Forget(args?["id"]?.ToString());
+            }
+            if (string.Equals(action, "promote", StringComparison.OrdinalIgnoreCase))
+            {
+                return _memoryService.Promote(args?["message"]?.ToString(), objectName, objectType, tags);
+            }
+            if (string.Equals(action, "consolidate", StringComparison.OrdinalIgnoreCase))
+            {
+                bool dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false;
+                return _memoryService.Consolidate(objectName, objectType, tags, dryRun);
             }
             return null;
         }

@@ -274,6 +274,21 @@ namespace GxMcp.Gateway.Routers
                         ttlSec = args?["ttlSec"]?.ToObject<int?>() ?? 300
                     };
 
+                // Phase 1/3 — per-KB memory (genexus_memory).
+                case "genexus_memory":
+                    return new
+                    {
+                        module = "Memory",
+                        action = args?["action"]?.ToString() ?? "recall",
+                        target = args?["target"]?.ToString(),
+                        type = args?["type"]?.ToString(),
+                        tags = args?["tags"],
+                        fact = args?["fact"]?.ToString(),
+                        id = args?["id"]?.ToString(),
+                        dryRun = args?["dryRun"],
+                        message = args?["message"]?.ToString()
+                    };
+
                 // Item 86 — typed-change impact simulator (no mutation).
                 case "genexus_what_if":
                     return new
