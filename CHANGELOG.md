@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## v2.20.0 — 2026-07-14
 
 Worker-stability pass: the worker stops dying for reasons that have nothing to do with your KB, and when it does die you can finally see why.
 
