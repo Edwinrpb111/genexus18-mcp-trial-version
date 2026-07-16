@@ -43,7 +43,14 @@ namespace GxMcp.Gateway.Routers
                         scope = args?["scope"],
                         argMatches = args?["argMatches"],
                         // Item 22: fields=[source,caption,description,parmNames]
-                        fields = args?["fields"]
+                        fields = args?["fields"],
+                        // issue #34: forward the scan-narrowing / resume knobs. Without these
+                        // the worker never sees objectName, so the documented O(objects) fast
+                        // path (and the Timeout resumeHint's startIndex/timeoutMs) were dead —
+                        // every call fell back to a full O(KB) scan.
+                        objectName = args?["objectName"]?.ToString(),
+                        startIndex = args?["startIndex"]?.ToObject<int?>() ?? 0,
+                        timeoutMs = args?["timeoutMs"]?.ToObject<int?>() ?? 30000
                     };
                 case "genexus_list_objects":
                     return new

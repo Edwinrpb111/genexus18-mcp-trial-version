@@ -32,6 +32,7 @@ namespace GxMcp.Worker.Services
 
                 string target = req["target"]?.ToString();
                 string partName = req["part"]?.ToString();
+                string typeFilter = req["type"]?.ToString();
                 JArray opsRaw = req["ops"] as JArray;
                 bool dryRun = req["dryRun"]?.ToObject<bool?>() ?? false;
                 bool returnPostState = req["return_post_state"]?.ToObject<bool?>() ?? true;
@@ -52,7 +53,7 @@ namespace GxMcp.Worker.Services
                 if (!_objectService.GetKbService().IsOpen)
                     throw new UsageException("usage_error", "object '" + target + "' not found");
 
-                return ApplySemanticOpsCore(target, partName, opsRaw, dryRun, returnPostState, verbose, validate);
+                return ApplySemanticOpsCore(target, partName, opsRaw, dryRun, returnPostState, verbose, validate, typeFilter);
             }
             catch (UsageException ux)
             {
@@ -81,13 +82,25 @@ namespace GxMcp.Worker.Services
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private string ApplySemanticOpsCore(string target, string partName, JArray opsRaw, bool dryRun, bool returnPostState = true, bool verbose = false, string validate = null)
+        private string ApplySemanticOpsCore(string target, string partName, JArray opsRaw, bool dryRun, bool returnPostState = true, bool verbose = false, string validate = null, string typeFilter = null)
         {
-            var obj = _objectService.FindObject(target, null);
+            var obj = _objectService.FindObject(target, typeFilter);
             if (obj == null)
                 throw new UsageException("usage_error", "object '" + target + "' not found");
 
             string kind = obj.TypeDescriptor?.Name ?? "";
+
+            var ops = opsRaw.OfType<JObject>().Select(SemanticOp.From).ToList();
+
+            // issue #34: Transaction Structure attribute ops go through the DSL path, not the
+            // XML-ops path. The Structure part does not serialize to a <Structure>-rooted XML
+            // document, so the XML handlers failed with "<Structure> not found" on a real KB.
+            bool isTrnStructure = kind.Equals("Transaction", StringComparison.OrdinalIgnoreCase)
+                && (partName.Equals("Structure", StringComparison.OrdinalIgnoreCase));
+            if (isTrnStructure && ops.Count > 0 && ops.All(o => SemanticOpsService.IsTransactionStructureAttrOp(o.Op)))
+            {
+                return ApplyTransactionStructureOpsViaDsl(target, obj, ops, dryRun, returnPostState, verbose, validate, typeFilter);
+            }
 
             var part = GxMcp.Worker.Structure.PartAccessor.GetPart(obj, partName);
             if (part == null)
@@ -98,8 +111,6 @@ namespace GxMcp.Worker.Services
             if (string.IsNullOrEmpty(currentXml))
                 throw new UsageException("usage_error",
                     "part '" + partName + "' produced empty XML");
-
-            var ops = opsRaw.OfType<JObject>().Select(SemanticOp.From).ToList();
 
             // v2.6.6 FR#13 — validate mode dispatch. The legacy Apply() path is
             // preserved when validate is unset (or "strict") AND every op succeeds,
@@ -150,7 +161,7 @@ namespace GxMcp.Worker.Services
                 return env.ToString(Newtonsoft.Json.Formatting.None);
             }
 
-            string writeResult = WriteObject(target, partName, newXml, null, false, false, false, false);
+            string writeResult = WriteObject(target, partName, newXml, typeFilter, false, false, false, false);
             JObject writeJson;
             try { writeJson = JObject.Parse(writeResult); }
             catch { writeJson = new JObject { ["raw"] = writeResult }; }
@@ -182,6 +193,75 @@ namespace GxMcp.Worker.Services
             return resp.ToString(Newtonsoft.Json.Formatting.None);
         }
 
+        // issue #34: apply Transaction Structure attribute ops (add/set/remove_attribute)
+        // through the Structure DSL — read the DSL, mutate it, persist via WriteObject which
+        // routes Structure writes through the DSL parser + EnsureSave. This is the same code
+        // path the working mode=patch Structure edits use, so it disambiguates a homonym
+        // Transaction/Table via typeFilter and actually persists (the XML-ops path did not).
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private string ApplyTransactionStructureOpsViaDsl(
+            string target, global::Artech.Architecture.Common.Objects.KBObject obj,
+            IList<SemanticOp> ops, bool dryRun, bool returnPostState, bool verbose, string validate, string typeFilter)
+        {
+            string currentDsl = GxMcp.Worker.Helpers.StructureParser.SerializeToText(obj);
+
+            string mode = SemanticOpsService.NormalizeMode(validate);
+            var outcome = new SemanticOpsService().ApplyTransactionStructureDsl(currentDsl, ops, mode);
+            string newDsl = outcome.Text;
+            int okCount = outcome.Results.Count(r => r.Ok);
+
+            if (mode == "strict" && outcome.Aborted)
+            {
+                var failed = outcome.Results.FirstOrDefault(r => !r.Ok);
+                throw new UsageException(failed?.Code ?? "usage_error", failed?.Reason ?? "op failed");
+            }
+
+            var opResultsJson = new JArray();
+            foreach (var r in outcome.Results) opResultsJson.Add(r.ToJson());
+
+            if (mode == "only" || dryRun)
+            {
+                var envelope = DryRunPlanBuilder.BuildEnvelope(target, currentDsl, newDsl, "ops");
+                JObject env;
+                try { env = JObject.Parse(envelope.ToString()); }
+                catch { env = new JObject { ["raw"] = envelope.ToString() }; }
+                env["validate"] = mode;
+                env["opResults"] = opResultsJson;
+                env["opsApplied"] = okCount;
+                env["opsTotal"] = ops.Count;
+                if (returnPostState)
+                    env["post_state"] = JsonPatchService.BuildPostState(currentDsl, newDsl, verbose);
+                return env.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            string writeResult = WriteObject(target, "Structure", newDsl, typeFilter, false, false, false, false);
+            JObject writeJson;
+            try { writeJson = JObject.Parse(writeResult); }
+            catch { writeJson = new JObject { ["raw"] = writeResult }; }
+
+            var writeStatus = writeJson["status"]?.ToString();
+            bool writeOk = string.Equals(writeStatus, "Success", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "ok", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(writeStatus, "partial", StringComparison.OrdinalIgnoreCase);
+            string persistedAfter = writeOk ? ReadPersistedPartSafely(target, "Structure") : null;
+
+            var resp = new JObject
+            {
+                ["isError"] = false,
+                ["target"] = target,
+                ["part"] = "Structure",
+                ["mode"] = "ops",
+                ["validate"] = mode,
+                ["opsApplied"] = okCount,
+                ["opsTotal"] = ops.Count,
+                ["opResults"] = opResultsJson,
+                ["write"] = writeJson
+            };
+            if (returnPostState)
+                resp["post_state"] = JsonPatchService.BuildPostState(currentDsl, newDsl, verbose, persistedAfter);
+            return resp.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
         public string ApplyJsonPatch(JObject req)
         {
             string target = req?["target"]?.ToString();
@@ -201,6 +281,7 @@ namespace GxMcp.Worker.Services
 
                 string target = req["target"]?.ToString();
                 string partName = req["part"]?.ToString();
+                string typeFilter = req["type"]?.ToString();
                 JArray patchArr = req["patch"] as JArray;
                 bool dryRun = req["dryRun"]?.ToObject<bool?>() ?? false;
                 bool returnPostState = req["return_post_state"]?.ToObject<bool?>() ?? true;
@@ -217,7 +298,7 @@ namespace GxMcp.Worker.Services
                 if (!_objectService.GetKbService().IsOpen)
                     throw new UsageException("usage_error", "object '" + target + "' not found");
 
-                return ApplyJsonPatchCore(target, partName, patchArr, dryRun, returnPostState, verbose);
+                return ApplyJsonPatchCore(target, partName, patchArr, dryRun, returnPostState, verbose, typeFilter);
             }
             catch (UsageException ux)
             {
@@ -246,9 +327,9 @@ namespace GxMcp.Worker.Services
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private string ApplyJsonPatchCore(string target, string partName, JArray patchArr, bool dryRun, bool returnPostState = true, bool verbose = false)
+        private string ApplyJsonPatchCore(string target, string partName, JArray patchArr, bool dryRun, bool returnPostState = true, bool verbose = false, string typeFilter = null)
         {
-            var obj = _objectService.FindObject(target, null);
+            var obj = _objectService.FindObject(target, typeFilter);
             if (obj == null)
                 throw new UsageException("usage_error", "object '" + target + "' not found");
 
@@ -269,7 +350,7 @@ namespace GxMcp.Worker.Services
             if (dryRun)
                 return DryRunPlanBuilder.BuildEnvelope(target, currentXml, newXml, "patch").ToString(Newtonsoft.Json.Formatting.None);
 
-            string writeResult = WriteObject(target, partName, newXml, null, false, false, false, false);
+            string writeResult = WriteObject(target, partName, newXml, typeFilter, false, false, false, false);
             JObject writeJson;
             try { writeJson = JObject.Parse(writeResult); }
             catch { writeJson = new JObject { ["raw"] = writeResult }; }

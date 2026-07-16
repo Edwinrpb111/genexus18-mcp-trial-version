@@ -1,5 +1,21 @@
 # Changelog
 
+## v2.22.0 — 2026-07-16
+
+Fixes issue #34 — the blocker plus the three secondary problems reported alongside it.
+
+### Fixed
+
+- **`genexus_edit` can now add and modify attributes on a base Transaction.** Every base Transaction shares its name with an auto-generated Table, and while `type` was honored on read and on `dryRun`, the actual write ignored it and re-resolved by name — hitting both objects and failing with `Ambiguous object name`. `type` is now carried all the way into the write, so `genexus_edit part=Structure` (mode `patch` and `ops`) persists against the Transaction you named. This also unblocks JSON-Patch writes and any other same-named object pair (e.g. a WebPanel behind a Transaction).
+- **`genexus_edit mode=ops add_attribute` works and accepts the documented argument shape.** Attribute ops (`add_attribute`, `set_attribute`, `remove_attribute`) on a Transaction failed with `<Structure> not found`; they now apply through the same Structure path the `patch` mode uses, so they actually persist. Both the documented `{ op, args: { name, type } }` shape and the flat `{ op, name, type }` shape are accepted.
+- **`genexus_variable` no longer stores a Blob or Image as `NUMERIC(4)` and reports success.** `typeName: "Blob"` / `"Binary"` (and `"Image"`) were recognized but mapped to a database type that doesn't exist, so the variable silently fell back to `NUMERIC(4)` while the response claimed the requested type. Blob/Binary now persist as `BINARY` and Image as `BITMAP`; a recognized type that genuinely can't be applied now returns an error instead of a wrong-but-successful write.
+- **`genexus_search_source` honors `objectName`.** The `objectName` filter (and the `startIndex` / `timeoutMs` resume knobs the timeout hint tells you to use) was dropped before reaching the search, so a scan scoped to a handful of objects still swept the whole KB and timed out. Scoping to named objects is now the advertised O(objects) scan.
+
+### Internal
+
+- Root cause across three of the four bugs was the gateway dropping an argument before it reached the worker: `ObjectRouter` didn't forward `type` on `mode=patch`/`mode=ops` (only the full-write branch did), and `SearchRouter` didn't forward `objectName`/`startIndex`/`timeoutMs`. `type` is now threaded through `PatchService.ApplyPatch`, `WriteService.ApplyJsonPatch`/`ApplySemanticOps` (→ `FindObject`/`WriteObject`), and `PatchService.ParseWriteResult` now lifts the canonical `error.code` (it only lifted `error.message`, so `AmbiguousObjectName` surfaced as the generic `PatchWriteFailed`).
+- Transaction Structure attribute ops route through a new `SemanticOpsService.ApplyTransactionStructureDsl` that mutates the Structure DSL text and persists via the DSL parser, instead of the XML-descendants handlers that assumed a `<Structure>`-rooted document (the real Structure part does not serialize that way — the old unit tests used fabricated XML). `SemanticOp.From` hoists a nested `args` object to the top level (flat fields win on clash). `VariableInjector.TryParseDbType` and `AttributeTypeApplier.CanonicalToEdb` map Blob/Binary→`BINARY`, Image/Bitmap→`BITMAP` (verified against the live `eDBType` enum, which has no `BLOB`/`IMAGE` members); `BuildResolvedVariableInto`/`ModifyVariableInternal` return/raise a `TypeNotApplied`/`PrimitiveNotApplied` error rather than persisting a default-typed variable. Bug 1 reproduced live (`Ambiguous object name` on a real homonym Transaction) before the fix. New tests: `Issue34RouterForwardingTests` (gateway, 6), `Issue34EditTypeAndVariableTests` (worker, 13).
+
 ## v2.21.0 — 2026-07-15
 
 ### Added

@@ -290,7 +290,7 @@ namespace GxMcp.Worker.Services
 
         // issue #32 item 1 — shared SDK construction used by AddVariable (single) and
         // AddVariables (batch). Result of building one typed variable into a part.
-        private enum VarBuildResult { Added, DomainNotFound }
+        private enum VarBuildResult { Added, DomainNotFound, PrimitiveNotApplied }
 
         // Builds one Variable from an already-validated TypeResolution and adds it to
         // varPart IN MEMORY (no save, no envelope — the caller owns those). Returns
@@ -322,6 +322,15 @@ namespace GxMcp.Worker.Services
             }
             else
             {
+                // issue #34: a recognized primitive (resolver said so, not a DomainReference)
+                // that TryParseDbType can't map is a mapping bug, not a KB-object reference.
+                // Never fall through to add a default-typed (NUMERIC) variable and report
+                // success — surface it so the caller sees the type wasn't applied.
+                if (resolution != null && resolution.CanonicalType != "DomainReference")
+                {
+                    return VarBuildResult.PrimitiveNotApplied;
+                }
+
                 var targetObj = VariableInjector.ResolveTypeObject(varPart.Model, resolvedTypeForSdk);
                 if (targetObj != null)
                 {
@@ -464,8 +473,8 @@ namespace GxMcp.Worker.Services
                     {
                         if (!string.IsNullOrEmpty(vType))
                         {
-                            if (BuildResolvedVariableInto(varPart, vName, res, rSdk, rLen, rDec, vLen, vDec, vColl, vType)
-                                == VarBuildResult.DomainNotFound)
+                            var batchBuild = BuildResolvedVariableInto(varPart, vName, res, rSdk, rLen, rDec, vLen, vDec, vColl, vType);
+                            if (batchBuild == VarBuildResult.DomainNotFound)
                             {
                                 failed++;
                                 outcomes.Add(new JObject
@@ -474,6 +483,20 @@ namespace GxMcp.Worker.Services
                                     ["status"] = "Failed",
                                     ["reason"] = "UnknownType",
                                     ["details"] = $"Type '{vType}' not found in KB."
+                                });
+                                continue;
+                            }
+                            if (batchBuild == VarBuildResult.PrimitiveNotApplied)
+                            {
+                                // issue #34: don't silently persist a default NUMERIC(4) for a
+                                // recognized-but-unmappable primitive.
+                                failed++;
+                                outcomes.Add(new JObject
+                                {
+                                    ["name"] = vName,
+                                    ["status"] = "Failed",
+                                    ["reason"] = "TypeNotApplied",
+                                    ["details"] = $"Recognized type '{vType}' could not be applied (SDK type-map gap); variable skipped."
                                 });
                                 continue;
                             }
@@ -613,9 +636,9 @@ namespace GxMcp.Worker.Services
                 {
                     // issue #32 item 1: construction extracted into BuildResolvedVariableInto so
                     // the batch AddVariables path reuses the exact same SDK binding logic.
-                    if (BuildResolvedVariableInto(varPart, varName, resolution, resolvedTypeForSdk,
-                            resolvedLength, resolvedDecimals, length, decimals, collection, typeName)
-                        == VarBuildResult.DomainNotFound)
+                    var buildResult = BuildResolvedVariableInto(varPart, varName, resolution, resolvedTypeForSdk,
+                            resolvedLength, resolvedDecimals, length, decimals, collection, typeName);
+                    if (buildResult == VarBuildResult.DomainNotFound)
                     {
                         // FR#4 (friction-report 2026-05-19): resolver accepted the bare name as a
                         // potential SDT/BC/Domain reference but SDK couldn't find it in the KB.
@@ -627,6 +650,17 @@ namespace GxMcp.Worker.Services
                                 tool: "genexus_list_objects",
                                 args: new JObject { ["name"] = typeName },
                                 why: "Finds SDTs and Domains whose name matches, confirming the correct spelling.")),
+                            target: target,
+                            extra: new JObject { ["typeName"] = typeName });
+                    }
+                    if (buildResult == VarBuildResult.PrimitiveNotApplied)
+                    {
+                        // issue #34: the resolver recognized a primitive but the SDK type map
+                        // couldn't apply it. Fail loudly instead of persisting a default NUMERIC(4).
+                        return McpResponse.Err(
+                            code: "TypeNotApplied",
+                            message: $"Recognized type '{typeName}' could not be applied to the variable (no matching SDK type). The variable was NOT created to avoid a silent NUMERIC fallback.",
+                            hint: "Report this type name; it is a mapping gap. Use a known primitive (Character/Numeric/Date/DateTime/Boolean/Blob/Image/GUID) meanwhile.",
                             target: target,
                             extra: new JObject { ["typeName"] = typeName });
                     }
@@ -837,6 +871,14 @@ namespace GxMcp.Worker.Services
                             if (effDec.HasValue) newVar.Decimals = effDec.Value;
                         }
                         catch { /* SDK may reject for some types */ }
+                    }
+                    else if (resolution.CanonicalType != "DomainReference")
+                    {
+                        // issue #34: recognized primitive that TryParseDbType couldn't map —
+                        // throw so the rollback restores the original variable instead of
+                        // silently retyping it to the default NUMERIC(4) and reporting success.
+                        throw new InvalidOperationException(
+                            $"Recognized type '{newTypeName}' could not be applied (no matching SDK type); original variable preserved.");
                     }
                     else
                     {

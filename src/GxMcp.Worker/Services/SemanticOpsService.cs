@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
@@ -109,9 +110,150 @@ namespace GxMcp.Worker.Services
         public sealed class OpsApplyOutcome
         {
             public string Xml;
+            // issue #34: DSL-text payload for the Transaction-Structure ops path (which
+            // manipulates the Structure DSL text, not the part XML). Xml stays null there.
+            public string Text;
             public List<OpResult> Results;
             public bool Aborted;
             public string Mode;
+        }
+
+        // issue #34: the Transaction Structure part does NOT serialize to XML with a
+        // <Structure> root the way the XML-ops handlers assume — that path fails with
+        // "<Structure> not found" against a real KB. Attribute ops on a Transaction are
+        // instead applied to the Structure DSL text (the same text genexus_read part=Structure
+        // returns and the mode=patch path writes), then persisted through the DSL parser.
+        private static readonly Regex _dslAttrLine = new Regex(
+            @"^(?<indent>\s*)(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?<key>\*?)\s*:\s*(?<type>[^/]+?)\s*(?<comment>//.*)?$",
+            RegexOptions.Compiled);
+
+        public static bool IsTransactionStructureAttrOp(string op)
+            => op == "add_attribute" || op == "set_attribute" || op == "remove_attribute";
+
+        public OpsApplyOutcome ApplyTransactionStructureDsl(string dsl, IList<SemanticOp> ops, string validate)
+        {
+            string mode = NormalizeMode(validate);
+            var results = new List<OpResult>(ops.Count);
+            bool aborted = false;
+            var lines = (dsl ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n")
+                .Split('\n').ToList();
+
+            for (int i = 0; i < ops.Count; i++)
+            {
+                var op = ops[i];
+                try
+                {
+                    ApplyDslOp(lines, op);
+                    results.Add(new OpResult { Index = i, Op = op.Op, Ok = true });
+                }
+                catch (UsageException ux)
+                {
+                    results.Add(new OpResult { Index = i, Op = op.Op, Ok = false, Reason = ux.Message, Code = ux.Code });
+                    if (mode == "strict") { aborted = true; break; }
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new OpResult { Index = i, Op = op.Op, Ok = false, Reason = ex.Message, Code = "internal_error" });
+                    if (mode == "strict") { aborted = true; break; }
+                }
+            }
+
+            return new OpsApplyOutcome
+            {
+                Text = string.Join("\n", lines).Trim(),
+                Results = results,
+                Aborted = aborted,
+                Mode = mode
+            };
+        }
+
+        private static int FindDslAttrLine(List<string> lines, string name)
+        {
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var m = _dslAttrLine.Match(lines[i]);
+                if (m.Success && string.Equals(m.Groups["name"].Value, name, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
+        private static string BuildDslAttrLine(string name, string type, bool key, string description)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(name);
+            if (key) sb.Append('*');
+            sb.Append(" : ").Append(type);
+            if (!string.IsNullOrEmpty(description))
+                sb.Append(" // \"").Append(description).Append('"');
+            return sb.ToString();
+        }
+
+        private static void ApplyDslOp(List<string> lines, SemanticOp op)
+        {
+            string name = op.Args["name"]?.ToString();
+            if (string.IsNullOrEmpty(name))
+                throw new UsageException("usage_error", op.Op + ": name required");
+
+            switch (op.Op)
+            {
+                case "add_attribute":
+                {
+                    string type = op.Args["type"]?.ToString();
+                    if (string.IsNullOrEmpty(type))
+                        throw new UsageException("usage_error", "add_attribute: type required");
+                    if (FindDslAttrLine(lines, name) >= 0)
+                        throw new UsageException("usage_error", "attribute '" + name + "' already exists");
+                    bool key = op.Args["key"]?.ToObject<bool?>() ?? false;
+                    string desc = op.Args["description"]?.ToString();
+                    string newLine = BuildDslAttrLine(name, type, key, desc);
+                    // Insert after the last root-level attribute line so nested sub-levels
+                    // (indented blocks) are left intact.
+                    int insertAt = lines.Count;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        var m = _dslAttrLine.Match(lines[i]);
+                        if (m.Success && m.Groups["indent"].Value.Length == 0)
+                            insertAt = i + 1;
+                    }
+                    lines.Insert(insertAt, newLine);
+                    break;
+                }
+                case "set_attribute":
+                {
+                    int idx = FindDslAttrLine(lines, name);
+                    if (idx < 0)
+                        throw new UsageException("usage_error", "attribute '" + name + "' not found");
+                    var m = _dslAttrLine.Match(lines[idx]);
+                    string type = op.Args["type"]?.ToString() ?? m.Groups["type"].Value.Trim();
+                    bool key = m.Groups["key"].Value == "*";
+                    string desc = op.Args["description"]?.ToString();
+                    if (desc == null)
+                    {
+                        // Preserve the existing inline comment when no new description is given.
+                        string existingComment = m.Groups["comment"].Value;
+                        string rebuilt = m.Groups["indent"].Value + BuildDslAttrLine(name, type, key, null);
+                        if (!string.IsNullOrEmpty(existingComment)) rebuilt += " " + existingComment;
+                        lines[idx] = rebuilt;
+                    }
+                    else
+                    {
+                        lines[idx] = m.Groups["indent"].Value + BuildDslAttrLine(name, type, key, desc);
+                    }
+                    break;
+                }
+                case "remove_attribute":
+                {
+                    int idx = FindDslAttrLine(lines, name);
+                    if (idx < 0)
+                        throw new UsageException("usage_error", "attribute '" + name + "' not found");
+                    lines.RemoveAt(idx);
+                    break;
+                }
+                default:
+                    throw new UsageException("usage_error",
+                        "op '" + op.Op + "' not supported for Transaction Structure");
+            }
         }
 
         private static void Dispatch(XDocument doc, string kind, SemanticOp op)

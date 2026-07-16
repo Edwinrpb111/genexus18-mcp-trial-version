@@ -568,8 +568,13 @@ namespace GxMcp.Worker.Helpers
                 { "Boolean", "Boolean" },
                 { "Date", "DATE" },
                 { "DateTime", "DATETIME" },
-                { "Blob", "BLOB" },
-                { "Image", "IMAGE" },
+                // issue #34: eDBType has no BLOB/IMAGE member — a blob is BINARY, an image
+                // is BITMAP. The old "BLOB"/"IMAGE" aliases failed Enum.TryParse and the
+                // variable silently kept its default NUMERIC(4) type.
+                { "Blob", "BINARY" },
+                { "Binary", "BINARY" },
+                { "Image", "BITMAP" },
+                { "Bitmap", "BITMAP" },
                 { "Audio", "AUDIO" },
                 { "Video", "VIDEO" },
                 { "GUID", "GUID" },

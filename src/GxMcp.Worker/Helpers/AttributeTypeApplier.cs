@@ -105,8 +105,13 @@ namespace GxMcp.Worker.Helpers
             { "Time",        "TIME"         },
             { "Boolean",     "BOOLEAN"      },
             { "LongVarChar", "LONGVARCHAR"  },
-            { "Blob",        "BLOB"         },
-            { "Image",       "IMAGE"        },
+            // issue #34: eDBType has no BLOB/IMAGE member — a blob maps to BINARY and an
+            // image to BITMAP. The old names failed Enum.Parse so ApplyPrimitive returned
+            // false and the attribute silently kept its default type.
+            { "Blob",        "BINARY"       },
+            { "Binary",      "BINARY"       },
+            { "Image",       "BITMAP"       },
+            { "Bitmap",      "BITMAP"       },
             { "GUID",        "GUID"         },
         };
 

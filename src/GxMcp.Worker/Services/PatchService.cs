@@ -1396,6 +1396,12 @@ namespace GxMcp.Worker.Services
                     // instead of falling back to a raw/partial string.
                     if (jo["message"] == null && jo["error"]?["message"] != null)
                         jo["message"] = jo["error"]["message"];
+                    // issue #34: lift the canonical error.code too. ApplyPatch keys the
+                    // terminal envelope's code off writePayload["code"] and defaults to
+                    // "PatchWriteFailed" when absent — which masked WriteService's real
+                    // code (e.g. "AmbiguousObjectName") behind a generic one.
+                    if (jo["code"] == null && jo["error"]?["code"] != null)
+                        jo["code"] = jo["error"]["code"];
                 }
                 return jo;
             }

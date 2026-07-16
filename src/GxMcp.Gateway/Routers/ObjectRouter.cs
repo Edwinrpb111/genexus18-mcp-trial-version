@@ -127,6 +127,9 @@ namespace GxMcp.Gateway.Routers
                             target = target,
                             part = part,
                             ops = args?["ops"],
+                            // issue #34: forward `type` so the ops write path can disambiguate a
+                            // homonym Transaction/Table on the persist path.
+                            type = args?["type"]?.ToString(),
                             dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                             return_post_state = returnPostState,
                             verbose = verbose,
@@ -158,6 +161,10 @@ namespace GxMcp.Gateway.Routers
                                 target = target,
                                 part = part,
                                 patch = patchArr,
+                                // issue #34: forward `type` so the write path can disambiguate a
+                                // homonym Transaction/Table. Without it the worker re-resolves by
+                                // name only and fails with "Ambiguous object name".
+                                type = args?["type"]?.ToString(),
                                 dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                                 return_post_state = returnPostState,
                                 verbose = verbose,
@@ -199,6 +206,11 @@ namespace GxMcp.Gateway.Routers
                                    ?? args?["content"]?.ToString(),
                             context = contextFromObj ?? args?["context"]?.ToString(),
                             expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
+                            // issue #34: forward `type` so PatchService.ApplyPatch can pass a
+                            // typeFilter into WriteService and disambiguate a homonym
+                            // Transaction/Table on the write (persist) path — read/dryRun already
+                            // resolved it, but the write re-resolved by name only.
+                            type = args?["type"]?.ToString(),
                             dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
                             verifyRollback = args?["verifyRollback"]?.ToObject<bool?>() ?? false,
                             return_post_state = returnPostState,
