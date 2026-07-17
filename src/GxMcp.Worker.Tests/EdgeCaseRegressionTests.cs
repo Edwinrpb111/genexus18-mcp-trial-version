@@ -109,12 +109,14 @@ namespace GxMcp.Worker.Tests
                 Action = action,
                 StartedAt = DateTime.UtcNow
             };
-            bool ok = InProcessBuildRunner.Run(
+            var outcome = InProcessBuildRunner.Run(
                 status, action, new List<string>(),
                 (s, l, e) => { },
                 kbHandle: new object(),
                 kbLock: new object());
-            Assert.False(ok);
+            // Unsupported action → CouldNotRun so RunBuild's MSBuild.exe fallback
+            // runs the action's correct task pipeline.
+            Assert.Equal(InProcessBuildOutcome.CouldNotRun, outcome);
         }
 
         // ── Stream C (FR#22) — BuildOutputShaper boundary ───────────────────

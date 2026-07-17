@@ -192,6 +192,33 @@ namespace GxMcp.Worker.Services
             @"(?:Object|Objeto)\s+['""]?(?<obj>[A-Za-z_][A-Za-z0-9_.]*)['""]?\s+(?:was not found|(?:não|nao)\s+foi\s+encontrad[oa])\s+.*Knowledge\s*Base",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex _rxOpenKb     = new Regex(@"^\s*Opening Knowledge Base\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // In-process builds don't emit MSBuild.exe's "Specifying X..."/"Compiling" text —
+        // the GeneXus build engine forwards the SDK section-marker protocol instead:
+        //   >S<section>[:-:<label>]  section opens
+        //   >E1<section>             section closed OK
+        //   >E0<section>             section closed FAIL
+        // Parsing these here gives the in-process path the same phase progress and named
+        // failure surface the external path already produces from text.
+        private static readonly Regex _rxSectionStart = new Regex(
+            @"^>S(?<name>[A-Za-z][A-Za-z0-9 _]*?)(?:[: ]|$)", RegexOptions.Compiled);
+        private static readonly Regex _rxSectionFail = new Regex(
+            @"^>E0(?<name>[A-Za-z][A-Za-z0-9 _]*?)(?:[: ]|$)", RegexOptions.Compiled);
+
+        // Map a GeneXus build section name to a lifecycle phase. Unknown sections
+        // (and the outer "Build" wrapper) return null so we don't churn the phase.
+        internal static string MapSectionToPhase(string section)
+        {
+            if (string.IsNullOrWhiteSpace(section)) return null;
+            if (section.IndexOf("Specif", StringComparison.OrdinalIgnoreCase) >= 0) return "Specifying";
+            if (section.IndexOf("Generat", StringComparison.OrdinalIgnoreCase) >= 0) return "Generating";
+            if (section.IndexOf("Compil", StringComparison.OrdinalIgnoreCase) >= 0) return "Compiling";
+            if (section.IndexOf("Copy", StringComparison.OrdinalIgnoreCase) >= 0
+                || section.IndexOf("WebAppConfig", StringComparison.OrdinalIgnoreCase) >= 0
+                || section.IndexOf("Deploy", StringComparison.OrdinalIgnoreCase) >= 0
+                || section.IndexOf("Menu", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Finishing";
+            return null;
+        }
         private static readonly Regex _rxBuildDone  = new Regex(@"^\s*(Build|Specification|Compilation)\s+(succeeded|failed|complete)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex _rxBuildOneEnd = new Regex(@"Build One Task\s+(terminado|finished|Sucesso|completed|ended)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         // Missing dependency surfacing — the GeneXus C# compile leaks CS0246 / CS2001
@@ -1382,10 +1409,10 @@ namespace GxMcp.Worker.Services
                                 + " kb=" + _kbService.GetKbPath()
                                 + " targets=" + (targets != null ? string.Join(";", targets) : "<all>"));
                     var sw = Stopwatch.StartNew();
-                    bool ok = false;
+                    InProcessBuildOutcome outcome = InProcessBuildOutcome.CouldNotRun;
                     try
                     {
-                        ok = InProcessBuildRunner.Run(
+                        outcome = InProcessBuildRunner.Run(
                             status, action, targets,
                             (s, l, err) => HandleLine(s, l, err),
                             _kbService.KbObject, _kbService.KbLock,
@@ -1396,18 +1423,25 @@ namespace GxMcp.Worker.Services
                     catch (Exception ex)
                     {
                         Logger.Error("[BUILD-INPROCESS] orchestrator threw: " + ex.Message);
-                        ok = false;
+                        outcome = InProcessBuildOutcome.CouldNotRun;
                     }
                     sw.Stop();
                     Logger.Info("[BUILD-INPROCESS-DONE] taskId=" + status.TaskId
-                                + " ok=" + ok + " elapsedMs=" + sw.ElapsedMilliseconds);
-                    if (ok)
+                                + " outcome=" + outcome + " elapsedMs=" + sw.ElapsedMilliseconds);
+                    // The in-process pipeline actually ran — either it succeeded, or it
+                    // failed with diagnostics. In both cases we terminalize from the
+                    // captured output. A full MSBuild.exe rebuild would only reproduce a
+                    // failure at many times the wall-clock (the "build never returns" the
+                    // reporter saw), so it is NOT attempted here. The external fallback is
+                    // reserved for outcome == CouldNotRun below.
+                    if (outcome == InProcessBuildOutcome.Succeeded
+                        || outcome == InProcessBuildOutcome.FailedWithDiagnostics)
                     {
                         status.BuildPath = "inproc";
                         // FR#22: still emit shaped output envelope from FullOutput.
+                        string fullText = status.FullOutput.ToString();
                         try
                         {
-                            string fullText = status.FullOutput.ToString();
                             string fullLogPath;
                             BuildOutputShaper.TryWriteFullLog(fullText, status.TaskId, out fullLogPath);
                             status.FullLogPath = fullLogPath;
@@ -1415,18 +1449,42 @@ namespace GxMcp.Worker.Services
                         }
                         catch { }
 
-                        status.Status = (status.ErrorCount == 0) ? "Succeeded" : "Failed";
+                        bool failed = outcome == InProcessBuildOutcome.FailedWithDiagnostics
+                                      || status.ErrorCount > 0;
+                        status.Status = failed ? "Failed" : "Succeeded";
                         status.Phase = "Done";
                         EmitPhaseProgress(status.Phase);
+
+                        // When the pipeline reported failure but emitted no itemized
+                        // error line (the build-all IdeWebBuildAndDeploy case — the SDK
+                        // signals failure through >E0 section markers, not "error CS####:"
+                        // text), leave the agent something actionable: the failed section
+                        // and a pointer to the per-object spec check that DOES itemize.
+                        if (outcome == InProcessBuildOutcome.FailedWithDiagnostics && status.ErrorCount == 0)
+                        {
+                            if (status.PhaseFailure == null)
+                                status.PhaseFailure = ExtractPhaseFailure(fullText)
+                                    ?? new PhaseFailureInfo
+                                    {
+                                        Name = status.Phase ?? "Build",
+                                        Message = "The in-process GeneXus build reported failure without an itemized error line."
+                                    };
+                            status.Hint = "Build failed in-process with no itemized error list (the SDK signalled failure at the section level). "
+                                + "Run genexus_lifecycle action=specify target=<object> for spc*/gen* diagnostics on a specific object, or open the KB in the IDE to see the full build output.";
+                        }
+
                         status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                         status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);
                         Logger.Info("Background Build " + status.TaskId + " " + status.Status
                                     + " (inproc, errors=" + status.ErrorCount + ", warnings=" + status.WarningCount
                                     + ", " + status.ElapsedSeconds + "s)");
+                        // Wake any event-driven status wait callers on the terminal edge.
+                        try { status.StateChangeSignal.Set(); } catch { }
                         // Item 72 (friction 2026-05-22) — POST webhook on terminal Failed (not PartialSuccess).
                         MaybeNotifyOnFailure(status);
                         return;
                     }
+                    // outcome == CouldNotRun — the in-process path never executed a build.
                     // issue #28 item 12: never fall back to a full MSBuild.exe spawn for a
                     // spec-check request — that would compile + deploy, the opposite of what
                     // specifyOnly asked for. Report spec-unavailable instead.
@@ -1638,6 +1696,34 @@ namespace GxMcp.Worker.Services
                 {
                     status.TailLines.Add(line);
                     if (status.TailLines.Count > TailBufferSize) status.TailLines.RemoveAt(0);
+                }
+
+                // In-process section markers first (they never match the text parsers
+                // below). ">S<section>" advances the phase; ">E0<section>" records a
+                // named failure so a terminal Failed with no itemized "error CS####:"
+                // line still tells the agent where the build broke.
+                var mSecStart = _rxSectionStart.Match(line);
+                if (mSecStart.Success)
+                {
+                    string ph = MapSectionToPhase(mSecStart.Groups["name"].Value);
+                    if (ph != null) { status.Phase = ph; EmitPhaseProgress(status.Phase); }
+                    return;
+                }
+                var mSecFail = _rxSectionFail.Match(line);
+                if (mSecFail.Success)
+                {
+                    string sect = mSecFail.Groups["name"].Value.Trim();
+                    // Skip the generic outer "Build" wrapper — it names no useful location.
+                    if (status.PhaseFailure == null
+                        && !string.Equals(sect, "Build", StringComparison.OrdinalIgnoreCase))
+                    {
+                        status.PhaseFailure = new PhaseFailureInfo
+                        {
+                            Name = sect,
+                            Message = "Section '" + sect + "' failed during the in-process build."
+                        };
+                    }
+                    return;
                 }
 
                 if (_rxOpenKb.IsMatch(line))      { status.Phase = "OpeningKB"; EmitPhaseProgress(status.Phase); return; }

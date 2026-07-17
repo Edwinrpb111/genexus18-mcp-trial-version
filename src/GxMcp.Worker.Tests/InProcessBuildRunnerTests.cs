@@ -35,24 +35,24 @@ namespace GxMcp.Worker.Tests
         public void Run_returns_false_when_kbHandle_is_null()
         {
             var status = NewStatus();
-            bool ok = InProcessBuildRunner.Run(
+            var outcome = InProcessBuildRunner.Run(
                 status, "Build", new List<string> { "Foo" },
                 (s, l, e) => { },
                 kbHandle: null,
                 kbLock: new object());
-            Assert.False(ok);
+            Assert.Equal(InProcessBuildOutcome.CouldNotRun, outcome);
         }
 
         [Fact]
         public void Run_returns_false_when_kbLock_is_null()
         {
             var status = NewStatus();
-            bool ok = InProcessBuildRunner.Run(
+            var outcome = InProcessBuildRunner.Run(
                 status, "Build", new List<string> { "Foo" },
                 (s, l, e) => { },
                 kbHandle: new object(),
                 kbLock: null);
-            Assert.False(ok);
+            Assert.Equal(InProcessBuildOutcome.CouldNotRun, outcome);
         }
 
         [Fact]

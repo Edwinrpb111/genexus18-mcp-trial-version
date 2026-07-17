@@ -9,6 +9,20 @@ using Microsoft.Build.Framework;
 
 namespace GxMcp.Worker.Services
 {
+    // Outcome of the in-process build attempt. Distinguishes "the GeneXus
+    // pipeline actually ran and failed" (diagnostics were produced; a full
+    // external MSBuild.exe rebuild would only reproduce them, doubling
+    // wall-clock — the "build never returns" the user reported) from "the
+    // in-process path could not even start" (SDK types missing, null handle,
+    // unsupported action, or an exception before any section executed), where
+    // falling back to MSBuild.exe is the honest thing to do.
+    internal enum InProcessBuildOutcome
+    {
+        Succeeded,
+        FailedWithDiagnostics,
+        CouldNotRun
+    }
+
     // v2.6.6 Stream D — orchestrates in-process invocation of the two GeneXus
     // MSBuild tasks the IDE pipeline relies on:
     //   - Genexus.MsBuild.Tasks.SpecifyOneOnly   (when action=Build with targets)
@@ -46,10 +60,13 @@ namespace GxMcp.Worker.Services
         private static System.Reflection.MethodInfo _miRunCompile; // Compile(KBModel, EntityKey) -> bool
         private static readonly object _typeCacheLock = new object();
 
-        // Public entry. Returns true on success (caller writes the final
-        // status). Returns false on any failure (caller falls back to the
-        // external MSBuild.exe spawn). Never throws.
-        public static bool Run(
+        // Public entry. Returns Succeeded when the caller should write the
+        // final status from the captured diagnostics; FailedWithDiagnostics
+        // when the pipeline ran but failed (caller terminalizes Failed — NO
+        // external fallback); CouldNotRun when the in-process path never
+        // started (caller falls back to the external MSBuild.exe spawn).
+        // Never throws.
+        public static InProcessBuildOutcome Run(
             BuildService.BuildTaskStatus status,
             string action,
             List<string> targets,
@@ -60,16 +77,16 @@ namespace GxMcp.Worker.Services
             string kbPath = null,
             bool specifyOnly = false)
         {
-            if (status == null) return false;
+            if (status == null) return InProcessBuildOutcome.CouldNotRun;
             if (kbHandle == null)
             {
                 Logger.Warn("[BUILD-INPROCESS] kb handle is null — skipping in-process path");
-                return false;
+                return InProcessBuildOutcome.CouldNotRun;
             }
             if (kbLock == null)
             {
                 Logger.Warn("[BUILD-INPROCESS] kb lock is null — skipping in-process path");
-                return false;
+                return InProcessBuildOutcome.CouldNotRun;
             }
 
             // Stream D follow-up: only Build/RebuildAll are wired through the
@@ -83,20 +100,20 @@ namespace GxMcp.Worker.Services
                 && !action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
             {
                 Logger.Info("[BUILD-INPROCESS] action='" + action + "' not supported in-process — falling back to MSBuild.exe");
-                return false;
+                return InProcessBuildOutcome.CouldNotRun;
             }
 
             try
             {
                 if (!EnsureTypesLoaded())
                 {
-                    return false;
+                    return InProcessBuildOutcome.CouldNotRun;
                 }
             }
             catch (Exception ex)
             {
                 Logger.Error("[BUILD-INPROCESS] EnsureTypesLoaded threw: " + ex.Message);
-                return false;
+                return InProcessBuildOutcome.CouldNotRun;
             }
 
             // Wrap the BuildService sink so the engine sees a (line,isError) action
@@ -124,9 +141,13 @@ namespace GxMcp.Worker.Services
                         engine.ResetSectionFlags();
                         bool specOk = ExecuteSpecifyOneOnly(kbHandle, targets, engine);
                         // Success here means "spec pass ran"; spec errors (if any) were emitted to
-                        // the sink and counted. Return true so the caller reports the spec result
-                        // rather than falling back to a full MSBuild.exe spawn.
-                        return specOk || status.ErrorCount > 0;
+                        // the sink and counted. Report Succeeded so the caller surfaces the spec
+                        // result rather than falling back to a full MSBuild.exe spawn. If the spec
+                        // pass produced nothing at all, CouldNotRun lets RunBuild's specifyOnly
+                        // guard report "spec-check unavailable" (it still never runs a full build).
+                        return (specOk || status.ErrorCount > 0)
+                            ? InProcessBuildOutcome.Succeeded
+                            : InProcessBuildOutcome.CouldNotRun;
                     }
 
                     // Friction 2026-05-22 fast path: use BuildOne — the same task the
@@ -166,7 +187,7 @@ namespace GxMcp.Worker.Services
                                 break;
                             }
                         }
-                        if (allOk) return true;
+                        if (allOk) return InProcessBuildOutcome.Succeeded;
                         // Reset engine flags before the BuildOne fallback so leftover state
                         // from this attempt doesn't contaminate the BuildOne partial-success check.
                         engine.ResetSectionFlags();
@@ -230,7 +251,7 @@ namespace GxMcp.Worker.Services
                             if (allOk)
                             {
                                 foreach (var t in targets) EditDirtyTracker.MarkClean(kbPath, t);
-                                return true;
+                                return InProcessBuildOutcome.Succeeded;
                             }
                             engine.ResetSectionFlags();
                         }
@@ -243,7 +264,7 @@ namespace GxMcp.Worker.Services
                             {
                                 lineSink("[BUILD-INPROCESS] batch BuildBatch x" + targets.Count + " — OK (shared spec/gen/compile pipeline).", false);
                                 foreach (var t in targets) EditDirtyTracker.MarkClean(kbPath, t);
-                                return true;
+                                return InProcessBuildOutcome.Succeeded;
                             }
                             if (batchResult == BatchOutcome.NotApplicable)
                             {
@@ -305,7 +326,7 @@ namespace GxMcp.Worker.Services
                                     EditDirtyTracker.MarkClean(kbPath, t); // v2.6.9 — DLL written so .cs is current
                                     continue;
                                 }
-                                Logger.Warn("[BUILD-INPROCESS] BuildOne returned false for '" + t + "' — falling back");
+                                Logger.Warn("[BUILD-INPROCESS] BuildOne returned false for '" + t + "' — pipeline ran, terminalizing (no external fallback)");
                                 // Dump the engine's captured trace so we can see WHY the
                                 // task failed (errorless silent failure would otherwise be invisible).
                                 try
@@ -315,12 +336,16 @@ namespace GxMcp.Worker.Services
                                         Logger.Info("[BUILD-INPROCESS] TRACE: " + ln);
                                 }
                                 catch { }
-                                return false;
+                                // The GeneXus BuildOne pipeline ran (spec/gen/compile) and
+                                // failed. A full MSBuild.exe rebuild would only reproduce the
+                                // same result at 5-13× the wall-clock, so we surface the
+                                // captured diagnostics and terminalize instead of falling back.
+                                return InProcessBuildOutcome.FailedWithDiagnostics;
                             }
                             // v2.6.9 — BuildOne returned true; .cs and .dll are current for this target.
                             EditDirtyTracker.MarkClean(kbPath, t);
                         }
-                        return true;
+                        return InProcessBuildOutcome.Succeeded;
                     }
 
                     // Legacy path (RebuildAll, opt-out, or empty targets): SpecifyOneOnly + IdeWebBuildAndDeploy.
@@ -328,10 +353,10 @@ namespace GxMcp.Worker.Services
                     {
                         if (!ExecuteSpecifyOneOnly(kbHandle, targets, engine))
                         {
-                            // Task returned false → spec errors are already logged
-                            // via the engine sink; let the caller decide whether to
-                            // fall back. Treat as failure of the in-process path.
-                            return false;
+                            // Spec pass ran and returned false → spc/gen diagnostics are
+                            // already on the engine sink. Terminalize with them rather
+                            // than re-running the whole thing under MSBuild.exe.
+                            return InProcessBuildOutcome.FailedWithDiagnostics;
                         }
                     }
 
@@ -346,20 +371,28 @@ namespace GxMcp.Worker.Services
                     if (skipFullDeploy && isBuildWithTargets && !forceRebuild)
                     {
                         lineSink("[BUILD-INPROCESS] skipFullDeploy=true — stopping after SpecifyOneOnly. DLL output is NOT redeployed; the IDE build task is bypassed.", false);
-                        return true;
+                        return InProcessBuildOutcome.Succeeded;
                     }
 
                     if (!ExecuteIdeWebBuildAndDeploy(kbHandle, engine, forceRebuild))
                     {
-                        return false;
+                        // The IDE build+deploy pipeline ran end-to-end and failed
+                        // (the build-all path). Its diagnostics — or, for an
+                        // itemless failure, the >E0 section marker parsed by
+                        // HandleLine — are already on the status. Terminalize with
+                        // them; do NOT re-run the whole build under MSBuild.exe.
+                        return InProcessBuildOutcome.FailedWithDiagnostics;
                     }
 
-                    return true;
+                    return InProcessBuildOutcome.Succeeded;
                 }
                 catch (Exception ex)
                 {
+                    // An exception before/within the pipeline setup means the
+                    // in-process path is not trustworthy — let RunBuild fall back
+                    // to the external MSBuild.exe spawn.
                     LogExceptionChain("Outer-Execute", ex);
-                    return false;
+                    return InProcessBuildOutcome.CouldNotRun;
                 }
             }
         }

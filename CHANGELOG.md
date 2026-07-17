@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.25.2 — 2026-07-17
+
+Fixes the build-hang reported against v2.25.1, where `genexus_lifecycle action=build` — most visibly a build with no target ("build all") — would generate the KB, then sit at `Running` for many minutes with no phase progress and never reach a terminal state until cancelled by hand.
+
+### Fixed
+
+- **A build that fails no longer secretly re-runs the whole thing.** When the in-process GeneXus build ran end-to-end and reported failure (for "build all", on real compile errors), the MCP was discarding that result and silently restarting the entire build as an external MSBuild process — re-opening the KB and recompiling from scratch. That second full pass is what looked like an indefinite hang. The MCP now surfaces the failure from the first pass and terminalizes immediately (`Failed`). The external build is used only when the in-process build could not start at all (SDK unavailable, unsupported action such as reorg), never to retry a build that already ran.
+- **In-process builds now report phase progress.** Progress was stuck at the starting phase for the whole build because the phase parser only understood the external MSBuild text format, not the section-marker stream the in-process build emits. Builds now advance through Specifying → Generating → Compiling → Finishing as they run.
+- **A build that fails without a per-line error is now actionable.** When the build fails at the section level with no itemized `error CS####:` line (typical of the deploy/config stage), the response now names the failing section under `phaseFailure` and points you at `genexus_lifecycle action=specify target=<object>` for itemized spc/gen diagnostics, instead of reporting a bare `Failed`.
+
+### Internal
+
+- `InProcessBuildRunner.Run` returns a tri-state `InProcessBuildOutcome` (`Succeeded` / `FailedWithDiagnostics` / `CouldNotRun`) instead of `bool`; `BuildService.RunBuild` only falls through to the MSBuild.exe spawn on `CouldNotRun`, and terminalizes in-process (setting `StateChangeSignal`) on the other two. `HandleLine` parses `>S`/`>E0` section markers via `MapSectionToPhase`; `>E0` on a non-`Build` section sets `PhaseFailure`. New tests: `InProcessMarkerParsingTests` (+9); `InProcessBuildRunnerTests` / `EdgeCaseRegressionTests` updated for the enum return.
+
 ## v2.25.1 — 2026-07-17
 
 Fixes the gateway lock-up reported in issue #38, where opening a path that isn't a Knowledge Base root (a GeneXus environment/model subfolder, with no `.gxw` / `knowledgebase.connection`) put the worker into an endless background auto-open loop and eventually left every tool call returning `Master error: NotFound` (404) until the server was restarted by hand.
