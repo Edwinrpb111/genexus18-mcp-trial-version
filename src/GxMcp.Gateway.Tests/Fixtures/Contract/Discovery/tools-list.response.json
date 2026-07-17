@@ -1279,7 +1279,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Use to snapshot an object: metadata, variables, structure, signature. Raw shape, no source text — use genexus_read for code. runtimeIds requires a prior build.",
+      "description": "Snapshot an object: metadata, variables, structure, signature. runtimeIds needs a prior build; use genexus_read for full source.",
       "inputSchema": {
         "examples": [
           {
@@ -1319,7 +1319,7 @@
             "type": "string"
           },
           "projection": {
-            "description": "minimal=name+type+lastUpdate; standard=default; verbose=all fields.",
+            "description": "Token budget. minimal=name/type/lastUpdate; standard=default (vars≤40 name+type, source heads 1200c); verbose=full vars + 8000c heads.",
             "enum": [
               "minimal",
               "standard",

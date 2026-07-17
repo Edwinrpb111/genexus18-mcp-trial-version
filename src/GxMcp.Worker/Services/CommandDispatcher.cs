@@ -1222,7 +1222,13 @@ namespace GxMcp.Worker.Services
             if (action == "GetParameters") return _analyzeService.GetSignature(target, analyzeType);
             if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target, analyzeType);
             if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
-            if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType);
+            if (action == "GetConversionContext")
+            {
+                string projection = args?["projection"]?.ToString();
+                if (string.IsNullOrWhiteSpace(projection))
+                    projection = (args?["verbose"]?.ToObject<bool?>() ?? false) ? "verbose" : "standard";
+                return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType, projection);
+            }
             if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
             if (action == "Summarize") return _summarizeService.Summarize(target, analyzeType);
             if (action == "GetSQL")

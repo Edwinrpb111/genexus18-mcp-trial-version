@@ -832,8 +832,15 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string GetConversionContext(string name, JArray include = null, string typeFilter = null)
+        public string GetConversionContext(string name, JArray include = null, string typeFilter = null, string projection = "standard")
         {
+            // Wire the long-advertised (but previously unimplemented) projection knob:
+            //   minimal  = name/type/description/lifecycle only (cheapest orient)
+            //   standard = lean default (source heads capped at 1200, variables name+type, ≤40)
+            //   verbose  = full (source heads capped at 8000, full variable detail)
+            projection = string.IsNullOrWhiteSpace(projection) ? "standard" : projection.Trim().ToLowerInvariant();
+            bool verbose = projection == "verbose";
+            bool minimal = projection == "minimal";
             // v2.6.9 perf: inspect cache. Build a stable key from name + sorted
             // include set + typeFilter, then reuse a fresh entry if no write
             // landed against the target since the cache was filled.
@@ -842,7 +849,8 @@ namespace GxMcp.Worker.Services
                 : string.Join(",", include.Select(i => (i?.ToString() ?? string.Empty).Trim().ToLowerInvariant())
                                           .Where(s => s.Length > 0)
                                           .OrderBy(s => s, System.StringComparer.OrdinalIgnoreCase));
-            string inspectKey = (name ?? "") + "|" + includeKey + "|" + (typeFilter ?? "");
+            // projection must partition the cache — minimal/standard/verbose payloads differ.
+            string inspectKey = (name ?? "") + "|" + includeKey + "|" + (typeFilter ?? "") + "|" + projection;
             if (_inspectCache.TryGetValue(inspectKey, out var cached) && cached != null)
             {
                 bool ttlOk = (System.DateTime.UtcNow - cached.FilledAtUtc) < InspectCacheTtl;
@@ -972,6 +980,31 @@ namespace GxMcp.Worker.Services
                     catch { /* swallow — keep response valid */ }
                 }
 
+                // projection=minimal: cheapest orient — name/type/description + lifecycle only.
+                // Skips every SDK part read; ~30-50 tokens vs a few thousand for standard/verbose.
+                if (minimal)
+                {
+                    try
+                    {
+                        var life = new JObject();
+                        DateTime lu = default;
+                        string lub = null;
+                        try { lu = obj.LastUpdate; } catch { }
+                        try { lub = obj.UserName; } catch { }
+                        if (lu > DateTime.MinValue) life["lastUpdate"] = lu.ToUniversalTime().ToString("o");
+                        if (!string.IsNullOrEmpty(lub)) life["lastModifiedBy"] = lub;
+                        if (life.Count > 0) result["lifecycle"] = life;
+                    }
+                    catch { }
+                    result["projection"] = "minimal";
+                    result["availableParts"] = new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj));
+                    result["hint"] = "Minimal projection. Pass projection=standard for variables+signature+source heads, or projection=verbose for full detail.";
+                    string mjson = result.ToString(Newtonsoft.Json.Formatting.None);
+                    SweepExpired(_inspectCache, InspectCacheTtl);
+                    _inspectCache[inspectKey] = new InspectCacheEntry { Json = mjson, FilledAtUtc = System.DateTime.UtcNow };
+                    return AttachRelevantMemory(mjson, obj.Name, obj.TypeDescriptor.Name);
+                }
+
                 bool includeAll = (include == null || include.Count == 0);
                 HashSet<string> requested = includeAll ? new HashSet<string>() : new HashSet<string>(include.Select(i => i.ToString().ToLower()));
 
@@ -1001,17 +1034,33 @@ namespace GxMcp.Worker.Services
                         try {
                             dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
                             if (vPart != null) {
+                                // Lean default: name+type only, capped at 40 rows — enough to orient.
+                                // verbose=true adds length/decimals/internalId and the full list.
+                                const int leanVarCap = 40;
                                 var variables = new JArray();
                                 int idxLocal = 0;
+                                int emitted = 0;
                                 foreach (Variable v in vPart.Variables) {
                                     idxLocal++;
-                                    var entry = new JObject { ["name"] = v.Name, ["type"] = v.Type.ToString(), ["length"] = (int)v.Length, ["decimals"] = (int)v.Decimals };
-                                    // FR#1 + FR#13: also surface internalId here.
-                                    int? id = VariableInjector.GetVariableInternalId(v, idxLocal);
-                                    if (id.HasValue) entry["internalId"] = id.Value;
+                                    if (!verbose && emitted >= leanVarCap) continue;
+                                    var entry = new JObject { ["name"] = v.Name, ["type"] = v.Type.ToString() };
+                                    if (verbose) {
+                                        entry["length"] = (int)v.Length;
+                                        entry["decimals"] = (int)v.Decimals;
+                                        // FR#1 + FR#13: also surface internalId here.
+                                        int? id = VariableInjector.GetVariableInternalId(v, idxLocal);
+                                        if (id.HasValue) entry["internalId"] = id.Value;
+                                    }
                                     variables.Add(entry);
+                                    emitted++;
                                 }
-                                lock (result) result["variables"] = variables;
+                                lock (result) {
+                                    result["variables"] = variables;
+                                    if (!verbose && idxLocal > emitted) {
+                                        result["variablesTruncated"] = true;
+                                        result["variablesTotal"] = idxLocal;
+                                    }
+                                }
                             }
 
                             // FR#3 (friction-report 2026-05-19): scan WebFormPart layout for all
@@ -1088,18 +1137,21 @@ namespace GxMcp.Worker.Services
                             // inspect (no `include` filter) can't dump tens of KB of
                             // Rules+Conditions+Events unpaginated. Full source is available
                             // via genexus_read (paginated). Mirrors the maxCallers cap below.
-                            var rules = CapInspectSource(GetPartSourceByName(obj, "Rules"), out bool rulesTrunc);
+                            int srcCap = verbose ? InspectSourceCap : InspectSourceCapLean;
+                            var rules = CapInspectSource(GetPartSourceByName(obj, "Rules"), out bool rulesTrunc, srcCap);
                             lock (result) { result["rules"] = rules; if (rulesTrunc) result["rulesTruncated"] = true; }
 
                             if (obj is Procedure || obj is WebPanel) {
-                                var conditions = CapInspectSource(GetPartSourceByName(obj, "Conditions"), out bool condTrunc);
+                                var conditions = CapInspectSource(GetPartSourceByName(obj, "Conditions"), out bool condTrunc, srcCap);
                                 lock (result) { result["conditions"] = conditions; if (condTrunc) result["conditionsTruncated"] = true; }
                             }
                             if (obj is Transaction || obj is WebPanel) {
-                                var events = CapInspectSource(GetPartSourceByName(obj, "Events"), out bool evTrunc);
+                                var events = CapInspectSource(GetPartSourceByName(obj, "Events"), out bool evTrunc, srcCap);
                                 lock (result) { result["events"] = events; if (evTrunc) result["eventsTruncated"] = true; }
                             }
-                            lock (result) result["sourceReadHint"] = "Inspect source parts are capped; use genexus_read part=Rules|Conditions|Events (paginated) for the full text.";
+                            lock (result) result["sourceReadHint"] = verbose
+                                ? "Inspect source parts are capped at 8000 chars; use genexus_read part=Rules|Conditions|Events (paginated) for the full text."
+                                : "Lean inspect: source parts capped at 1200 chars. Pass verbose=true for the 8000-char heads, or genexus_read part=Rules|Conditions|Events for full paginated text.";
                         } catch {}
                     }));
                 }
@@ -1379,12 +1431,14 @@ namespace GxMcp.Worker.Services
         // (no `include`) inspect stays token-bounded. Head-only slice (a truncated head is
         // enough for orientation; genexus_read gives the full paginated text).
         private const int InspectSourceCap = 8000;
-        private static string CapInspectSource(string src, out bool truncated)
+        // Lean default (no verbose): a short head is enough to orient; full text via genexus_read.
+        private const int InspectSourceCapLean = 1200;
+        private static string CapInspectSource(string src, out bool truncated, int cap = InspectSourceCap)
         {
             truncated = false;
-            if (string.IsNullOrEmpty(src) || src.Length <= InspectSourceCap) return src;
+            if (string.IsNullOrEmpty(src) || src.Length <= cap) return src;
             truncated = true;
-            return src.Substring(0, InspectSourceCap) + "\n\n// ... [inspect source truncated — use genexus_read for the full part] ...";
+            return src.Substring(0, cap) + "\n\n// ... [inspect source truncated — use genexus_read for the full part] ...";
         }
 
         public string GetSignature(string name, string typeFilter = null)
