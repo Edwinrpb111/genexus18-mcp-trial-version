@@ -643,6 +643,11 @@ namespace GxMcp.Gateway
             httpClient.DefaultRequestHeaders.Add("MCP-Protocol-Version", McpRouter.SupportedProtocolVersion);
             
             string? sessionId = null;
+            // issue #38 defect #3: cache the client's `initialize` line so a dropped/expired
+            // master session can be re-established transparently (replay initialize → fresh
+            // session → resend the failed request) instead of relaying "Master error: NotFound"
+            // to the client forever.
+            string? cachedInitializeLine = null;
             var reader = Console.In;
             var cts = new CancellationTokenSource();
             var ct = cts.Token;
@@ -667,6 +672,10 @@ namespace GxMcp.Gateway
                         // A JSON-RPC notification has no id and expects NO response — the
                         // master answers it with HTTP 204/empty, which is correct, not a fault.
                         bool isNotification = request["id"] == null || request["id"]!.Type == JTokenType.Null;
+                        // Remember the initialize handshake so we can replay it if the master
+                        // session later expires (issue #38 defect #3).
+                        if (string.Equals(request["method"]?.ToString(), "initialize", StringComparison.Ordinal))
+                            cachedInitializeLine = line;
                         var content = new StringContent(body, Encoding.UTF8, "application/json");
                         
                         if (sessionId != null) content.Headers.Add("MCP-Session-Id", sessionId);
@@ -726,6 +735,31 @@ namespace GxMcp.Gateway
                         else
                         {
                             string remoteError = await response.Content.ReadAsStringAsync(ct);
+
+                            // issue #38 defect #3: a 404 from a LIVE master (it answered) means our
+                            // MCP session expired or the master restarted with a fresh session store
+                            // — NOT that the master is dead. Relaying "Master error: NotFound" to the
+                            // client left it permanently wedged (every later call 404'd, worker_reload
+                            // included). Re-establish a session by replaying the cached initialize, then
+                            // resend the original request. This is distinct from the connection-failure
+                            // promotion path below, which must NOT fire while the master is alive.
+                            if (response.StatusCode == System.Net.HttpStatusCode.NotFound
+                                && sessionId != null && !isNotification)
+                            {
+                                Log($"[Proxy] Master 404 (session {sessionId} expired/unknown). Re-initializing session...");
+                                sessionId = null;
+                                string? newSessionId = await ProxyRehandshakeAsync(httpClient, baseUrl, cachedInitializeLine, ct);
+                                if (newSessionId != null)
+                                {
+                                    sessionId = newSessionId;
+                                    Log($"[Proxy] Re-handshake complete. New ID: {sessionId}");
+                                    _ = Task.Run(() => RunProxySseForwarderAsync(master.HttpPort, sessionId, cts.Token));
+                                    retryCount++;
+                                    continue; // resend the original request with the fresh session
+                                }
+                                Log("[Proxy] Re-handshake failed (no cached initialize or master refused); returning error to client.");
+                            }
+
                             Log($"[Proxy] Master status {response.StatusCode}: {remoteError}");
                             var id = request["id"];
                             if (id != null)
@@ -761,6 +795,27 @@ namespace GxMcp.Gateway
             cts.Cancel();
             Log("[Proxy] Stdio closed.");
             return false;
+        }
+
+        // issue #38 defect #3: replay the cached initialize against the master to obtain a
+        // fresh MCP session after the previous one expired/was dropped. Returns the new
+        // session id, or null when there is nothing to replay or the master refused. The
+        // initialize response body is intentionally discarded — the client already received
+        // its initialize reply; this handshake is an internal session refresh.
+        private static async Task<string?> ProxyRehandshakeAsync(HttpClient httpClient, string baseUrl, string? cachedInitializeLine, CancellationToken ct)
+        {
+            if (string.IsNullOrEmpty(cachedInitializeLine)) return null;
+            try
+            {
+                var content = new StringContent(cachedInitializeLine!, Encoding.UTF8, "application/json");
+                using var msg = new HttpRequestMessage(HttpMethod.Post, baseUrl) { Content = content };
+                var resp = await httpClient.SendAsync(msg, ct);
+                if (resp.IsSuccessStatusCode && resp.Headers.TryGetValues("MCP-Session-Id", out var values))
+                    return values.FirstOrDefault();
+                Log($"[Proxy] Re-handshake POST returned {(int)resp.StatusCode} with no session header.");
+            }
+            catch (Exception ex) { Log($"[Proxy] Re-handshake error: {ex.Message}"); }
+            return null;
         }
 
         private static async Task RunProxySseForwarderAsync(int port, string sessionId, CancellationToken ct)

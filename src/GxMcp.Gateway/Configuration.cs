@@ -168,6 +168,26 @@ namespace GxMcp.Gateway
             return false;
         }
 
+        // issue #38 defect #1: a path is openable as a KB when it is either the KB
+        // folder (contains a .gxw or the legacy knowledgebase.connection) or a direct
+        // .gxw/.gx file. Broader than LooksLikeKb (which only accepts a directory) so
+        // callers that pass the .gxw file path directly aren't falsely rejected. This
+        // is a cheap filesystem pre-check; the SDK remains the final authority on open.
+        internal static bool IsPlausibleKbPath(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) return false;
+                if (File.Exists(path))
+                {
+                    var ext = Path.GetExtension(path).ToLowerInvariant();
+                    return ext == ".gxw" || ext == ".gx";
+                }
+                return LooksLikeKb(path);
+            }
+            catch { return false; }
+        }
+
         private static void SetupWatcher(string path)
         {
             if (_watcher != null) return;

@@ -34,6 +34,16 @@ namespace GxMcp.Worker.Services
         private volatile bool _isOpenInProgress = false;
         private readonly object _kbLock = new object();
 
+        // issue #38 defect #2: bound the background auto-open retries. A structurally
+        // unopenable GX_KB_PATH used to be re-attempted on every GetKB() forever (the
+        // logs showed the same open failing every ~5s), churning the worker and flooding
+        // the debug log. After MaxAutoOpenFailures consecutive failures we abandon the
+        // auto-open path; an explicit genexus_kb action=open still works (it does not go
+        // through this guard) and a success resets the counter.
+        private const int MaxAutoOpenFailures = 3;
+        private volatile bool _autoOpenAbandoned = false;
+        private int _autoOpenFailCount = 0;
+
         public KbService(IndexCacheService indexCacheService)
         {
             _indexCacheService = indexCacheService;
@@ -68,21 +78,82 @@ namespace GxMcp.Worker.Services
         {
             lock (_kbLock) 
             { 
-                if (_kb == null && !_isOpenInProgress)
+                if (_kb == null && !_isOpenInProgress && !_autoOpenAbandoned)
                 {
                     string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
                     if (!string.IsNullOrEmpty(kbPath))
                     {
                         Logger.Info($"Auto-opening KB in background: {kbPath}");
-                        System.Threading.Tasks.Task.Run(() => OpenKB(kbPath));
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            string r = OpenKB(kbPath);
+                            try
+                            {
+                                bool ok = string.Equals(JObject.Parse(r)["status"]?.ToString(), "ok", StringComparison.Ordinal);
+                                if (ok)
+                                {
+                                    _autoOpenFailCount = 0;
+                                }
+                                else
+                                {
+                                    int n = Interlocked.Increment(ref _autoOpenFailCount);
+                                    if (n >= MaxAutoOpenFailures)
+                                    {
+                                        _autoOpenAbandoned = true;
+                                        Logger.Error($"[AUTO-OPEN-GIVEUP] Background auto-open of '{kbPath}' failed {n}× — giving up to stop the retry loop. "
+                                            + "Fix the path (it must be a KB folder with a .gxw / knowledgebase.connection) and reopen with genexus_kb action=open path=<kbPath>.");
+                                    }
+                                }
+                            }
+                            catch { }
+                        });
                     }
                 }
                 return _kb; 
             }
         }
 
+        // issue #38 defect #1: a path is openable as a KB only when it is the KB folder
+        // (contains a .gxw or the legacy knowledgebase.connection) or a direct .gxw/.gx
+        // file. Cheap filesystem pre-check; the SDK is still the final authority on open.
+        private static bool IsPlausibleKbPath(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) return false;
+                if (File.Exists(path))
+                {
+                    string ext = Path.GetExtension(path).ToLowerInvariant();
+                    return ext == ".gxw" || ext == ".gx";
+                }
+                if (!Directory.Exists(path)) return false;
+                foreach (var f in Directory.EnumerateFiles(path))
+                {
+                    string name = Path.GetFileName(f).ToLowerInvariant();
+                    if (name.EndsWith(".gxw") || name == "knowledgebase.connection") return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
         public string OpenKB(string path)
         {
+            // issue #38 defect #1: reject a structurally-invalid path fast, before the
+            // heavy KnowledgeBase.Open call. A GeneXus environment/model subfolder has no
+            // .gxw / knowledgebase.connection; opening it always throws deep in the SDK.
+            // Failing here keeps the error clear and lets the auto-open give-up counter
+            // converge quickly instead of paying a full SDK open per retry.
+            if (!IsPlausibleKbPath(path))
+            {
+                Logger.Error($"[KB-OPEN-INVALID] path={path} is not a KB root (no .gxw / knowledgebase.connection).");
+                return Models.McpResponse.Err(
+                    code: "KbInvalidPath",
+                    message: $"'{path}' is not a GeneXus Knowledge Base root: no .gxw file and no knowledgebase.connection found.",
+                    hint: "Point at the KB folder that contains the .gxw (not an environment/model subfolder), or the .gxw/.gx file itself.",
+                    target: path);
+            }
+
             // Concurrency redesign: the multi-minute KnowledgeBase.Open used to run while
             // HOLDING _kbLock, which (a) blocked every locked accessor (GetKbPath, IsOpen,
             // GetKB, GetActiveEnvironment) for the whole open, and (b) made the

@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.25.1 — 2026-07-17
+
+Fixes the gateway lock-up reported in issue #38, where opening a path that isn't a Knowledge Base root (a GeneXus environment/model subfolder, with no `.gxw` / `knowledgebase.connection`) put the worker into an endless background auto-open loop and eventually left every tool call returning `Master error: NotFound` (404) until the server was restarted by hand.
+
+### Fixed
+
+- **Opening a non-KB path now fails fast with a clear error instead of wedging the gateway.** `genexus_kb action=open` validates that the path is a real KB root (a folder with a `.gxw` / `knowledgebase.connection`, or the `.gxw`/`.gx` file itself) before a worker is spawned for it, and returns `KbInvalidPath` when it isn't. Previously the bad path was handed to a fresh worker whose open failed but kept retrying, so the whole gateway drifted into an unrecoverable state.
+- **Background KB auto-open no longer retries forever.** A structurally unopenable path used to be re-attempted on every operation (the debug log filled with the same failed open every few seconds). Auto-open now gives up after 3 consecutive failures and says so; an explicit `genexus_kb action=open` still works and a successful open resets the counter.
+- **The gateway recovers on its own when its session to the running server expires.** When a second AI client shares the already-running server and that server restarts (or its session ages out), the client used to get `Master error: NotFound` on every call with no way back except a full restart. The connection now re-establishes the session transparently and retries the call.
+- **No more spurious `SynchronizationLockException` on worker shutdown.** The worker's single-instance lock was being released from a different thread than the one that acquired it, logging an error on every shutdown. The release now happens on the owning thread (or is safely left to process exit).
+
+### Internal
+
+- Gateway `Configuration.IsPlausibleKbPath` gates `genexus_kb action=open` in `Program.RequestLoop` before `WorkerPool.AcquireAsync`; worker `KbService.OpenKB` mirrors the check and short-circuits to a `KbInvalidPath` envelope before the SDK `KnowledgeBase.Open`. `KbService` bounds background auto-open via `MaxAutoOpenFailures` (3) + `_autoOpenAbandoned`. Proxy path in `Program.RunMcpProxyAsync` caches the client `initialize` line and, on an HTTP 404 from a live master, replays it via `ProxyRehandshakeAsync` to mint a fresh `MCP-Session-Id` and resend the request (distinct from the connection-failure promotion path). `SingleInstanceLock` records the acquiring thread id and only calls `ReleaseMutex` from it. New tests: `KbPathValidationTests` (+5), `KbOpenValidationTests` (+2).
+
 ## v2.25.0 — 2026-07-17
 
 Addresses the deploy/database-apply gaps reported in issue #37: reorg couldn't run, builds and F5 previews could hang forever, and a DBA-managed "no reorg" database was invisible to an agent driving GeneXus headlessly.

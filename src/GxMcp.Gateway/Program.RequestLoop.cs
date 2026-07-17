@@ -589,6 +589,27 @@ namespace GxMcp.Gateway
                                         ? System.IO.Path.GetFileName(path!.TrimEnd('\\', '/')).ToLowerInvariant()
                                         : alias!;
                                     if (string.IsNullOrEmpty(finalAlias)) finalAlias = "adhoc";
+
+                                    // issue #38 defect #1: reject a path that is not a real KB root
+                                    // BEFORE spawning a worker. A GeneXus environment/model subfolder
+                                    // (no .gxw / no knowledgebase.connection) would otherwise be handed
+                                    // to a freshly-spawned worker as GX_KB_PATH, whose open fails but
+                                    // whose auto-open keeps retrying forever, eventually wedging the
+                                    // gateway (every later call → "Master error: NotFound"). Fail fast
+                                    // here so no worker is ever spawned for an unopenable path.
+                                    if (!Configuration.IsPlausibleKbPath(path!))
+                                    {
+                                        isError = true;
+                                        payload = new JObject
+                                        {
+                                            ["error"] = $"'{path}' is not a GeneXus Knowledge Base root: no .gxw file and no knowledgebase.connection found. "
+                                                + "Point at the KB folder that contains the .gxw (not an environment/model subfolder).",
+                                            ["code"] = "KbInvalidPath",
+                                            ["path"] = path
+                                        };
+                                        return BuildToolTextResponse(idToken, payload, isError, "genexus_kb", args);
+                                    }
+
                                     handleToOpen = new KbHandle(finalAlias, path!);
                                 }
                                 // No path → resolve the alias against config-declared KBs.

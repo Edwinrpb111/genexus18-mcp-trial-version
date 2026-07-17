@@ -29,6 +29,15 @@ namespace GxMcp.Worker.Helpers
 
         private Mutex _mutex;
         private bool _mutexHeld;
+        // issue #38 defect #4: a Mutex has thread affinity — ReleaseMutex MUST run on the
+        // thread that acquired it, or it throws SynchronizationLockException. The lock is
+        // acquired on the TryAcquire thread but Dispose runs from the ProcessExit handler
+        // (and worker idle-shutdown), a different thread, which is why every shutdown logged
+        // "[SingleInstanceLock] mutex release: ... called from an unsynchronized block".
+        // Record the owning thread so Dispose only releases when it can legally do so; on a
+        // foreign thread we skip the release and let process exit reclaim the handle (any
+        // waiter already handles AbandonedMutexException on the next acquire).
+        private int _mutexOwnerThreadId;
         private FileStream _lockStream;
         private bool _disposed;
 
@@ -89,6 +98,7 @@ namespace GxMcp.Worker.Helpers
                 if (got)
                 {
                     inst._mutexHeld = true;
+                    inst._mutexOwnerThreadId = Thread.CurrentThread.ManagedThreadId;
                 }
             }
             catch (Exception ex)
@@ -227,7 +237,13 @@ namespace GxMcp.Worker.Helpers
             {
                 if (_mutexHeld)
                 {
-                    _mutex.ReleaseMutex();
+                    // Only the acquiring thread may ReleaseMutex. When Dispose runs on a
+                    // foreign thread (ProcessExit / idle-shutdown) skip the release — the OS
+                    // reclaims the mutex on process exit and waiters treat it as abandoned.
+                    if (Thread.CurrentThread.ManagedThreadId == _mutexOwnerThreadId)
+                    {
+                        _mutex.ReleaseMutex();
+                    }
                     _mutexHeld = false;
                 }
             }
