@@ -341,6 +341,11 @@ namespace GxMcp.Worker.Services
                     else if (targetObj is global::Artech.Genexus.Common.Objects.Transaction trn && trn.IsBusinessComponent)
                         VariableInjector.BindVariableToBC(newVar, targetObj);
                 }
+                // Built-in user-defined types (WebSession, ...) aren't KB objects, so ResolveTypeObject
+                // can't find them — bind by name to the GX_USRDEFTYP effective type (issue #33).
+                else if (VariableInjector.TryBindBuiltinUserDefinedType(newVar, resolvedTypeForSdk))
+                {
+                }
                 else if (resolution != null && resolution.CanonicalType == "DomainReference"
                          && !string.IsNullOrEmpty(originalTypeName) && !originalTypeName.StartsWith("&"))
                 {
@@ -891,6 +896,10 @@ namespace GxMcp.Worker.Services
                                 VariableInjector.BindVariableToSdt(newVar, targetObj);
                             else if (targetObj is global::Artech.Genexus.Common.Objects.Transaction trn && trn.IsBusinessComponent)
                                 VariableInjector.BindVariableToBC(newVar, targetObj);
+                        }
+                        // WebSession & other built-in user-defined types (issue #33).
+                        else if (VariableInjector.TryBindBuiltinUserDefinedType(newVar, resolvedTypeForSdk))
+                        {
                         }
                     }
 

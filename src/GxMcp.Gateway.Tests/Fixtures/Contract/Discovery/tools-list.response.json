@@ -2912,7 +2912,7 @@
             "type": "string"
           },
           "typeName": {
-            "description": "Primitive (Character/Numeric/VarChar/Date/...), SDT/BC/Domain name. VarChar keeps VARCHAR semantics.",
+            "description": "Primitive (Character/Numeric/VarChar/Date/...), SDT/BC/Domain name, or WebSession. VarChar keeps VARCHAR semantics.",
             "type": "string"
           },
           "varName": {

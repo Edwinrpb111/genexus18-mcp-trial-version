@@ -12,10 +12,15 @@ namespace GxMcp.Worker.Parsers
     {
         private static readonly Guid SDT_STRUCTURE_PART = Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
 
+        // Set in Parse() so SyncSDTNodes can resolve SDT-typed members (issue #33). The root
+        // SDTLevel exposes no Model property, so we can't reach it from the node itself.
+        private KBModel _model;
+
         public void Serialize(KBObject obj, StringBuilder sb)
         {
             if (obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase))
             {
+                try { _model = obj.Model; } catch { _model = null; }
                 KBObject sdt = obj;
                 KBObjectPart structure = null;
                 
@@ -157,6 +162,7 @@ namespace GxMcp.Worker.Parsers
                                 .Where(l => !string.IsNullOrWhiteSpace(l))
                                 .ToList();
                 var parsedNodes = DslParserUtils.ParseLinesIntoNodes(lines);
+                try { _model = obj.Model; } catch { _model = null; }
                 dynamic ds = structure;
                 dynamic root = null;
                 try { root = ds.Root; } catch { try { root = ds.StructureRoot; } catch { } }
@@ -273,6 +279,19 @@ namespace GxMcp.Worker.Parsers
                 string typeStr = "Unknown";
                 try { typeStr = level.Type != null ? level.Type.ToString() : "Unknown"; } catch { }
 
+                // issue #33: an SDT-typed member serializes as the referenced SDT name (so the
+                // reader round-trips it back to the same SDT reference) instead of the bare
+                // "GX_SDT" enum, which would lose the reference on re-write.
+                if (typeStr.StartsWith("GX_SDT", StringComparison.Ordinal))
+                {
+                    string sdtName = ResolveSdtMemberName(level);
+                    if (!string.IsNullOrEmpty(sdtName))
+                    {
+                        sb.AppendLine($"{indentStr}{level.Name} : {sdtName}{collectionMarker}");
+                        return;
+                    }
+                }
+
                 // issue #31.1: surface Length/Decimals so the reader can see (and round-trip)
                 // the element size, e.g. "Numeric(9)" / "Numeric(9,2)". Without this a numeric
                 // element read back as bare "NUMERIC" (default Numeric(4) → xsd:short, silent
@@ -301,6 +320,77 @@ namespace GxMcp.Worker.Parsers
                 if (p != null && p.CanWrite) p.SetValue(target, value, null);
             }
             catch (Exception ex) { Logger.Debug("[SDT PARSE] SetIntProperty " + propName + " failed: " + ex.Message); }
+        }
+
+        // A type token that maps to a GeneXus primitive (or the raw GX_SDT enum a prior read
+        // emitted). Anything else may be an SDT reference and warrants a KB lookup (issue #33).
+        private static bool LooksLikePrimitive(string typeStr)
+        {
+            if (string.IsNullOrWhiteSpace(typeStr)) return true;
+            string[] prims = { "Numeric", "Char", "VarChar", "Varchar", "LongVarchar", "Date", "DateTime",
+                               "Bool", "Boolean", "Blob", "Binary", "Image", "Bitmap", "Audio", "Video",
+                               "GUID", "Geography", "GX_SDT", "GX_BUSCOMP", "GX_USRDEFTYP" };
+            foreach (var p in prims)
+                if (typeStr.StartsWith(p, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        // Read-side: recover the referenced SDT's name from a GX_SDT member's ATTCUSTOMTYPE.
+        // Persisted form is a StructureTypeReference XML whose <Type> is the target SDT's guid;
+        // freshly-written (pre-save) items may instead carry the SDT name directly. Returns null
+        // when it can't resolve (caller falls back to the raw enum).
+        private string ResolveSdtMemberName(dynamic level)
+        {
+            if (_model == null) return null;
+            try
+            {
+                object item = (object)level;
+                object ie = item.GetType().GetProperty("ItemEntity", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(item)
+                         ?? item.GetType().GetProperty("SDTItemEntity", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(item);
+                if (ie == null) return null;
+                object ct = ie.GetType().GetProperty("CustomType", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(ie);
+                if (ct == null) return null;
+                string guid = ct.GetType().GetField("m_guid", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(ct) as string;
+                if (string.IsNullOrEmpty(guid)) return null;
+
+                // Persisted StructureTypeReference is an EntityKey pair:
+                //   <Type> = the SDT class guid (a constant, not the target), <Id> = the target
+                //   SDT object's numeric id. Resolve it via model.Objects.Get(EntityKey).
+                var mRef = System.Text.RegularExpressions.Regex.Match(guid,
+                    @"<Type>([0-9a-fA-F\-]{36})</Type>\s*<Id>(\d+)</Id>");
+                if (mRef.Success && Guid.TryParse(mRef.Groups[1].Value, out var classGuid)
+                    && int.TryParse(mRef.Groups[2].Value, out var objId))
+                {
+                    try
+                    {
+                        var ek = new global::Artech.Udm.Framework.EntityKey(classGuid, objId);
+                        var o = _model.Objects.Get(ek);
+                        if (o != null) return o.Name;
+                    }
+                    catch { }
+                }
+                // Pre-save form: the plain SDT name (or an object name we can confirm).
+                if (guid.IndexOf('<') < 0)
+                {
+                    var obj = ResolveSdtType(_model, guid);
+                    return obj?.Name ?? guid;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // Resolve a member type token to an SDT KBObject, or null when it isn't one.
+        private static KBObject ResolveSdtType(KBModel model, string typeStr)
+        {
+            try
+            {
+                var obj = GxMcp.Worker.Helpers.VariableInjector.ResolveTypeObject(model, typeStr.Trim());
+                if (obj != null && obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase))
+                    return obj;
+            }
+            catch { }
+            return null;
         }
 
         private static object ResolveDbType(Type eDBTypeT, string typeStr)
@@ -346,6 +436,12 @@ namespace GxMcp.Worker.Parsers
 
             foreach (var pNode in parsedNodes)
             {
+                // issue #33: a member whose type token names an SDT must persist as GX_SDT +
+                // ATTCUSTOMTYPE (a typed collection/reference), not fall through to VARCHAR.
+                KBObject sdtMemberObj = null;
+                if (!pNode.IsCompound && _model != null && !LooksLikePrimitive(pNode.TypeStr))
+                    sdtMemberObj = ResolveSdtType(_model, pNode.TypeStr);
+
                 dynamic targetChild = null;
                 if (existingItems.TryGetValue(pNode.Name, out var existing)) targetChild = existing;
                 else
@@ -376,7 +472,9 @@ namespace GxMcp.Worker.Parsers
                         else
                         {
                             Type eDBTypeT = nodeType.Assembly.GetType("Artech.Genexus.Common.eDBType");
-                            object dbType = ResolveDbType(eDBTypeT, pNode.TypeStr);
+                            object dbType = sdtMemberObj != null && eDBTypeT != null
+                                ? Enum.Parse(eDBTypeT, "GX_SDT")
+                                : ResolveDbType(eDBTypeT, pNode.TypeStr);
                             MethodInfo addItem = nodeType.GetMethod("AddItem", new Type[] { typeof(string), eDBTypeT });
                             if (addItem != null && eDBTypeT != null && dbType != null)
                             {
@@ -407,6 +505,13 @@ namespace GxMcp.Worker.Parsers
                 {
                     try { targetChild.IsCollection = pNode.IsCollection; } catch { }
                     if (pNode.IsCompound) SyncSDTNodes(targetChild, pNode.Children);
+                    else if (sdtMemberObj != null)
+                    {
+                        // issue #33: type the member as a reference to the SDT (GX_SDT +
+                        // ATTCUSTOMTYPE). IsCollection above already carries the "Collection" marker.
+                        if (!VariableInjector.BindSdtItemToSdt((object)targetChild, sdtMemberObj))
+                            Logger.Error($"[SDT PARSE] Failed to bind member '{pNode.Name}' to SDT '{sdtMemberObj.Name}'");
+                    }
                     else
                     {
                         try {

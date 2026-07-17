@@ -378,6 +378,19 @@ namespace GxMcp.Worker.Helpers
                 return string.Format("{0}({1}{2})", v.Type, v.Length, v.Decimals > 0 ? "," + v.Decimals : "");
             }
 
+            // User-defined effective type (WebSession, ...): DataTypeString holds the type name.
+            // Without this a WebSession variable serializes as "GX_USRDEFTYP(4)" and round-tripping
+            // through an edit would drop the type (issue #33).
+            if (v.Type == global::Artech.Genexus.Common.eDBType.GX_USRDEFTYP)
+            {
+                try
+                {
+                    if (v.GetPropertyValue("DataTypeString") is string dts && !string.IsNullOrEmpty(dts)) return dts;
+                }
+                catch { }
+                return string.Format("{0}({1}{2})", v.Type, v.Length, v.Decimals > 0 ? "," + v.Decimals : "");
+            }
+
             return string.Format("{0}({1}{2})", v.Type, v.Length, v.Decimals > 0 ? "," + v.Decimals : "");
         }
 
@@ -417,6 +430,11 @@ namespace GxMcp.Worker.Helpers
                         v.Length = length;
                         v.DomainBasedOn = null; 
                         v.SetPropertyValue("DataType", null); // Reset user type if it was set
+                    }
+                    else if (TryBindBuiltinUserDefinedType(v, typeStr))
+                    {
+                        // WebSession & other built-in user-defined types (issue #33).
+                        Logger.Info($"Resolved variable {name} type to built-in user-defined type {typeStr}");
                     }
                     else
                     {
@@ -459,92 +477,156 @@ namespace GxMcp.Worker.Helpers
             v.SetPropertyValue("DataType", sdtObj.Key);
             try { v.SetPropertyValue("DataTypeString", sdtObj.Name); } catch (Exception ex) { Logger.Warn("DataTypeString set failed: " + ex.Message); }
 
-            // GeneXus stores the actual structural type reference in ATTCUSTOMTYPE as
-            //   <AttType>:<StructureTypeReference><Type>{guid}</Type><Id>{id}</Id></StructureTypeReference>
-            // The expression-time field resolver follows this reference, not DataType.
-            // We construct it via reflection so the AttCustomType class doesn't need to be
-            // statically referenced.
+            // GeneXus stores the actual structural type reference in ATTCUSTOMTYPE. For an SDT the
+            // custom type carries the object NAME as its guid string with dataType 254 (the SDT
+            // category); the SDK resolves that to the StructureTypeReference at save time. The
+            // "Reference X by name can't be saved" error surfaces if a real guid string is used here.
+            var inst = BuildAttCustomType(sdtObj.GetType().Assembly, sdtObj.Name, 254, null);
+            if (inst != null)
+            {
+                try { v.SetPropertyValue("ATTCUSTOMTYPE", inst); }
+                catch (Exception ex) { Logger.Error("[BindVariableToSdt] SetPropertyValue ATTCUSTOMTYPE failed: " + ex.Message); }
+            }
+            else Logger.Error("[BindVariableToSdt] Could not construct AttCustomType for " + sdtObj.Name);
+        }
+
+        // Built-in GeneXus "user-defined" effective types that live in eDBType.GX_USRDEFTYP,
+        // keyed by their AttCustomType subtype id (category 255). Confirmed live for issue #33: a
+        // WebSession variable persists as AttCustomType{ dataType=255, guid="31", description=
+        // "WebSession" } (ToString "255:31"). The subtype id is a GeneXus built-in constant per GX
+        // version; add other externally-backed types (e.g. HttpRequest) here as they're verified.
+        private static readonly Dictionary<string, int> BuiltinUserDefinedTypes =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "WebSession", 31 },
+            };
+
+        public static bool IsBuiltinUserDefinedType(string typeName)
+            => !string.IsNullOrWhiteSpace(typeName) && BuiltinUserDefinedTypes.ContainsKey(typeName.Trim());
+
+        // Returns the canonical name (correct casing) when typeName is a known built-in
+        // user-defined type, else null.
+        public static string CanonicalUserDefinedTypeName(string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName)) return null;
+            foreach (var key in BuiltinUserDefinedTypes.Keys)
+                if (key.Equals(typeName.Trim(), StringComparison.OrdinalIgnoreCase)) return key;
+            return null;
+        }
+
+        // Atomically type a variable as a built-in user-defined type (e.g. WebSession) so that
+        // &var.Get/.Set validate. Returns false when typeName isn't a known built-in.
+        public static bool TryBindBuiltinUserDefinedType(global::Artech.Genexus.Common.Variable v, string typeName)
+        {
+            var canonical = CanonicalUserDefinedTypeName(typeName);
+            if (canonical == null) return false;
+            BindVariableToExternalObject(v, canonical, BuiltinUserDefinedTypes[canonical]);
+            return true;
+        }
+
+        // GX_USRDEFTYP = user-defined effective type (AttCustomType category 255). The concrete
+        // type (WebSession, ...) is identified by ATTCUSTOMTYPE where guid=<subtype id> and
+        // description=<type name>; DataTypeString mirrors the name for read-back.
+        public static void BindVariableToExternalObject(global::Artech.Genexus.Common.Variable v, string typeName, int subtype)
+        {
+            Logger.Info($"[BindVariableToExternalObject] Binding {v.Name} -> {typeName} (255:{subtype})");
+            v.Type = global::Artech.Genexus.Common.eDBType.GX_USRDEFTYP;
+            try { v.SetPropertyValue("DataTypeString", typeName); } catch (Exception ex) { Logger.Warn("[ExtObj] DataTypeString set failed: " + ex.Message); }
+            var inst = BuildAttCustomType(v.GetType().Assembly, subtype.ToString(), 255, typeName);
+            if (inst != null)
+            {
+                try { v.SetPropertyValue("ATTCUSTOMTYPE", inst); }
+                catch (Exception ex) { Logger.Error("[ExtObj] SetPropertyValue ATTCUSTOMTYPE failed: " + ex.Message); }
+            }
+            else Logger.Error("[ExtObj] Could not construct AttCustomType for " + typeName);
+        }
+
+        // Type an SDT structure member as a reference to another SDT (item.Type=GX_SDT +
+        // ATTCUSTOMTYPE carrying the SDT name / category 254). Mirrors BindVariableToSdt but on an
+        // SDTItem reached via reflection (the parser holds it as a dynamic). Returns false on failure.
+        public static bool BindSdtItemToSdt(object item, KBObject sdtObj)
+        {
+            if (item == null || sdtObj == null) return false;
             try
             {
-                var asm = sdtObj.GetType().Assembly;
+                var itemType = item.GetType();
+                var eDBTypeT = itemType.Assembly.GetType("Artech.Genexus.Common.eDBType");
+                var setType = itemType.GetProperty("Type");
+                if (eDBTypeT != null && setType != null && setType.CanWrite)
+                    setType.SetValue(item, Enum.Parse(eDBTypeT, "GX_SDT"), null);
+
+                var inst = BuildAttCustomType(itemType.Assembly, sdtObj.Name, 254, null);
+                if (inst == null) { Logger.Error("[BindSdtItemToSdt] Could not construct AttCustomType for " + sdtObj.Name); return false; }
+
+                var setProp = itemType.GetMethod("SetPropertyValue", new[] { typeof(string), typeof(object) });
+                if (setProp == null) { Logger.Error("[BindSdtItemToSdt] SetPropertyValue(string,object) not found on " + itemType.FullName); return false; }
+                setProp.Invoke(item, new object[] { "ATTCUSTOMTYPE", inst });
+                Logger.Info($"[BindSdtItemToSdt] Bound structure member -> SDT {sdtObj.Name}");
+                return true;
+            }
+            catch (Exception ex) { Logger.Error("[BindSdtItemToSdt] failed: " + (ex.InnerException?.Message ?? ex.Message)); return false; }
+        }
+
+        // Construct an Artech AttCustomType via reflection (the class isn't statically referenced).
+        // Ctors seen on GX18: (), (string guid, int dataType), (string,int,string), (string,int,string,string).
+        // dataType is the type category (254=SDT, 255=user-defined). Returns null on failure.
+        public static object BuildAttCustomType(System.Reflection.Assembly probeAsm, string guid, int dataType, string description)
+        {
+            try
+            {
                 Type customTypeT = null;
                 foreach (var loadedAsm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     try
                     {
                         foreach (var t in loadedAsm.GetTypes())
-                        {
-                            if (t.Name.Equals("AttCustomType", StringComparison.Ordinal))
-                            {
-                                customTypeT = t;
-                                Logger.Info("[BindVariableToSdt] AttCustomType found via scan: " + t.FullName + " in " + loadedAsm.GetName().Name);
-                                break;
-                            }
-                        }
+                            if (t.Name.Equals("AttCustomType", StringComparison.Ordinal)) { customTypeT = t; break; }
                     }
                     catch { }
                     if (customTypeT != null) break;
                 }
-                if (customTypeT != null)
+                if (customTypeT == null) { Logger.Warn("[BuildAttCustomType] AttCustomType type not found"); return null; }
+
+                object inst = null;
+                if (!string.IsNullOrEmpty(description))
                 {
-                    var ctorsDump = string.Join("; ", customTypeT.GetConstructors().Select(c => "(" + string.Join(",", c.GetParameters().Select(pi => pi.ParameterType.FullName)) + ")"));
-                    var propsDump = string.Join(", ", customTypeT.GetProperties().Select(p => p.Name + ":" + p.PropertyType.Name));
-                    var fieldsDump = string.Join(", ", customTypeT.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Select(f => f.Name + ":" + f.FieldType.Name));
-                    Logger.Info("[BindVariableToSdt] AttCustomType ctors=[" + ctorsDump + "] props=[" + propsDump + "] fields=[" + fieldsDump + "]");
-
-                    // Real ctors: (), (string guid, int dataType), (string,int,string), (string,int,string,string)
-                    // dataType=254 = SDT enum; m_guid carries the SDT object guid string.
-                    object inst = null;
-                    Exception lastEx = null;
-
-                    // m_guid actually carries the object NAME (the GeneXus error "Reference X by name can't be saved"
-                    // surfaces when this field gets a guid string instead of a name).
-                    string nameForRef = sdtObj.Name;
-                    var ctorStrInt = customTypeT.GetConstructor(new Type[] { typeof(string), typeof(int) });
-                    if (ctorStrInt != null)
-                    {
-                        try { inst = ctorStrInt.Invoke(new object[] { nameForRef, 254 }); Logger.Info("[BindVariableToSdt] Built via ctor(name,254)"); }
-                        catch (Exception ex) { lastEx = ex; }
-                    }
-
-                    if (inst == null)
-                    {
-                        var ctor0 = customTypeT.GetConstructor(Type.EmptyTypes);
-                        if (ctor0 != null)
-                        {
-                            try
-                            {
-                                inst = ctor0.Invoke(null);
-                                customTypeT.GetProperty("Guid")?.SetValue(inst, nameForRef);
-                                customTypeT.GetProperty("DataType")?.SetValue(inst, 254);
-                            }
-                            catch (Exception ex) { lastEx = ex; }
-                        }
-                    }
-
-                    if (inst != null)
+                    var ctor3 = customTypeT.GetConstructor(new[] { typeof(string), typeof(int), typeof(string) });
+                    if (ctor3 != null) { try { inst = ctor3.Invoke(new object[] { guid, dataType, description }); } catch (Exception ex) { Logger.Warn("[BuildAttCustomType] ctor(str,int,str) failed: " + ex.Message); } }
+                }
+                if (inst == null)
+                {
+                    var ctor2 = customTypeT.GetConstructor(new[] { typeof(string), typeof(int) });
+                    if (ctor2 != null) { try { inst = ctor2.Invoke(new object[] { guid, dataType }); } catch (Exception ex) { Logger.Warn("[BuildAttCustomType] ctor(str,int) failed: " + ex.Message); } }
+                }
+                if (inst == null)
+                {
+                    var ctor0 = customTypeT.GetConstructor(Type.EmptyTypes);
+                    if (ctor0 != null)
                     {
                         try
                         {
-                            v.SetPropertyValue("ATTCUSTOMTYPE", inst);
-                            Logger.Info("[BindVariableToSdt] ATTCUSTOMTYPE set, inst.ToString='" + inst.ToString() + "', Guid=" + customTypeT.GetProperty("Guid")?.GetValue(inst));
+                            inst = ctor0.Invoke(null);
+                            customTypeT.GetProperty("Guid")?.SetValue(inst, guid);
+                            customTypeT.GetProperty("DataType")?.SetValue(inst, dataType);
                         }
-                        catch (Exception ex) { Logger.Error("[BindVariableToSdt] SetPropertyValue ATTCUSTOMTYPE failed: " + ex.Message); }
-                    }
-                    else
-                    {
-                        Logger.Error("[BindVariableToSdt] Could not construct AttCustomType. LastEx=" + lastEx?.Message);
+                        catch (Exception ex) { Logger.Warn("[BuildAttCustomType] ctor() failed: " + ex.Message); }
                     }
                 }
-                else
+                // Ensure the description lands even when only a shorter ctor was available.
+                if (inst != null && !string.IsNullOrEmpty(description))
                 {
-                    Logger.Warn("[BindVariableToSdt] AttCustomType type not found in assembly");
+                    try
+                    {
+                        var descField = customTypeT.GetField("m_description", BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (descField != null && string.IsNullOrEmpty(descField.GetValue(inst) as string))
+                            descField.SetValue(inst, description);
+                    }
+                    catch { }
                 }
+                if (inst == null) Logger.Error("[BuildAttCustomType] Could not construct AttCustomType (guid=" + guid + ", dataType=" + dataType + ")");
+                return inst;
             }
-            catch (Exception ex)
-            {
-                Logger.Warn("BindVariableToSdt: ATTCUSTOMTYPE setup failed: " + ex.Message);
-            }
+            catch (Exception ex) { Logger.Warn("[BuildAttCustomType] failed: " + ex.Message); return null; }
         }
 
         public static void BindVariableToBC(global::Artech.Genexus.Common.Variable v, KBObject bcObj)
