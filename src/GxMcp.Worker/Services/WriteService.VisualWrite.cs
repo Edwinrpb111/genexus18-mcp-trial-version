@@ -2,6 +2,7 @@ using System;
 using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
+using Artech.Architecture.Common.Objects;
 
 namespace GxMcp.Worker.Services
 {
@@ -121,6 +122,12 @@ namespace GxMcp.Worker.Services
                     partName,
                     "The object does not expose a WebForm part for visual editing.",
                     obj);
+            }
+
+            // Route Report parts (Procedure Layout) through ReportLayoutHelper
+            if (ReportLayoutHelper.IsReportPart(webFormPart) != null)
+            {
+                return WriteReportPart(webFormPart, obj, target, partName, xml, dryRun, strictVerify);
             }
 
             // Probe ONCE up front so every response branch (NoChange / DryRun / Success)
@@ -504,6 +511,62 @@ namespace GxMcp.Worker.Services
                         target: target,
                         extra: visualExtra);
                 }
+            }
+        }
+
+        // Routes Report part writes (Procedure Layout) through ReportLayoutHelper
+        private string WriteReportPart(KBObjectPart webFormPart, KBObject obj, string target, string partName, string xml, bool dryRun, bool strictVerify)
+        {
+            if (dryRun)
+            {
+                if (ReportLayoutHelper.WriteLayout(webFormPart, xml))
+                {
+                    return Models.McpResponse.Ok(target: target, code: "WriteDryRun",
+                        result: new JObject { ["part"] = partName, ["details"] = "Dry-run: Report layout parsed and would apply. Save skipped." });
+                }
+                return Models.McpResponse.Ok(target: target, code: "WriteDryRun",
+                    result: new JObject { ["part"] = partName, ["details"] = "Dry-run: No changes detected." });
+            }
+
+            try
+            {
+                if (!ReportLayoutHelper.WriteLayout(webFormPart, xml))
+                {
+                    return CreateWriteError("Report layout write failed", target, partName,
+                        "ReportLayoutHelper.WriteLayout returned false — no changes applied or SDK rejected the XML.", obj);
+                }
+
+                var kb = _objectService.GetKbService()?.GetKB();
+                if (kb != null)
+                {
+                    using (var transaction = kb.BeginTransaction())
+                    {
+                        webFormPart.Save();
+                        if (obj != null) obj.EnsureSave(true);
+                        transaction.Commit();
+                        ScheduleFlush(force: true);
+                    }
+                }
+
+                if (strictVerify)
+                {
+                    var refreshedObj = _objectService.FindObject(target);
+                    var refreshedPart = WebFormXmlHelper.GetWebFormPart(refreshedObj ?? obj);
+                    string persistedXml = refreshedPart != null ? ReportLayoutHelper.ReadLayout(refreshedPart) : null;
+                    if (persistedXml != null && !XmlEquivalence.AreEquivalent(persistedXml, xml, out _))
+                    {
+                        return CreateWriteError("Report layout write verification failed", target, partName,
+                            "The SDK save completed but the persisted layout does not match the requested XML.", obj);
+                    }
+                }
+
+                return Models.McpResponse.Ok(target: target, code: "WriteApplied",
+                    result: new JObject { ["part"] = partName, ["details"] = "Report layout updated and verified." });
+            }
+            catch (Exception ex)
+            {
+                return CreateWriteError("Report layout write failed", target, partName,
+                    "Exception: " + (ex.InnerException?.Message ?? ex.Message), obj);
             }
         }
 
