@@ -1,0 +1,39 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: C# (.NET 8.0 Gateway, .NET Framework 4.8 Worker), TypeScript (CLI), PowerShell (build/deploy)
+  Architecture: Two-process MCP server — Gateway (net8.0-windows, long-running) speaks JSON-RPC over stdio + HTTP; Worker (net48, STA thread) hosts GeneXus 18 SDK in-process. COM-flavoured SDK calls via Artech.* DLLs. WorkerPool indexed by KB alias.
+  Testing: xUnit (Gateway ~310 tests, Worker ~570 tests) + Node built-in test runner (CLI) + Nexus IDE tests
+  Style: .editorconfig LF/space-2, ESLint for JS/TS, .NET conventions per SDK defaults
+  Conventions: AGENTS.md for cross-tool instructions, CLAUDE.md loads AGENTS.md, GEMINI.md loads .gemini/skills/ skills
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Reference architecture: Gateway router ↔ Worker dispatcher ↔ KB service
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Include MCP tool schema impact when adding/modifying tools
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Note STA-thread constraint for Worker changes
+  tasks:
+    - Group by project (Gateway/Worker/CLI), use hierarchical numbering
+    - Keep tasks completable in one session
+    - Flag if GeneXus 18 SDK dependency affects testing
+  apply:
+    guidelines:
+      - Follow existing code patterns in AGENTS.md
+      - Regenerate golden fixture for tools/list on schema changes
+      - Maintain AxiCompact field allowlist for query/list tools
+    tdd: true
+    test_command: "dotnet test Genexus18MCP.sln --filter \"FullyQualifiedName~<test-name>\""
+  verify:
+    test_command: "dotnet test Genexus18MCP.sln"
+    build_command: "dotnet build Genexus18MCP.sln -v:minimal"
+    coverage_threshold: 50
+  archive:
+    - Warn before merging destructive deltas

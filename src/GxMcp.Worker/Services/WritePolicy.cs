@@ -39,7 +39,8 @@ namespace GxMcp.Worker.Services
 
             return partName.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
                    partName.Equals("Events", StringComparison.OrdinalIgnoreCase) ||
-                   partName.Equals("Code", StringComparison.OrdinalIgnoreCase);
+                   partName.Equals("Code", StringComparison.OrdinalIgnoreCase) ||
+                   partName.Equals("Rules", StringComparison.OrdinalIgnoreCase);
         }
 
         public static string BuildFailureDetails(string primaryMessage, JArray issues)
