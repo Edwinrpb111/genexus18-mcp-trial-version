@@ -417,6 +417,10 @@ namespace GxMcp.Worker.Services
         private static readonly Regex _rxSpecError = new Regex(
             @"\berror\s+(spc|gen)\d+\b",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // GXaccount authentication error — expired trial / authentication failure
+        private static readonly Regex _rxAuthError = new Regex(
+            @"(GXaccount|Conta GeneXus)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         internal static string ClassifyErrorCategory(string line)
         {
@@ -559,6 +563,8 @@ namespace GxMcp.Worker.Services
             // issue #28 item 12: spec-check only — run SpecifyOneOnly (Spec+Gen), skip
             // Compile + deploy, so spc*/gen* diagnostics surface without a full build.
             [JsonIgnore] internal bool SpecifyOnly { get; set; }
+            // Set when the build output contains a GXaccount authentication error (expired trial / invalid license).
+            [JsonIgnore] internal bool AuthErrorDetected { get; set; }
             // Item 28 (Tier-S, EXPERIMENTAL) — fastIncremental decision metadata.
             // Surfaced under top-level response fields (not status output) so the
             // agent sees the decision exactly once, with the Accepted envelope.
@@ -1451,6 +1457,72 @@ namespace GxMcp.Worker.Services
 
                         bool failed = outcome == InProcessBuildOutcome.FailedWithDiagnostics
                                       || status.ErrorCount > 0;
+
+                        // Auto-degrade to specify-only when a GXaccount auth/license error
+                        // is detected. The full build (Compile+Deploy) can't run without a
+                        // valid license, but the spec/gen pipeline works independently.
+                        // Re-run as specify-only so the caller sees spec diagnostics instead
+                        // of a bare "Failed" with an auth error.
+                        if (failed && status.AuthErrorDetected && !status.SpecifyOnly
+                            && targets != null && targets.Count > 0)
+                        {
+                            Logger.Info("[BUILD-INPROCESS] Auth/license error detected for taskId=" + status.TaskId
+                                        + " — auto-degrading to specify-only validation for " + targets.Count + " target(s)");
+                            // Reset error state for the specify-only fallback run
+                            status.AuthErrorDetected = false;
+                            status.ErrorCount = 0;
+                            status.Errors.Clear();
+                            status.ErrorsDetailed.Clear();
+                            status.SuggestedRebuildTargets.Clear();
+                            status.Hint = null;
+                            status.PhaseFailure = null;
+                            status.PartialSuccess = null;
+
+                            var specOutcome = InProcessBuildRunner.Run(
+                                status, action, targets,
+                                (s, l, err) => HandleLine(s, l, err),
+                                _kbService.KbObject, _kbService.KbLock,
+                                skipFullDeploy: false,
+                                kbPath: _kbService.GetKbPath(),
+                                specifyOnly: true);
+
+                            bool specFailed = specOutcome == InProcessBuildOutcome.FailedWithDiagnostics
+                                              || status.ErrorCount > 0;
+                            status.Status = specFailed ? "Failed" : "Succeeded";
+                            status.AuthErrorDetected = true; // re-set for downstream consumers
+
+                            // Re-shape output from the specify-only run
+                            string specText = status.FullOutput.ToString();
+                            try
+                            {
+                                string specLogPath;
+                                BuildOutputShaper.TryWriteFullLog(specText, status.TaskId, out specLogPath);
+                                status.FullLogPath = specLogPath;
+                                status.Output = BuildOutputShaper.Shape(specText, status.LineCount, specLogPath);
+                            }
+                            catch { }
+
+                            string licenseHint = "Build blocked by a GeneXus license issue (GXaccount authentication failed or trial expired). "
+                                + "Full build (Compile + Deploy) cannot run. "
+                                + "Automatically degraded to specification-only validation — the spec/gen diagnostics above show whether objects are structurally valid. "
+                                + "Renew your GeneXus license at https://www.genexus.com/en/developers/download to restore full build capability.";
+                            status.Hint = !string.IsNullOrEmpty(status.Hint)
+                                ? status.Hint + " | " + licenseHint
+                                : licenseHint;
+
+                            status.Phase = "Done";
+                            EmitPhaseProgress(status.Phase);
+                            status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                            status.ElapsedSeconds = Math.Round((DateTime.UtcNow - status.StartedAt).TotalSeconds, 1);
+                            Logger.Info("Background Build " + status.TaskId + " " + status.Status
+                                        + " (inproc-specify-fallback, errors=" + status.ErrorCount
+                                        + ", warnings=" + status.WarningCount
+                                        + ", " + status.ElapsedSeconds + "s)");
+                            try { status.StateChangeSignal.Set(); } catch { }
+                            MaybeNotifyOnFailure(status);
+                            return;
+                        }
+
                         status.Status = failed ? "Failed" : "Succeeded";
                         status.Phase = "Done";
                         EmitPhaseProgress(status.Phase);
@@ -1696,6 +1768,34 @@ namespace GxMcp.Worker.Services
                 {
                     status.TailLines.Add(line);
                     if (status.TailLines.Count > TailBufferSize) status.TailLines.RemoveAt(0);
+                }
+
+                // GXaccount/auth error detection — expired trial or authentication failure.
+                // This line won't match _rxError (no "error <CODE>:" pattern) so it needs
+                // a dedicated check before the section/phase/error parsers.
+                if (_rxAuthError.IsMatch(line))
+                {
+                    status.AuthErrorDetected = true;
+                    status.ErrorCount++;
+                    if (status.Errors.Count < 50)
+                        status.Errors.Add("GeneXus license/trial expired — GXaccount authentication failed. Build cannot proceed without a valid GeneXus license.");
+                    if (status.ErrorsDetailed.Count < 50)
+                    {
+                        status.ErrorsDetailed.Add(new ErrorDetail
+                        {
+                            raw = line.Trim(),
+                            phase = status.Phase,
+                            category = "environment"
+                        });
+                    }
+                    if (string.IsNullOrEmpty(status.Hint))
+                    {
+                        status.Hint = "Build blocked by a GeneXus licensing issue (GXaccount authentication failed or trial expired). "
+                            + "Full build (Compile + Deploy) cannot run without a valid license. "
+                            + "Renew at https://www.genexus.com/en/developers/download or use specify-only validation (genexus_lifecycle action=specify target=<obj>) for spec checks.";
+                    }
+                    // Don't return — let the line continue through normal processing
+                    // in case it also contains phase/section information.
                 }
 
                 // In-process section markers first (they never match the text parsers
