@@ -156,22 +156,52 @@ namespace GxMcp.Worker.Services
                     Directory.CreateDirectory(parentDir);
                 }
 
-                // Call KnowledgeBase.Create via reflection because its return type
-                // (KBConnectionInfo) lives in an assembly (Artech.Udm.Layers.Common)
-                // that is not referenced by this project. Reflection avoids a
-                // compile-time dependency on that assembly.
+                // Call KnowledgeBase.Create via reflection because its parameter
+                // types (KBConnectionInfo, KbTemplate) live in assemblies not
+                // referenced by this project. Reflection avoids compile-time
+                // dependencies on Artech.Udm.Layers.Common and Artech.Architecture.Common.Templates.
                 using (SdkGate.Enter())
                 {
-                    var createMethod = typeof(KnowledgeBase).GetMethod("Create", new[] { typeof(string) });
-                    if (createMethod == null)
+                    // First try: KnowledgeBase.CreateGxwFile(kbFile) which takes a simple string.
+                    // This creates a minimal .gxw metadata file. Then OpenKB (when called later)
+                    // fills in the rest (model, environment, database).
+                    var gxwMethod = typeof(KnowledgeBase).GetMethod("CreateGxwFile", new[] { typeof(string) });
+                    if (gxwMethod != null)
                     {
-                        return Models.McpResponse.Err(
-                            code: "KbCreateFailed",
-                            message: "KnowledgeBase.Create(string) method not found in the GeneXus SDK.",
-                            hint: "Ensure GeneXus 18 is properly installed and the SDK assemblies are accessible.",
-                            target: path);
+                        string gxwPath = Path.Combine(path, Path.GetFileName(path) + ".gxw");
+                        gxwMethod.Invoke(null, new object[] { gxwPath });
                     }
-                    createMethod.Invoke(null, new object[] { path });
+                    else
+                    {
+                        // Fallback: try the full Create with reflection-built types
+                        var connInfoType = Type.GetType("Artech.Udm.Layers.Common.KBConnectionInfo, Artech.Udm.Layers.Common");
+                        var templateType = Type.GetType("Artech.Architecture.Common.Templates.Definition.KbTemplate, Artech.Architecture.Common");
+                        if (connInfoType != null && templateType != null)
+                        {
+                            var connInfo = Activator.CreateInstance(connInfoType);
+                            connInfoType.GetProperty("Directory")?.SetValue(connInfo, path);
+                            connInfoType.GetProperty("DBName")?.SetValue(connInfo, Path.GetFileName(path));
+                            connInfoType.GetProperty("IntegratedSecurity")?.SetValue(connInfo, true);
+                            connInfoType.GetProperty("ServerInstance")?.SetValue(connInfo, @"(LocalDB)\MSSQLLocalDB");
+                            connInfoType.GetProperty("CreateDbInKbFolder")?.SetValue(connInfo, true);
+
+                            var template = Activator.CreateInstance(templateType);
+                            // Default template (C# / .NET)
+                            templateType.GetProperty("Id")?.SetValue(template, Guid.Parse("00000000-0000-0000-0000-000000000001"));
+                            templateType.GetProperty("Name")?.SetValue(template, "Default");
+
+                            var createMethod = typeof(KnowledgeBase).GetMethod("Create", new[] { connInfoType, templateType });
+                            createMethod?.Invoke(null, new object[] { connInfo, template });
+                        }
+                        else
+                        {
+                            return Models.McpResponse.Err(
+                                code: "KbCreateFailed",
+                                message: "Could not create KB: required SDK types not found.",
+                                hint: "Ensure GeneXus 18 is properly installed.",
+                                target: path);
+                        }
+                    }
                 }
 
                 // Normalize the .gxw version metadata to match the installed GeneXus version,
