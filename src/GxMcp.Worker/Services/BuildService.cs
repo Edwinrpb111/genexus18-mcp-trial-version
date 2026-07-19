@@ -1520,6 +1520,12 @@ namespace GxMcp.Worker.Services
                                         + ", " + status.ElapsedSeconds + "s)");
                             try { status.StateChangeSignal.Set(); } catch { }
                             MaybeNotifyOnFailure(status);
+
+                            // Release the KB lock so the desktop IDE can compile.
+                            // The KB handle reopens automatically on the next MCP
+                            // tool call via KbService.GetKB()'s auto-open path.
+                            try { _kbService?.CloseKB(); } catch { }
+
                             return;
                         }
 

@@ -74,6 +74,43 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        /// <summary>
+        /// Explicitly closes the open KB handle and releases the lock on the KB directory,
+        /// allowing the desktop IDE to compile without restarting the MCP worker.
+        /// The KB reopens automatically on the next MCP tool call via <see cref="GetKB"/>'s
+        /// auto-open path. Safe to call multiple times (idempotent when already closed).
+        /// </summary>
+        public string CloseKB()
+        {
+            lock (_kbLock)
+            {
+                if (_kb == null)
+                {
+                    Logger.Info("[KB-CLOSE] KB was not open — nothing to close.");
+                    return Models.McpResponse.Ok(code: "KbNotOpen");
+                }
+
+                string path = null;
+                try { path = (string)_kb.Location; } catch { }
+                Logger.Info($"[KB-CLOSE] Closing KB: {path ?? "(unknown)"}");
+
+                try
+                {
+                    _kb.Close();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[KB-CLOSE] _kb.Close() threw: {ex.Message}");
+                }
+                _kb = null;
+
+                Logger.Info($"[KB-CLOSE] KB closed and lock released: {path ?? "(unknown)"}");
+                var result = new Newtonsoft.Json.Linq.JObject();
+                if (path != null) result["path"] = path;
+                return Models.McpResponse.Ok(code: "KbClosed", result: result);
+            }
+        }
+
         public dynamic GetKB()
         {
             lock (_kbLock) 
