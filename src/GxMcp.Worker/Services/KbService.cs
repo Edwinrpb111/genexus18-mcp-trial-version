@@ -111,6 +111,94 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        /// <summary>
+        /// Creates a new empty GeneXus Knowledge Base at the specified path.
+        /// Uses KnowledgeBase.Create() from the GeneXus SDK via direct call.
+        /// The new KB is NOT automatically opened — call OpenKB separately.
+        /// </summary>
+        /// <param name="path">Absolute path where the KB directory will be created.</param>
+        /// <param name="name">Display name for the KB (used for logging / metadata).</param>
+        /// <returns>Canonical McpResponse envelope with status, path, and name on success.</returns>
+        public string CreateKB(string path, string name)
+        {
+            Logger.Info($"[KB-CREATE] Creating KB at path='{path}' name='{name}'");
+
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return Models.McpResponse.Err(
+                    code: "InvalidArgument",
+                    message: "path is required.",
+                    hint: "Provide an absolute path for the new Knowledge Base directory.",
+                    target: path);
+            }
+
+            try
+            {
+                // Prevent overwriting an existing KB.
+                if (Directory.Exists(path))
+                {
+                    bool hasKbFiles = Directory.EnumerateFiles(path, "*.gxw", SearchOption.TopDirectoryOnly).Any()
+                                      || Directory.EnumerateFiles(path, "knowledgebase.connection", SearchOption.TopDirectoryOnly).Any();
+                    if (hasKbFiles)
+                    {
+                        return Models.McpResponse.Err(
+                            code: "KbAlreadyExists",
+                            message: $"A Knowledge Base already exists at '{path}'.",
+                            hint: "Choose a different path or delete the existing KB directory first.",
+                            target: path);
+                    }
+                }
+
+                // Ensure the parent directory exists.
+                string parentDir = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                {
+                    Directory.CreateDirectory(parentDir);
+                }
+
+                // Call KnowledgeBase.Create via reflection because its return type
+                // (KBConnectionInfo) lives in an assembly (Artech.Udm.Layers.Common)
+                // that is not referenced by this project. Reflection avoids a
+                // compile-time dependency on that assembly.
+                using (SdkGate.Enter())
+                {
+                    var createMethod = typeof(KnowledgeBase).GetMethod("Create", new[] { typeof(string) });
+                    if (createMethod == null)
+                    {
+                        return Models.McpResponse.Err(
+                            code: "KbCreateFailed",
+                            message: "KnowledgeBase.Create(string) method not found in the GeneXus SDK.",
+                            hint: "Ensure GeneXus 18 is properly installed and the SDK assemblies are accessible.",
+                            target: path);
+                    }
+                    createMethod.Invoke(null, new object[] { path });
+                }
+
+                // Normalize the .gxw version metadata to match the installed GeneXus version,
+                // consistent with what OpenKB does after opening.
+                NormalizeGxwVersionMetadata(path);
+
+                Logger.Info($"[KB-CREATE] Successfully created KB at '{path}' name='{name}'");
+                return Models.McpResponse.Ok(
+                    target: path,
+                    code: "KbCreated",
+                    result: new JObject
+                    {
+                        ["path"] = path,
+                        ["name"] = name ?? Path.GetFileName(path)
+                    });
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"[KB-CREATE-FAIL] path='{path}' error={ex.Message}");
+                return Models.McpResponse.Err(
+                    code: "KbCreateFailed",
+                    message: ex.Message,
+                    hint: "Verify the path is writable and the GeneXus SDK is correctly installed.",
+                    target: path);
+            }
+        }
+
         public dynamic GetKB()
         {
             lock (_kbLock) 

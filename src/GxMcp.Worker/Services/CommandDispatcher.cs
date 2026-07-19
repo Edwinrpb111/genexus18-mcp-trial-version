@@ -684,6 +684,12 @@ namespace GxMcp.Worker.Services
                 string startupName = target ?? args?["name"]?.ToString();
                 return _kbStartupService.SetStartup(startupName);
             }
+            if (action == "CreateKB")
+            {
+                string createPath = target ?? args?["path"]?.ToString();
+                string createName = args?["name"]?.ToString();
+                return _kbService.CreateKB(createPath, createName);
+            }
             if (action == "GetIndexStatus")
             {
                 // issue #25 #1: event-driven wait. When `wait` is given, block
@@ -1468,6 +1474,7 @@ namespace GxMcp.Worker.Services
             if (action == "UpdateVisualStructure") return _structureService.UpdateVisualStructure(target, payload);
             if (action == "GetVisualIndexes") return _structureService.GetVisualIndexes(target);
             if (action == "GetLogicStructure") return _structureService.GetLogicStructure(target);
+            if (action == "AddUniqueIndex") return _structureService.AddUniqueIndex(target, args?["attributeName"]?.ToString());
             return null;
         }
 

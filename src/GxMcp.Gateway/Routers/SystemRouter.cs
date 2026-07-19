@@ -134,6 +134,17 @@ namespace GxMcp.Gateway.Routers
                             action = "GetStartupObject"
                         };
                     }
+                    if (string.Equals(kbAction, "create", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new
+                        {
+                            module = "KB",
+                            action = "CreateKB",
+                            target = args?["path"]?.ToString(),
+                            name = args?["name"]?.ToString(),
+                            path = args?["path"]?.ToString()
+                        };
+                    }
                     return null;
                 }
 
