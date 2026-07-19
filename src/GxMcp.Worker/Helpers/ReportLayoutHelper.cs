@@ -175,78 +175,111 @@ namespace GxMcp.Worker.Helpers
                 if (bandsList.Count > 0)
                 {
                     var bandType = bandsList[0].GetType();
-                    Logger.Info($"[ReportLayoutHelper] bandType={bandType.FullName}");
                     var ctrlProp = bandType.GetProperty("Controls", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
                     if (ctrlProp != null)
                     {
-                        Logger.Info($"[ReportLayoutHelper] Controls prop type={ctrlProp.PropertyType.FullName} IsGeneric={ctrlProp.PropertyType.IsGenericType}");
                         if (ctrlProp.PropertyType.IsGenericType)
                         {
                             var genArgs = ctrlProp.PropertyType.GetGenericArguments();
-                            if (genArgs.Length > 0) { itemType = genArgs[0]; Logger.Info($"[ReportLayoutHelper] itemType from generic={itemType.FullName}"); }
                         }
                     }
-                    else Logger.Warn("[ReportLayoutHelper] Controls property NOT found on band");
                 }
-                // Fallback: if type is abstract/interface, try ReportLabel or ReportAttribute.
                 if (itemType == null || itemType.IsAbstract || itemType.IsInterface)
                 {
-                    Logger.Info($"[ReportLayoutHelper] itemType={itemType?.FullName ?? "null"} is abstract/interface/null, trying ReportLabel fallback");
                     try
                     {
-                        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                        if (bandsList.Count > 0)
                         {
-                            if (!asm.FullName.StartsWith("Artech.Genexus.Common", StringComparison.Ordinal)) continue;
-                            Logger.Info($"[ReportLayoutHelper] scanning assembly {asm.FullName}");
+                            var bandType = bandsList[0].GetType();
+                            var asm = bandType.Assembly;
                             var concrete = asm.GetType("Artech.Genexus.Common.Parts.Layout.ReportLabel");
-                            if (concrete != null && !concrete.IsAbstract) { itemType = concrete; Logger.Info($"[ReportLayoutHelper] found ReportLabel={concrete.FullName}"); break; }
-                        }
-                    }
-                    catch (Exception ex) { Logger.Error($"[ReportLayoutHelper] fallback error: {ex.Message}"); }
-                }
-                Logger.Info($"[ReportLayoutHelper] final itemType={itemType?.FullName ?? "NULL"}");
-
-                foreach (var elXml in visualDoc.Descendants("Control"))
-                {
-                    var elName = elXml.Attribute("ControlName")?.Value ?? elXml.Attribute("Name")?.Value;
-                    if (string.IsNullOrEmpty(elName)) continue;
-
-                    if (existingControls.TryGetValue(elName, out var existingItem))
-                    {
-                        // Modify existing control
-                        var iType = existingItem.GetType();
-                        foreach (var attr in elXml.Attributes())
-                        {
-                            string aName = attr.Name.LocalName;
-                            if (IsExcludedAttribute(aName)) continue;
-                            string rawValue = attr.Value;
-                            if (IsColorAttributeName(aName)) rawValue = NormalizeColorToken(rawValue);
-
-                            bool assignmentApplied = false;
-                            foreach (var sdkPropName in ResolveSdkPropertyCandidates(aName))
+                            if (concrete != null && !concrete.IsAbstract)
                             {
-                                if (TrySetProperty(existingItem, iType, sdkPropName, rawValue))
-                                {
-                                    assignmentApplied = true;
-                                    appliedAssignments++;
-                                    break;
-                                }
+                                itemType = concrete;
                             }
-                            if (!assignmentApplied)
-                                Logger.Warn($"ReportLayoutHelper: failed to map attribute '{aName}' for control '{elName}'.");
                         }
-                        anyChange = appliedAssignments > 0;
                     }
-                    else if (itemType != null)
-                    {
-                        Logger.Info($"[ReportLayoutHelper] Creating control '{elName}' using itemType={itemType.FullName} (IsAbstract={itemType.IsAbstract}, IsInterface={itemType.IsInterface})");
-                        // Create new control
-                        try
-                        {
-                            var newCtrl = Activator.CreateInstance(itemType);
-                            var ncType = newCtrl.GetType();
-                            bool hasProperties = false;
+                }
 
+                // Clear all bands first, so the XML becomes the authoritative source
+                bool anyClear = false;
+                foreach (var bandObj in bandsList)
+                {
+                    var clearMethod = bandObj.GetType().GetMethod("ClearChildren", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    if (clearMethod != null)
+                    {
+                        clearMethod.Invoke(bandObj, null);
+                        anyClear = true;
+                    }
+                }
+                if (anyClear)
+                {
+                    // Rebuild existingControls after clearing — everything is fresh
+                    existingControls.Clear();
+                    controlBands.Clear();
+                }
+
+                // Build a mapping from PrintBlock name → band object
+                var bandByName = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                foreach (var bandObj in bandsList)
+                {
+                    var bandName = GetBandName(bandObj);
+                    if (!string.IsNullOrEmpty(bandName))
+                        bandByName[bandName] = bandObj;
+                }
+
+                // Iterate by XML PrintBlock, matching to bands
+                foreach (var pbXml in visualDoc.Descendants("PrintBlock"))
+                {
+                    var pbName = pbXml.Attribute("Name")?.Value ?? pbXml.Attribute("ControlName")?.Value;
+                    if (string.IsNullOrEmpty(pbName)) continue;
+                    if (!bandByName.TryGetValue(pbName, out var targetBand))
+                    {
+                        // PrintBlock doesn't exist yet — create it via AddPrintBlock
+                        if (!AddPrintBlock(part, pbName, null, false))
+                        {
+                            continue;
+                        }
+                        // Re-read bands after adding
+                        var layout2 = GetLayoutInstance(part);
+                        var bands2 = GetBandsList(layout2);
+                        bandByName.Clear();
+                        foreach (var bo in bands2)
+                        {
+                            var bn = GetBandName(bo);
+                            if (!string.IsNullOrEmpty(bn)) bandByName[bn] = bo;
+                        }
+                        if (!bandByName.TryGetValue(pbName, out var newBand))
+                        {
+                            continue;
+                        }
+                        targetBand = newBand;
+                    }
+
+
+                    foreach (var elXml in pbXml.Descendants("Control"))
+                    {
+                        var elName = elXml.Attribute("ControlName")?.Value ?? elXml.Attribute("Name")?.Value;
+                        if (string.IsNullOrEmpty(elName)) continue;
+
+                        // Determine the concrete type from TypeName attribute
+                        var elTypeName = elXml.Attribute("TypeName")?.Value;
+                        Type ctrlConcreteType = itemType; // default from fallback (ReportLabel)
+                        if (!string.IsNullOrEmpty(elTypeName) && !string.Equals(elTypeName, "ReportLabel", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                var foundType = itemType.Assembly.GetType("Artech.Genexus.Common.Parts.Layout." + elTypeName);
+                                if (foundType != null && !foundType.IsAbstract && !foundType.IsInterface)
+                                    ctrlConcreteType = foundType;
+                            }
+                            catch { /* fallback to itemType */ }
+                        }
+
+                        if (existingControls.TryGetValue(elName, out var existingItem))
+                        {
+                            // Modify existing control
+                            var iType = existingItem.GetType();
                             foreach (var attr in elXml.Attributes())
                             {
                                 string aName = attr.Name.LocalName;
@@ -254,54 +287,72 @@ namespace GxMcp.Worker.Helpers
                                 string rawValue = attr.Value;
                                 if (IsColorAttributeName(aName)) rawValue = NormalizeColorToken(rawValue);
 
+                                bool assignmentApplied = false;
                                 foreach (var sdkPropName in ResolveSdkPropertyCandidates(aName))
                                 {
-                                    if (TrySetProperty(newCtrl, ncType, sdkPropName, rawValue))
+                                    if (TrySetProperty(existingItem, iType, sdkPropName, rawValue))
                                     {
-                                        hasProperties = true;
+                                        assignmentApplied = true;
+                                        appliedAssignments++;
                                         break;
                                     }
                                 }
+                                if (!assignmentApplied)
+                                    Logger.Warn($"ReportLayoutHelper: failed to map attribute '{aName}' for control '{elName}'.");
                             }
-
-                            // Set minimal identity props
-                            TrySetProperty(newCtrl, ncType, "Name", elName);
-                            TrySetProperty(newCtrl, ncType, "ControlName", elName);
-                            TrySetPropertyValueFallback(newCtrl, "Name", elName);
-                            TrySetPropertyValueFallback(newCtrl, "ControlName", elName);
-
-                            // Add to the first matching band
-                            object targetBand = bandsList.FirstOrDefault();
-                            if (targetBand != null)
+                            anyChange = appliedAssignments > 0;
+                        }
+                        else if (ctrlConcreteType != null)
+                        {
+                            Logger.Info($"[ReportLayoutHelper] Creating control '{elName}' in band '{pbName}' using type={ctrlConcreteType.FullName}");
+                            try
                             {
-                                var bandItems = GetCollection(targetBand, "Items", "Elements", "Controls", "Components");
-                                if (bandItems != null)
+                                var newCtrl = Activator.CreateInstance(ctrlConcreteType);
+                                var ncType = newCtrl.GetType();
+
+                                foreach (var attr in elXml.Attributes())
                                 {
-                                    var bandItemsType = bandItems.GetType();
-                                    var addMethod = bandItemsType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                                        .FirstOrDefault(m => string.Equals(m.Name, "Add", StringComparison.OrdinalIgnoreCase) && m.GetParameters().Length == 1);
-                                    if (addMethod != null)
+                                    string aName = attr.Name.LocalName;
+                                    if (IsExcludedAttribute(aName)) continue;
+                                    string rawValue = attr.Value;
+                                    if (IsColorAttributeName(aName)) rawValue = NormalizeColorToken(rawValue);
+
+                                    foreach (var sdkPropName in ResolveSdkPropertyCandidates(aName))
                                     {
-                                        addMethod.Invoke(bandItems, new[] { newCtrl });
-                                        anyChange = true;
-                                        Logger.Info($"ReportLayoutHelper: created control '{elName}' of type '{itemType.Name}' in band '{GetBandName(targetBand)}'.");
-                                    }
-                                    else
-                                    {
-                                        var itemsList = bandItems as System.Collections.IList;
-                                        if (itemsList != null)
+                                        if (TrySetProperty(newCtrl, ncType, sdkPropName, rawValue))
                                         {
-                                            itemsList.Add(newCtrl);
-                                            anyChange = true;
-                                            Logger.Info($"ReportLayoutHelper: created control '{elName}' via IList.Add.");
+                                            break;
                                         }
                                     }
                                 }
+
+                                // Set minimal identity props
+                                TrySetProperty(newCtrl, ncType, "Name", elName);
+                                TrySetProperty(newCtrl, ncType, "ControlName", elName);
+                                TrySetPropertyValueFallback(newCtrl, "Name", elName);
+                                TrySetPropertyValueFallback(newCtrl, "ControlName", elName);
+
+                                // Add to the matched band via AddChild
+                                var bandType = targetBand.GetType();
+                                var addChildMethod = bandType.GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(object) }, null);
+                                if (addChildMethod == null)
+                                    addChildMethod = bandType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                                        .FirstOrDefault(m => m.Name == "AddChild" && m.GetParameters().Length == 1);
+                                if (addChildMethod != null)
+                                {
+                                    addChildMethod.Invoke(targetBand, new[] { newCtrl });
+                                    anyChange = true;
+                                    Logger.Info($"ReportLayoutHelper: created control '{elName}' in band '{pbName}'.");
+                                }
+                                else
+                                {
+                                    Logger.Warn($"ReportLayoutHelper: AddChild method not found on band '{pbName}' for control '{elName}'.");
+                                }
                             }
-                        }
-                        catch (Exception cex)
-                        {
-                            Logger.Error($"ReportLayoutHelper: failed to create control '{elName}': {cex.Message}");
+                            catch (Exception cex)
+                            {
+                                Logger.Error($"ReportLayoutHelper: failed to create control '{elName}': {cex.Message}");
+                            }
                         }
                     }
                 }
@@ -532,7 +583,7 @@ namespace GxMcp.Worker.Helpers
 
         private static bool IsExcludedAttribute(string name)
         {
-            string[] excluded = { "ControlName", "Name", "TypeName", "ControlSource" };
+            string[] excluded = { "ControlName", "Name", "TypeName" };
             return excluded.Contains(name, StringComparer.OrdinalIgnoreCase);
         }
 

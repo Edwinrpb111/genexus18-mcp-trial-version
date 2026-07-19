@@ -208,9 +208,37 @@ namespace GxMcp.Worker.Parsers
                             dynamic trnAttr = sdkLevel.AddAttribute(globalAttr);
                             try { trnAttr.IsKey = pNode.IsKey; } catch { }
 
+                            // When the DSL type matches the attribute name (e.g. "CountryId : CountryId"),
+                            // establish a prompt relationship to the source table so the web form
+                            // shows a lookup/search button for this foreign key.
+                            if (!createdGlobal && !string.IsNullOrEmpty(pNode.TypeStr)
+                                && pNode.TypeStr.Equals(pNode.Name, StringComparison.OrdinalIgnoreCase))
+                            {
+                                try
+                                {
+                                    // The prompt target is the attribute's owning table/transaction.
+                                    // For an attribute like CountryId (from Country), the prompt
+                                    // should reference the Country transaction.
+                                    string promptTarget = pNode.Name;
+                                    // Remove "Id" suffix to get the table name: CountryId → Country
+                                    if (promptTarget.EndsWith("Id", StringComparison.OrdinalIgnoreCase) && promptTarget.Length > 2)
+                                        promptTarget = promptTarget.Substring(0, promptTarget.Length - 2);
+                                    // Try setting via property system
+                                    var propInfo = trnAttr.GetType().GetProperty("Prompt",
+                                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+                                    if (propInfo != null && propInfo.CanWrite)
+                                        propInfo.SetValue(trnAttr, promptTarget);
+                                }
+                                catch { /* prompt is nice-to-have, not critical */ }
+                            }
+
                             // If the global already existed, still apply the DSL type so changes
                             // like TokenUser : Numeric(4) → TokenUser : UserLogin propagate.
-                            if (!createdGlobal && !string.IsNullOrEmpty(pNode.TypeStr))
+                            // Skip if typeStr is the same as the attribute name — this means the DSL
+                            // is using the attribute's own existing type (e.g. "CountryId : CountryId"),
+                            // and calling ApplyTypeFromDsl would try to resolve it as a domain.
+                            if (!createdGlobal && !string.IsNullOrEmpty(pNode.TypeStr)
+                                && !pNode.TypeStr.Equals(pNode.Name, StringComparison.OrdinalIgnoreCase))
                             {
                                 ApplyTypeFromDsl(globalAttr, pNode.TypeStr, model);
                             }
