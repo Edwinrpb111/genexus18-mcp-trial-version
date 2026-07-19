@@ -1094,6 +1094,7 @@ namespace GxMcp.Gateway.Routers
                 "update_visual" => "UpdateVisualStructure",
                 "get_indexes" => "GetVisualIndexes",
                 "get_logic" => "GetLogicStructure",
+                "add_index" => "AddUniqueIndex",
                 _ => null
             };
 
@@ -1106,7 +1107,8 @@ namespace GxMcp.Gateway.Routers
                 target = args?["name"]?.ToString(),
                 payload = args?["payload"]?.Type == JTokenType.Object || args?["payload"]?.Type == JTokenType.Array
                     ? args?["payload"]?.ToString()
-                    : args?["payload"]?.ToString()
+                    : args?["payload"]?.ToString(),
+                attributeName = args?["attributeName"]?.ToString()
             };
         }
 

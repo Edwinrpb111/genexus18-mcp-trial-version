@@ -14,10 +14,36 @@ namespace GxMcp.Worker.Services.Structure
         {
             string name = "Unknown";
             bool isKey = false;
+            bool isUnique = false;
             try { name = attr.Name; } catch { }
             try { isKey = attr.IsKey; } catch { }
             
-            var item = new JObject { ["name"] = name, ["isKey"] = isKey, ["isLevel"] = false };
+            // Check for Unique through multiple paths
+            try { isUnique = attr.IsUnique; } catch { }
+            if (!isUnique)
+            {
+                try { bool? v = attr.Unique; isUnique = v == true; } catch { }
+            }
+            if (!isUnique)
+            {
+                try
+                {
+                    // Try reading via Attribute property descriptors
+                    dynamic attrObj = null;
+                    try { attrObj = attr.Attribute; } catch { }
+                    if (attrObj != null)
+                    {
+                        // Check Properties collection
+                        try
+                        {
+                            dynamic prop = attrObj.Properties["Unique"];
+                            if (prop != null) isUnique = prop.Value?.ToString() == "True";
+                        } catch { }
+                    }
+                } catch { }
+            }
+            
+            var item = new JObject { ["name"] = name, ["isKey"] = isKey, ["isLevel"] = false, ["isUnique"] = isUnique };
             string typeStr = "Unknown";
             string desc = "";
             string formula = "";
@@ -82,6 +108,7 @@ namespace GxMcp.Worker.Services.Structure
             string formula = vItem["formula"]?.ToString();
             string nullable = vItem["nullable"]?.ToString();
             string userType = vItem["type"]?.ToString();
+            bool? unique = (bool?)vItem["unique"] ?? (bool?)vItem["isUnique"];
 
             bool isModified = false;
 
@@ -122,6 +149,124 @@ namespace GxMcp.Worker.Services.Structure
                     targetAttr.IsNullable = val;
                     try { attrObj.SetPropertyValue("Nullable", val); } catch { }
                     isModified = true;
+                }
+            }
+
+            if (unique.HasValue) {
+                // Setting unique constraint through the SDK's TableIndexes API.
+                // The Attribute/TransactionAttribute objects don't expose "Unique" as a 
+                // settable property, so we create a unique index on the associated table.
+                try {
+                    var trnAttrType = ((object)targetAttr).GetType();
+                    
+                    // Navigate from TransactionAttribute to parent TransactionLevel
+                    // TransactionAttribute.Level (parent TransactionLevel)
+                    dynamic level = null;
+                    try { level = targetAttr.Level; } catch { }
+                    
+                    if (level == null) {
+                        var lProp = trnAttrType.GetProperty("Level",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (lProp != null) level = lProp.GetValue((object)targetAttr, null);
+                    }
+                    
+                    if (level != null) {
+                        // TransactionLevel.Transaction (parent Transaction)
+                        dynamic transaction = null;
+                        try { transaction = level.Transaction; } catch { }
+                        
+                        if (transaction == null) {
+                            // Try: Level -> Structure -> Transaction
+                            try { 
+                                var sProp = level.GetType().GetProperty("Structure");
+                                if (sProp != null) {
+                                    dynamic structObj = sProp.GetValue(level, null);
+                                    if (structObj != null) {
+                                        try { transaction = structObj.Transaction; } catch { }
+                                    }
+                                }
+                            } catch { }
+                        }
+                        
+                        if (transaction == null) {
+                            // Try parent TransactionLevel to get Transaction
+                            try { 
+                                dynamic parentLevel = level.Parent;
+                                if (parentLevel != null) {
+                                    var sProp = parentLevel.GetType().GetProperty("Structure");
+                                    if (sProp != null) {
+                                        dynamic structObj = sProp.GetValue(parentLevel, null);
+                                        if (structObj != null) {
+                                            try { transaction = structObj.Transaction; } catch { }
+                                        }
+                                    }
+                                }
+                            } catch { }
+                        }
+                        
+                        if (transaction != null) {
+                            try {
+                                Table tbl = transaction.Structure.Root.AssociatedTable;
+                                if (tbl != null) {
+                                    string idxName = "UIDX_" + attrObj.Name;
+                                    
+                                    dynamic dIndexesPart = ((dynamic)tbl).TableIndexes;
+                                    if (dIndexesPart != null && dIndexesPart.Indexes != null) {
+                                        bool exists = false;
+                                        foreach (dynamic existingIdx in dIndexesPart.Indexes) {
+                                            string en = "";
+                                            try { en = existingIdx.Index?.Name; } catch { }
+                                            if (string.Equals(en, idxName, StringComparison.OrdinalIgnoreCase)) {
+                                                exists = true;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (!exists) {
+                                            Logger.Info($"[VisualStructureMapper] Creating unique index '{idxName}' on '{tbl.Name}'...");
+                                            
+                                            using (var txn = tbl.Model.KB.BeginTransaction()) {
+                                                try {
+                                                    // Create a new index entry via the SDK's factory
+                                                    dynamic newIdxEntry = dIndexesPart.Indexes.AddNew();
+                                                    if (newIdxEntry != null) {
+                                                        dynamic idx = newIdxEntry.Index;
+                                                        if (idx != null) {
+                                                            idx.Name = idxName;
+                                                            
+                                                            // Set IndexType via IndexType property string
+                                                            try { idx.IndexType = 2; } catch { } // 2 = Unique
+                                                            
+                                                            // Add attribute to index members
+                                                            if (idx.IndexStructure != null && idx.IndexStructure.Members != null) {
+                                                                dynamic newMember = idx.IndexStructure.Members.AddNew();
+                                                                if (newMember != null) {
+                                                                    newMember.Attribute = attrObj;
+                                                                    try { newMember.Order = 0; } catch { } // 0 = Ascending
+                                                                }
+                                                            }
+                                                            
+                                                            tbl.EnsureSave();
+                                                            txn.Commit();
+                                                            isModified = true;
+                                                            Logger.Info($"[VisualStructureMapper] Created unique index '{idxName}'");
+                                                        }
+                                                    }
+                                                } catch (Exception ex) {
+                                                    Logger.Warn($"[VisualStructureMapper] Index creation failed: {ex.Message}");
+                                                    try { txn.Rollback(); } catch { }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception ex) {
+                                Logger.Warn($"[VisualStructureMapper] Table/index access failed: {ex.Message}");
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    Logger.Warn($"[VisualStructureMapper] Unique index navigation failed: {ex.Message}");
                 }
             }
 

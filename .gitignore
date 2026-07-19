@@ -28,6 +28,13 @@ cache/
 /p12docs.json
 
 # --- IDE & OS ---
+# Ignore Windows NUL artifact
+nul
+# Ignore ATL skill registry cache
+.atl/
+# Alternative build output dirs
+/publish_gateway/
+/publish_release/
 .vscode/
 .idea/
 *.suo

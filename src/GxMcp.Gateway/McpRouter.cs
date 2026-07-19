@@ -482,7 +482,7 @@ namespace GxMcp.Gateway
                 else if (refName == "genexus_history")
                     values = new[] { "list", "get_source", "save", "restore" };
                 else if (refName == "genexus_structure")
-                    values = new[] { "get_visual", "update_visual", "get_indexes", "get_logic" };
+                    values = new[] { "get_visual", "update_visual", "get_indexes", "get_logic", "add_index" };
                 else if (refName == "genexus_refactor")
                     values = new[] { "RenameAttribute", "RenameVariable", "RenameObject", "ExtractProcedure" };
                 else if (refName == "prompts/get")

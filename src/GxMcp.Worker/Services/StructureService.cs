@@ -132,6 +132,7 @@ namespace GxMcp.Worker.Services
         }
 
         public string GetVisualIndexes(string targetName) => _indexService.GetVisualIndexes(targetName);
+        public string AddUniqueIndex(string targetName, string attributeName) => _indexService.AddUniqueIndex(targetName, attributeName);
         
         public string GetLogicStructure(string targetName)
         {

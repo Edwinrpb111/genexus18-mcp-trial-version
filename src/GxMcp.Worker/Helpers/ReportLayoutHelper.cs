@@ -199,6 +199,7 @@ namespace GxMcp.Worker.Helpers
                             }
                         }
                     }
+                    catch { }
                 }
 
                 // Clear all bands first, so the XML becomes the authoritative source
