@@ -18,7 +18,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <GX_PATH Condition="'$(GX_PATH)' == ''">C:\Program Files (x86)\GeneXus\GeneXus18</GX_PATH>
+    <GX_PATH Condition="'$(GX_PATH)' == ''">C:\\Program Files (x86)\\GeneXus\\GeneXus18Trial</GX_PATH>
   </PropertyGroup>
 
   <ItemGroup>
