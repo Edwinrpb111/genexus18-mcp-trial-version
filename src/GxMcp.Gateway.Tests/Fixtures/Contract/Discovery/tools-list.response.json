@@ -2659,6 +2659,11 @@
           {
             "action": "get_indexes",
             "name": "Customer"
+          },
+          {
+            "action": "add_index",
+            "name": "Country",
+            "attributeName": "CountryName"
           }
         ],
         "properties": {
@@ -2667,8 +2672,13 @@
               "get_visual",
               "update_visual",
               "get_indexes",
-              "get_logic"
+              "get_logic",
+              "add_index"
             ],
+            "type": "string"
+          },
+          "attributeName": {
+            "description": "Attribute name for add_index action.",
             "type": "string"
           },
           "kb": {

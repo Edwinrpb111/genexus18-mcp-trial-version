@@ -60,7 +60,9 @@ namespace GxMcp.Gateway.Tests
             //   2026-07-15 (per-KB memory, Phase 3): added consolidate/promote actions
             //   + message/dryRun params to genexus_memory. Measured ~14469 tokens;
             //   ~81 headroom — still under the 14550 budget, no bump needed.
-            Assert.True(approxTokens < 14550, $"tool_definitions.json is ~{approxTokens} tokens; budget 14550.");
+            //   2026-07-19 (add_index): added 'add_index' action + 'attributeName'
+            //   param to genexus_structure. Measured ~14586 tokens; budget 14800.
+            Assert.True(approxTokens < 14800, $"tool_definitions.json is ~{approxTokens} tokens; budget 14800.");
         }
     }
 }
