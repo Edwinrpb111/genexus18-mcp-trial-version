@@ -1,7 +1,7 @@
 {
   "GeneXus": {
-    "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
-    "WorkerExecutable": "C:\\Projetos\\Genexus18MCP\\publish\\worker\\GxMcp.Worker.exe"
+    "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18Trial",
+      "WorkerExecutable": "C:\\Users\\pasto\\Downloads\\genexus18-mcp-trial-vercion\\publish\\worker\\GxMcp.Worker.exe"
   },
   "Server": {
     "HttpPort": 5000,
