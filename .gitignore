@@ -1,7 +1,7 @@
 # --- Build Artifacts ---
 /bin/
 /obj/
-/publish/
+# /publish/ — release artifacts; keep them tracked for GitHub-based installs
 [Bb]in/
 [Oo]bj/
 
