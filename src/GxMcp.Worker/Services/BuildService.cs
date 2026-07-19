@@ -1463,7 +1463,14 @@ namespace GxMcp.Worker.Services
                         // valid license, but the spec/gen pipeline works independently.
                         // Re-run as specify-only so the caller sees spec diagnostics instead
                         // of a bare "Failed" with an auth error.
-                        if (failed && status.AuthErrorDetected && !status.SpecifyOnly
+                        // Use a second pass over the captured output string for detection
+                        // because section-marker lines (>O1, >E0) may not reach HandleLine.
+                        bool authErrorInOutput = fullText.IndexOf("Conta GeneXus", StringComparison.OrdinalIgnoreCase) >= 0
+                                              || fullText.IndexOf("GXaccount", StringComparison.OrdinalIgnoreCase) >= 0;
+                        if (authErrorInOutput)
+                            status.AuthErrorDetected = true;
+
+                        if ((failed || authErrorInOutput) && status.AuthErrorDetected && !status.SpecifyOnly
                             && targets != null && targets.Count > 0)
                         {
                             Logger.Info("[BUILD-INPROCESS] Auth/license error detected for taskId=" + status.TaskId
